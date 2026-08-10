@@ -211,6 +211,29 @@ def compute_aired_count_by_episode_check(tmdb_id: int, season_number: int, now_l
     except Exception:
         return 0
 
+
+def is_movie_task(task: dict) -> bool:
+    """判断任务是否是电影，并兼容曾被错误标记为 other 的旧任务。"""
+    try:
+        task = task or {}
+        cal = task.get('calendar_info') or {}
+        extracted = cal.get('extracted') or {}
+        match = cal.get('match') or {}
+        if match.get('media_type') == 'movie':
+            return True
+
+        content_type = task.get('content_type') or extracted.get('content_type')
+        if content_type == 'movie':
+            return True
+
+        # 旧版本对电影使用 TV 元数据匹配，失败后会写入 other。保存路径仍可
+        # 作为可靠的迁移信号，避免旧任务永久停留在“其他”。
+        if content_type in (None, '', 'other'):
+            return TaskExtractor().determine_content_type(task.get('savepath', '')) == 'movie'
+    except Exception:
+        pass
+    return False
+
 def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
     """为任务列表注入日历相关元数据：节目状态、最新季处理后名称、已转存/已播出/本季总集数。
     返回新的任务字典列表，增加以下字段：
@@ -238,6 +261,11 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         # 同时收集“在数据库中存在转存记录的任务名”集合，用于区分“真实归零”与“获取异常”
         transferred_by_task = {}
         task_names_with_records = set()
+        movie_task_names = {
+            (task.get('task_name') or task.get('taskname') or '')
+            for task in tasks_info
+            if is_movie_task(task)
+        }
         try:
             rdb = RecordDB()
             cursor = rdb.conn.cursor()
@@ -254,6 +282,10 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             extractor = TaskExtractor()
             for task_name, latest_time in latest_times:
                 if latest_time:
+                    # 电影不是剧集。只要存在一次成功转存记录，就代表唯一的内容项已完成。
+                    if task_name in movie_task_names:
+                        transferred_by_task[task_name] = 1
+                        continue
                     cursor.execute(
                         """
                         SELECT renamed_to, original_name, transfer_time, modify_date
@@ -363,6 +395,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         for t in tasks_info:
             tmdb_id = t.get('match_tmdb_id') or ((t.get('calendar_info') or {}).get('match') or {}).get('tmdb_id')
             task_name = t.get('task_name') or t.get('taskname') or ''
+            movie_task = is_movie_task(t)
             status = ''
             latest_sn = None
             latest_season_name = ''
@@ -438,6 +471,14 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
 
+            if movie_task:
+                # 电影统一用虚拟的单项“第一季”表示。它不受播出日期/时间影响，
+                # 否则已转存的电影在未上映或缺少 release_date 时会错误显示为 0%。
+                latest_sn = 1
+                latest_season_name = '电影'
+                total_count = 1
+                aired_count = 1
+
             if task_name in transferred_by_task:
                 transferred_count = transferred_by_task[task_name]
 
@@ -445,7 +486,9 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             try:
                 raw = (status or '').strip()
                 key = raw.lower().replace(' ', '_')
-                if key == 'returning_series':
+                if movie_task:
+                    status = raw or '电影'
+                elif key == 'returning_series':
                     # 新规则：存在 finale 类型 且 已播出集数 ≥ 本季总集数 => 本季终；否则 播出中
                     has_finale = False
                     try:
@@ -670,6 +713,7 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
             tgt = next((t for t in tasks if (t.get('taskname') or t.get('task_name') or '') == task_name), None)
         except Exception:
             tgt = None
+        movie_task = is_movie_task(tgt) if tgt else False
         if tgt:
             try:
                 match = ((tgt.get('calendar_info') or {}).get('match') or {})
@@ -681,10 +725,11 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
                     tmdb_id = int(match.get('tmdb_id'))
             except Exception:
                 tmdb_id = None
-            # season 仅使用 matched_latest_season_number
+            # 优先使用任务视图中的有效季号，随后回退到匹配信息中的季号。
             try:
-                if tgt.get('matched_latest_season_number') is not None:
-                    v = int(tgt.get('matched_latest_season_number'))
+                season_value = tgt.get('matched_latest_season_number') or match.get('latest_season_number')
+                if season_value is not None:
+                    v = int(season_value)
                     if v > 0:
                         season_no = v
             except Exception:
@@ -695,6 +740,18 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
 
         from time import time as _now
         now_ts = int(_now())
+        if movie_task:
+            # 电影只有一个内容项，不能依赖文件名中的集号推算进度。
+            transferred = 1 if latest_time else 0
+            progress_pct = 100 if transferred else 0
+            cal_db.upsert_season_metrics(tmdb_id, season_no, transferred, 1, 1, progress_pct, now_ts)
+            cal_db.upsert_task_metrics(task_name, tmdb_id, season_no, transferred, progress_pct, now_ts)
+            try:
+                notify_calendar_changed('transfer_update')
+            except Exception:
+                pass
+            return True
+
         # 若仅有日期但无集号，尝试用 tmdb_id + season + air_date 推导集号
         if ep_no is None and parsed_air_date:
             try:
@@ -1543,6 +1600,22 @@ def recompute_all_seasons_aired_daily():
                 season_no_i = int(season_no)
                 total_i = int(total or 0)
 
+                show = cal_db.get_show(tmdb_id_i) or {}
+                if show.get('content_type') == 'movie':
+                    metrics = cal_db.get_season_metrics(tmdb_id_i, season_no_i) or {}
+                    transferred_i = min(1, int(metrics.get('transferred_count') or 0))
+                    progress_pct = 100 if transferred_i else 0
+                    cal_db.upsert_season_metrics(
+                        tmdb_id_i,
+                        season_no_i,
+                        transferred_i,
+                        1,
+                        1,
+                        progress_pct,
+                        now_ts,
+                    )
+                    continue
+
                 # 逐集判断是否已播出（优先使用 Trakt 本地时间，其次节目级本地时间，最后 TMDB 日期）
                 aired_i = 0
                 cur.execute(
@@ -1624,6 +1697,14 @@ def recompute_show_aired_progress(tmdb_id: int, now_local_dt=None, season_number
 
         cal_db = CalendarDB()
         cur = cal_db.conn.cursor()
+        try:
+            movie_show = cal_db.get_show(int(tmdb_id)) or {}
+            if movie_show.get('content_type') == 'movie':
+                for task_name in cal_db.get_bound_tasks_for_show(int(tmdb_id)):
+                    recompute_task_metrics_and_notify(task_name)
+                return
+        except Exception:
+            pass
         # 获取节目名称（用于日志，仅影响可读性）
         show_name = str(tmdb_id)
         try:
@@ -3209,6 +3290,7 @@ def ensure_calendar_info_for_tasks() -> bool:
     tmdb_service = TMDBService(tmdb_api_key, poster_language) if tmdb_api_key else None
 
     changed = False
+    movie_db = None
     # 简单去重缓存，避免同一名称/年份重复请求 TMDB
     search_cache = {}
     details_cache = {}
@@ -3221,6 +3303,36 @@ def ensure_calendar_info_for_tasks() -> bool:
 
         cal = task.get('calendar_info') or {}
         extracted = cal.get('extracted') or {}
+
+        # 电影有独立的 TMDB API 与完成度口径，不能进入后面的 TV 匹配分支。
+        # 同时在这里迁移历史上被错误降级为 other、但保存路径明确是电影目录的任务。
+        if is_movie_task(task):
+            info = extractor.extract_show_info_from_path(save_path)
+            movie_name = extracted.get('show_name') or info.get('show_name') or task_name
+            movie_year = extracted.get('year') or info.get('year') or ''
+            if task.get('content_type') != 'movie':
+                task['content_type'] = 'movie'
+                changed = True
+            if (
+                extracted.get('content_type') != 'movie'
+                or extracted.get('show_name') != movie_name
+                or extracted.get('year') != movie_year
+            ):
+                extracted.update({
+                    'show_name': movie_name,
+                    'year': movie_year,
+                    'content_type': 'movie',
+                })
+                cal['extracted'] = extracted
+                changed = True
+            task['calendar_info'] = cal
+
+            if tmdb_service and movie_name:
+                if movie_db is None:
+                    movie_db = CalendarDB()
+                if process_movie_task_async(task, tmdb_service, movie_db):
+                    changed = True
+            continue
 
         # 提取 extracted（仅在缺失时）
         need_extract = not extracted or not extracted.get('show_name')
@@ -3318,6 +3430,11 @@ def ensure_calendar_info_for_tasks() -> bool:
 
     if changed:
         config_data['tasklist'] = tasks
+        try:
+            Config.write_json(CONFIG_PATH, config_data)
+        except Exception as e:
+            logging.warning(f"保存日历任务信息失败: {e}")
+        clear_calendar_tasks_cache()
     return changed
 
 
@@ -6134,6 +6251,19 @@ def get_calendar_tasks():
     global _calendar_tasks_cache, _last_sync_time
     
     try:
+        # 一次性迁移历史版本把电影任务降级为 other 的配置。放在缓存检查前，
+        # 避免用户需要手动编辑并保存任务才能看到修复结果。
+        legacy_movie_tasks = any(
+            is_movie_task(task)
+            and (
+                task.get('content_type') != 'movie'
+                or ((task.get('calendar_info') or {}).get('extracted') or {}).get('content_type') != 'movie'
+            )
+            for task in (config_data.get('tasklist', []) or [])
+        )
+        if legacy_movie_tasks:
+            ensure_calendar_info_for_tasks()
+
         # 检查缓存是否有效
         current_time = time.time()
         cache_key = 'tasks_data'
@@ -6600,9 +6730,150 @@ def process_new_tasks_async():
         logging.warning(f"异步处理新任务失败: {e}")
 
 
+def process_movie_task_async(task, tmdb_service, cal_db) -> bool:
+    """匹配并缓存电影任务的元数据。
+
+    日历数据库原先只存储电视节目。电影在此以一个虚拟的单项季/集表示，
+    使任务列表、海报视图和自动执行的完成度都使用同一套数据源。
+    """
+    try:
+        task = task or {}
+        task_name = task.get('taskname') or task.get('task_name') or ''
+        cal = task.get('calendar_info') or {}
+        extracted = cal.get('extracted') or {}
+        match = cal.get('match') or {}
+
+        info = TaskExtractor().extract_show_info_from_path(task.get('savepath', ''))
+        show_name = extracted.get('show_name') or info.get('show_name') or task_name
+        year = extracted.get('year') or info.get('year') or ''
+        if not show_name:
+            return False
+
+        # 电影类型在任务和 extracted 两处同时保存，避免后续同步逻辑再次把它回退为 other。
+        task['content_type'] = 'movie'
+        extracted.update({
+            'show_name': show_name,
+            'year': year,
+            'content_type': 'movie',
+        })
+        cal['extracted'] = extracted
+
+        tmdb_id = match.get('tmdb_id')
+        details = None
+        try:
+            if tmdb_id:
+                details = tmdb_service.get_movie_details(int(tmdb_id)) or None
+        except Exception:
+            tmdb_id = None
+
+        if not details:
+            results = tmdb_service.search_movie_all(show_name, year or None)
+            if not results and year:
+                results = tmdb_service.search_movie_all(show_name, None)
+            if not results:
+                # 搜索失败不再篡改电影类型，用户仍可在后续刷新或手动编辑中重试。
+                task['calendar_info'] = cal
+                return False
+
+            selected = None
+            if year:
+                for candidate in results:
+                    if (candidate.get('release_date') or '')[:4] == str(year) and candidate.get('id'):
+                        selected = candidate
+                        break
+            if selected is None:
+                selected = next((candidate for candidate in results if candidate.get('id')), None)
+            if not selected:
+                task['calendar_info'] = cal
+                return False
+
+            tmdb_id = int(selected['id'])
+            details = tmdb_service.get_movie_details(tmdb_id) or selected
+
+        tmdb_id = int(tmdb_id)
+        release_date = (details.get('release_date') or '')[:10]
+        movie_name = tmdb_service.get_chinese_movie_title_with_fallback(tmdb_id, show_name)
+        if release_date:
+            status = '已上映' if release_date <= datetime.now().strftime('%Y-%m-%d') else '待上映'
+        else:
+            status = '电影'
+
+        existing_show = cal_db.get_show(tmdb_id) or {}
+        existing_poster_path = existing_show.get('poster_local_path', '')
+        is_custom_poster = bool(existing_show.get('is_custom_poster', 0))
+        poster_path = tmdb_service.get_poster_path_with_language(tmdb_id, 'movie')
+        poster_local_path = existing_poster_path
+        if poster_path:
+            poster_local_path = download_poster_local(
+                poster_path,
+                tmdb_id,
+                existing_poster_path,
+                is_custom_poster,
+            ) or existing_poster_path
+
+        cal_db.upsert_show(
+            tmdb_id,
+            movie_name,
+            release_date[:4],
+            status,
+            poster_local_path,
+            1,
+            0,
+            existing_show.get('bound_task_names', ''),
+            'movie',
+            int(is_custom_poster),
+        )
+        cal_db.upsert_season(tmdb_id, 1, 1, f'/movie/{tmdb_id}', '电影')
+        cal_db.upsert_episode(
+            tmdb_id=tmdb_id,
+            season_number=1,
+            episode_number=1,
+            name=movie_name,
+            overview=details.get('overview') or '',
+            air_date=release_date,
+            runtime=details.get('runtime'),
+            ep_type='movie',
+            updated_at=int(time.time()),
+        )
+        if release_date:
+            cal_db.update_episode_air_date_local(tmdb_id, 1, 1, release_date)
+
+        cal['match'] = {
+            'matched_show_name': movie_name,
+            'matched_year': release_date[:4],
+            'tmdb_id': tmdb_id,
+            'media_type': 'movie',
+            'latest_season_number': 1,
+            'latest_season_fetch_url': f'/movie/{tmdb_id}',
+        }
+        task['calendar_info'] = cal
+        task['matched_latest_season_number'] = 1
+        if task_name:
+            cal_db.bind_task_and_content_type(tmdb_id, task_name, 'movie')
+            recompute_task_metrics_and_notify(task_name)
+
+        # process_new_tasks_async 在配置落盘后异步运行，电影匹配结果需要主动保存。
+        try:
+            Config.write_json(CONFIG_PATH, config_data)
+        except Exception as e:
+            logging.warning(f"保存电影元数据失败: task={task_name}, err={e}")
+        try:
+            clear_calendar_tasks_cache()
+            notify_calendar_changed('edit_metadata')
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logging.warning(f"处理电影元数据失败: task={task.get('taskname', '')}, err={e}")
+        return False
+
+
 def process_single_task_async(task, tmdb_service, cal_db):
     """处理单个任务的元数据匹配和海报下载"""
     try:
+        if is_movie_task(task):
+            return process_movie_task_async(task, tmdb_service, cal_db)
+
         cal = (task or {}).get('calendar_info') or {}
         match = cal.get('match') or {}
         extracted = cal.get('extracted') or {}
@@ -7135,6 +7406,12 @@ def do_calendar_bootstrap() -> tuple:
             if not tmdb_id:
                 continue
 
+            # ensure_calendar_info_for_tasks 已为电影建立单项元数据，不能再用 TV
+            # 接口覆盖为同 ID 的电视剧数据。
+            if is_movie_task(task):
+                any_written = True
+                continue
+
             details = tmdb_service.get_tv_show_details(tmdb_id) or {}
             # 使用新的方法获取中文标题，支持从别名中获取中国地区的别名
             name = tmdb_service.get_chinese_title_with_fallback(tmdb_id, extracted.get('show_name', ''))
@@ -7444,6 +7721,8 @@ def sync_trakt_airtime_for_all_shows():
         total = len(shows)
         synced = 0
         for show in shows:
+            if show.get('content_type') == 'movie':
+                continue
             tmdb_id = show.get("tmdb_id")
             if tmdb_id is None or tmdb_id == "":
                 continue
@@ -7604,7 +7883,10 @@ def redownload_all_posters():
                     continue
                     
                 # 获取新的海报路径
-                new_poster_path = tmdb_service.get_poster_path_with_language(int(tmdb_id))
+                new_poster_path = tmdb_service.get_poster_path_with_language(
+                    int(tmdb_id),
+                    'movie' if show.get('content_type') == 'movie' else 'tv',
+                )
                 if new_poster_path:
                     # 获取现有海报信息
                     existing_poster_path = show.get('poster_local_path', '')
@@ -8577,7 +8859,7 @@ def calendar_edit_metadata():
                 except Exception as e:
                     logging.warning(f"同步本地播出时间到数据库失败: {e}")
 
-        valid_types = {'tv', 'anime', 'variety', 'documentary', 'other', ''}
+        valid_types = {'movie', 'tv', 'anime', 'variety', 'documentary', 'other', ''}
         if new_content_type in valid_types:
             extracted = (target.setdefault('calendar_info', {}).setdefault('extracted', {}))
             if extracted.get('content_type') != new_content_type:
@@ -9191,13 +9473,15 @@ def run_calendar_refresh_all_internal():
         # 简单读取所有已初始化的剧目
         try:
             cur = db.conn.cursor()
-            cur.execute('SELECT tmdb_id FROM shows')
-            shows = [r[0] for r in cur.fetchall()]
+            cur.execute('SELECT tmdb_id, content_type FROM shows')
+            shows = cur.fetchall()
         except Exception:
             shows = []
         any_written = False
         status_changed_any = False
-        for tmdb_id in shows:
+        for tmdb_id, content_type in shows:
+            if content_type == 'movie':
+                continue
             try:
                 # 直接重用内部逻辑
                 with app.app_context():

@@ -124,7 +124,7 @@ class TaskExtractor:
             save_path: 保存路径
             
         Returns:
-            内容类型：tv（剧集）、anime（动画）、variety（综艺）、documentary（纪录片）、other（其他）
+            内容类型：movie（电影）、tv（剧集）、anime（动画）、variety（综艺）、documentary（纪录片）、other（其他）
         """
         if not save_path:
             return 'other'
@@ -132,7 +132,9 @@ class TaskExtractor:
         path_lower = save_path.lower()
         
         # 根据路径关键词判断类型
-        if any(keyword in path_lower for keyword in ['剧集', '电视剧', '电视', '电视节目', '连续剧', '影集', 'tv', 'drama']):
+        if any(keyword in path_lower for keyword in ['电影', '影片', 'movie', 'film']):
+            return 'movie'
+        elif any(keyword in path_lower for keyword in ['剧集', '电视剧', '电视', '电视节目', '连续剧', '影集', 'tv', 'drama']):
             return 'tv'
         elif any(keyword in path_lower for keyword in ['动画', '动漫', '动画片', '卡通片', '卡通', 'anime', 'cartoon']):
             return 'anime'
@@ -262,6 +264,10 @@ class TaskExtractor:
                     explicit_type = None
                 if not explicit_type:
                     explicit_type = task.get('content_type')
+                # 旧版本会把电影任务错误降级为 other。若保存路径能明确识别类型，
+                # 以路径结果恢复该任务；其他显式类型仍保持优先。
+                if explicit_type == 'other' and show_info['type'] != 'other':
+                    explicit_type = show_info['type']
                 final_type = (explicit_type or show_info['type'] or 'other')
 
                 # 合并信息
@@ -296,6 +302,7 @@ class TaskExtractor:
             显示名称
         """
         type_names = {
+            'movie': '电影',
             'tv': '剧集',
             'anime': '动画',
             'variety': '综艺',

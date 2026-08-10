@@ -127,6 +127,22 @@ class TMDBService:
             # 返回第一个匹配结果
             return result['results'][0]
         return None
+
+    def search_movie(self, query: str, year: str = None) -> Optional[Dict]:
+        """搜索电影。"""
+        results = self.search_movie_all(query, year)
+        return results[0] if results else None
+
+    def search_movie_all(self, query: str, year: str = None) -> List[Dict]:
+        """搜索电影，返回所有搜索结果。"""
+        params = {'query': query}
+        if year:
+            params['year'] = year
+
+        result = self._make_request('/search/movie', params)
+        if result and result.get('results'):
+            return result['results']
+        return []
     
     def search_tv_show_all(self, query: str, year: str = None) -> List[Dict]:
         """搜索电视剧，返回所有搜索结果"""
@@ -145,10 +161,18 @@ class TMDBService:
     def get_tv_show_details(self, tv_id: int) -> Optional[Dict]:
         """获取电视剧详细信息"""
         return self._make_request(f'/tv/{tv_id}')
+
+    def get_movie_details(self, movie_id: int) -> Optional[Dict]:
+        """获取电影详细信息。"""
+        return self._make_request(f'/movie/{movie_id}')
     
     def get_tv_show_alternative_titles(self, tv_id: int) -> Optional[Dict]:
         """获取电视剧的别名信息"""
         return self._make_request(f'/tv/{tv_id}/alternative_titles')
+
+    def get_movie_alternative_titles(self, movie_id: int) -> Optional[Dict]:
+        """获取电影别名信息。"""
+        return self._make_request(f'/movie/{movie_id}/alternative_titles')
     
     def _is_chinese_text(self, text: str) -> bool:
         """检查文本是否包含中文字符"""
@@ -201,6 +225,29 @@ class TMDBService:
                 
         except Exception as e:
             logger.debug(f"获取中文标题失败: {e}, 使用原始标题: {original_title}")
+            return original_title
+
+    def get_chinese_movie_title_with_fallback(self, movie_id: int, original_title: str = "") -> str:
+        """获取电影中文标题，必要时回退到中国地区别名或原始标题。"""
+        try:
+            details = self.get_movie_details(movie_id)
+            if not details:
+                return original_title
+
+            title = (details.get('title') or '').strip()
+            if title and self._is_chinese_text(title):
+                return title
+
+            alternative_titles = self.get_movie_alternative_titles(movie_id)
+            for alternative in (alternative_titles or {}).get('titles', []):
+                if alternative.get('iso_3166_1') == 'CN':
+                    chinese_title = (alternative.get('title') or '').strip()
+                    if chinese_title and self._is_chinese_text(chinese_title):
+                        return chinese_title
+
+            return title or original_title
+        except Exception as e:
+            logger.debug(f"获取电影中文标题失败: {e}, 使用原始标题: {original_title}")
             return original_title
     
     def get_tv_show_episodes(self, tv_id: int, season_number: int) -> Optional[Dict]:
@@ -437,14 +484,20 @@ class TMDBService:
             logger.error(f"时间转换失败: {e}")
             return utc_time_str
 
-    def get_poster_path_with_language(self, tv_id: int) -> str:
-        """根据海报语言设置获取海报路径"""
+    def get_poster_path_with_language(self, media_id: int, media_type: str = 'tv') -> str:
+        """根据海报语言设置获取电视节目或电影海报路径。"""
         try:
             if not self.is_configured():
                 return ''
+
+            endpoint_type = 'movie' if media_type == 'movie' else 'tv'
             
-            # 获取节目详情
-            details = self.get_tv_show_details(tv_id)
+            # 获取媒体详情
+            details = (
+                self.get_movie_details(media_id)
+                if endpoint_type == 'movie'
+                else self.get_tv_show_details(media_id)
+            )
             if not details:
                 return ''
             
@@ -464,7 +517,7 @@ class TMDBService:
                 
                 # 尝试获取原始语言海报
                 try:
-                    url = f"{self.current_url}/tv/{tv_id}"
+                    url = f"{self.current_url}/{endpoint_type}/{media_id}"
                     response = self.session.get(url, params=params, timeout=10)
                     response.raise_for_status()
                     data = response.json()
@@ -483,7 +536,7 @@ class TMDBService:
                 }
                 
                 try:
-                    url = f"{self.current_url}/tv/{tv_id}"
+                    url = f"{self.current_url}/{endpoint_type}/{media_id}"
                     response = self.session.get(url, params=params, timeout=10)
                     response.raise_for_status()
                     data = response.json()

@@ -1392,7 +1392,7 @@
                       </div>
                     </div>
                     <div class="discovery-actions-row" style="top: 36px;" v-if="tasklistPosterLoaded[task.taskname]">
-                      <div class="discovery-refresh-metadata" v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).match_tmdb_id" @click="refreshSeasonMetadata(getCalendarTaskByName(task.taskname))" title="刷新元数据">
+                      <div class="discovery-refresh-metadata" v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).match_tmdb_id && getCalendarTaskByName(task.taskname).content_type !== 'movie'" @click="refreshSeasonMetadata(getCalendarTaskByName(task.taskname))" title="刷新元数据">
                         <i class="bi bi-arrow-clockwise"></i>
                       </div>
                       <div class="discovery-edit-metadata tasklist-edit-metadata-btn" @click.stop="openEditMetadataModal(getCalendarTaskByName(task.taskname) || { task_name: task.taskname })" title="编辑元数据">
@@ -2155,14 +2155,14 @@
                       
                       <!-- 刷新元数据按钮（左上角，悬停显示） -->
                       <div class="discovery-refresh-metadata" 
-                           v-if="task.match_tmdb_id"
+                           v-if="task.match_tmdb_id && task.content_type !== 'movie'"
                            @click="refreshSeasonMetadata(task)" 
                            title="刷新元数据">
                         <i class="bi bi-arrow-clockwise"></i>
                       </div>
                       <!-- 编辑元数据按钮（已匹配：靠右；未匹配：靠左） -->
                       <div class="discovery-edit-metadata tasklist-edit-metadata-btn"
-                           :style="{ left: task.match_tmdb_id ? '36px' : '8px' }"
+                           :style="{ left: task.match_tmdb_id && task.content_type !== 'movie' ? '36px' : '8px' }"
                            @click.stop="openEditMetadataModal(task)"
                            title="编辑元数据">
                         <i class="bi bi-tag"></i>
@@ -2943,7 +2943,7 @@
                     </div>
                     <div class="form-control matched-result" style="display: flex; align-items: center; gap: 8px;">
                       <div class="matched-main">
-                        <a v-if="editMetadata.display.matched_tmdb_id" href="#" @click.prevent="openTaskMatchedTmdbPage({ match: { tmdb_id: editMetadata.display.matched_tmdb_id } })" class="matched-link">
+                        <a v-if="editMetadata.display.matched_tmdb_id" href="#" @click.prevent="openTaskMatchedTmdbPage({ match: { tmdb_id: editMetadata.display.matched_tmdb_id, media_type: editMetadata.form.content_type } })" class="matched-link">
                           {{ editMetadata.display.matched_label }}
                         </a>
                         <span v-else>{{ editMetadata.display.matched_label }}</span>
@@ -5971,7 +5971,7 @@
         },
         isTaskCompletedByStatusAndProgress(status, progressValue) {
           try {
-            const finalStatuses = ['本季终', '已完结', '已取消'];
+            const finalStatuses = ['本季终', '已完结', '已取消', '已上映'];
             if (!finalStatuses.includes(status)) return false;
             if (progressValue === null || progressValue === undefined) return false;
             return Number(progressValue) >= 100;
@@ -7244,6 +7244,9 @@
               console.warn('刷新季元数据失败：缺少必要参数', task);
               return;
             }
+            if (task.content_type === 'movie' || (task.match && task.match.media_type === 'movie')) {
+              return;
+            }
             
             // 获取季数：仅使用任务匹配到的季（未匹配则不继续）
             const season_number = task.matched_latest_season_number;
@@ -7903,7 +7906,7 @@
         
         // 更新内容类型列表（用于热更新）
         updateContentTypes(rawTypes) {
-          const knownOrderWithoutOther = ['tv', 'anime', 'variety', 'documentary'];
+          const knownOrderWithoutOther = ['movie', 'tv', 'anime', 'variety', 'documentary'];
           const hasOther = rawTypes.includes('other');
           const typeSet = new Set(rawTypes);
           const orderedKnown = knownOrderWithoutOther.filter(t => typeSet.has(t));
@@ -8474,7 +8477,8 @@
           try {
             const tmdbId = episode.tmdb_id || (episode.task_info && episode.task_info.match && episode.task_info.match.tmdb_id) || (episode.task_info && episode.task_info.tmdb_id);
             if (tmdbId) {
-              const url = `https://www.themoviedb.org/tv/${tmdbId}`;
+              const mediaType = episode.type === 'movie' || (episode.task_info && episode.task_info.content_type === 'movie') ? 'movie' : 'tv';
+              const url = `https://www.themoviedb.org/${mediaType}/${tmdbId}`;
               window.open(url, '_blank');
             }
           } catch (e) {
@@ -8488,7 +8492,9 @@
             if (!task) return;
             const tmdbId = (task.match && task.match.tmdb_id) || task.match_tmdb_id || (task.calendar_info && task.calendar_info.match && task.calendar_info.match.tmdb_id) || task.tmdb_id;
             if (tmdbId) {
-              const url = `https://www.themoviedb.org/tv/${tmdbId}`;
+              const match = (task.match || (task.calendar_info && task.calendar_info.match) || {});
+              const mediaType = match.media_type === 'movie' || task.content_type === 'movie' ? 'movie' : 'tv';
+              const url = `https://www.themoviedb.org/${mediaType}/${tmdbId}`;
               window.open(url, '_blank');
             }
           } catch (e) {
@@ -8510,6 +8516,18 @@
             return match.tmdb_id || task.tmdb_id;
           } catch (e) {
             return null;
+          }
+        },
+        getTaskMediaType(task) {
+          try {
+            if (!task) return 'tv';
+            const calendarTask = this.getCalendarTaskByName(task.taskname);
+            const source = calendarTask || task;
+            const cal = source.calendar_info || {};
+            const match = source.match || cal.match || {};
+            return match.media_type === 'movie' || source.content_type === 'movie' ? 'movie' : 'tv';
+          } catch (e) {
+            return 'tv';
           }
         },
         // 获取任务的季数（用于任务列表海报视图）
@@ -8537,6 +8555,11 @@
             if (!task) return;
             const tmdbId = this.getTaskTmdbId(task);
             if (tmdbId) {
+              const mediaType = this.getTaskMediaType(task);
+              if (mediaType === 'movie') {
+                window.open(`https://www.themoviedb.org/movie/${tmdbId}`, '_blank');
+                return;
+              }
               // 获取匹配的季数
               const seasonNumber = this.getTaskSeasonNumber(task);
               if (seasonNumber) {
@@ -18602,4 +18625,3 @@
 </body>
 
 </html>
-
