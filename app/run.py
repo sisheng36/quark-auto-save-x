@@ -369,6 +369,11 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             total_count = None
             transferred_count = None
             aired_count = None
+            # 电影任务：无剧集口径，进度 = 是否有转存记录（有转存记录即 100%）
+            is_movie_task = (
+                str(t.get('content_type') or '').strip().lower() == 'movie'
+                or str(((t.get('calendar_info') or {}).get('extracted') or {}).get('content_type') or '').strip().lower() == 'movie'
+            )
 
             try:
                 if tmdb_id and int(tmdb_id) in show_meta:
@@ -552,14 +557,29 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 except Exception:
                     pass
 
-            t['season_counts'] = {
-                'transferred_count': _effective_transferred,
-                'aired_count': aired_count or 0,
-                'total_count': total_count or 0,
-            }
+            if is_movie_task:
+                # 电影任务：有转存记录即视为已完成（100%），否则 0%
+                _movie_done = task_name in task_names_with_records
+                t['season_counts'] = {
+                    'transferred_count': 1 if _movie_done else 0,
+                    'aired_count': 1,
+                    'total_count': 1,
+                }
+                # 写回 task_metrics（使"按任务进度执行"模式能识别已完成电影并跳过重复转存）
+                try:
+                    from time import time as _now
+                    CalendarDB().upsert_task_metrics(task_name, tmdb_id, None, 1 if _movie_done else 0, 100 if _movie_done else 0, int(_now()))
+                except Exception:
+                    pass
+            else:
+                t['season_counts'] = {
+                    'transferred_count': _effective_transferred,
+                    'aired_count': aired_count or 0,
+                    'total_count': total_count or 0,
+                }
             # 写回 season_metrics（以该任务自身匹配到的季号为键；无匹配则跳过）
             try:
-                if tmdb_id and latest_sn:
+                if tmdb_id and latest_sn and not is_movie_task:
                     from time import time as _now
                     # 计算进度百分比：以 min(aired, total) 为分母；分母<=0 则为 0
                     try:
@@ -574,7 +594,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
             try:
-                if task_name and tmdb_id and latest_sn:
+                if task_name and tmdb_id and latest_sn and not is_movie_task:
                     from time import time as _now
                     # 同一套百分比口径
                     try:
@@ -689,6 +709,20 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
                         season_no = v
             except Exception:
                 season_no = None
+        # 电影任务：无剧集口径，有转存记录即视为 100%（写 task_metrics，供"按任务进度执行"识别已完成）
+        try:
+            _tgt_ct = str(tgt.get('content_type') or ((tgt.get('calendar_info') or {}).get('extracted') or {}).get('content_type') or '').strip().lower()
+        except Exception:
+            _tgt_ct = ''
+        if tgt and _tgt_ct == 'movie':
+            from time import time as _now
+            _movie_done = latest_time is not None
+            cal_db.upsert_task_metrics(task_name, None, None, 1 if _movie_done else 0, 100 if _movie_done else 0, int(_now()))
+            try:
+                notify_calendar_changed('transfer_update')
+            except Exception:
+                pass
+            return True
         # 未匹配则跳过
         if tmdb_id is None or season_no is None or int(season_no) <= 0:
             return False
