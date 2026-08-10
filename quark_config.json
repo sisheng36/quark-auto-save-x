@@ -1,0 +1,74 @@
+{
+  "cookie": [
+    "打开 pan.quark.com 按 F12 抓取"
+  ],
+  "push_config": {
+    "QUARK_SIGN_NOTIFY": true,
+    "其他推送渠道//此项可删": "配置方法同青龙"
+  },
+  "plugins": {
+    "emby": {
+      "url": "",
+      "token": ""
+    },
+    "smartstrm": {
+      "webhook": "",
+      "strmtask": "",
+      "xlist_path_fix": ""
+    }
+  },
+  "magic_regex": {
+    "$TV": {
+      "pattern": ".*?([Ss]\\d{1,2})?(?:[第EePpXx\\.\\-\\_\\( ]{1,2}|^)(\\d{1,3})(?!\\d).*?\\.(mp4|mkv)",
+      "replace": "\\1E\\2.\\3"
+    },
+    "$BLACK_WORD": {
+      "pattern": "^(?!.*纯享)(?!.*加更)(?!.*超前企划)(?!.*训练室)(?!.*蒸蒸日上).*",
+      "replace": ""
+    }
+  },
+  "tasklist": [
+    {
+      "taskname": "测试 - 正则命名",
+      "shareurl": "https://pan.quark.cn/s/ebd8a90f30c0#/list/share/ffccd89838a24d5daf76f0249d40e980-NHXQL",
+      "savepath": "测试/正则命名 - 你好，星期六",
+      "pattern": "(\\d{4})(-?)(\\d{2})(-?)(\\d{2})(期?)",
+      "replace": "你好，星期六 - \\1-\\3-\\5",
+      "filterwords": "加更，企划",
+      "enddate": "2099-01-30"
+      },
+    {
+      "taskname": "测试 - 顺序命名",
+      "shareurl": "https://pan.quark.cn/s/59169f522931#/list/share/364e88a7ef6449beb07120fb65695e8c-CF2025",
+      "savepath": "测试/顺序命名 - 乘风2025",
+      "pattern": "乘风2025 - S06E{}",
+      "filterwords": "超前，加更，训练，蒸蒸，纯享，团播，抢先",
+      "use_sequence_naming": true,
+      "use_episode_naming": false,
+      "sequence_naming": "乘风2025 - S06E{}",
+      "enddate": "2099-01-30"
+    },
+    {
+      "taskname": "测试 - 剧集命名",
+      "shareurl": "https://pan.quark.cn/s/100c8d659137#/list/share/05e7fe9ee511437eb8c06ef7b978df06-HJ",
+      "savepath": "测试/剧集命名 - 黑镜",
+      "pattern": "黑镜 - S01E[]",
+      "filterwords": "",
+      "use_sequence_naming": false,
+      "use_episode_naming": true,
+      "episode_naming": "黑镜 - S01E[]",
+      "enddate": "2099-01-30"
+    },
+    {
+      "taskname": "测试 - 直接转存",
+      "shareurl": "https://pan.quark.cn/s/100c8d659137#/list/share/05e7fe9ee511437eb8c06ef7b978df06-HJ",
+      "savepath": "测试/直接转存 - 黑镜",
+      "pattern": "",
+      "replace": "",
+      "filterwords": "",
+      "update_subdir": "S02",
+      "enddate": "2099-01-30"
+    }
+  ],
+  "episode_patterns": []
+}

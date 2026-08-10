@@ -1,0 +1,9 @@
+quark_config_debug.json
+__pycache__
+/config
+.vscode
+
+# 本地工具与备份（不入库）
+.zcode
+.backup_frontend
+.DS_Store
