@@ -1138,6 +1138,14 @@
               </div>
               <input type="text" v-model="formData.trakt.client_id" class="form-control" placeholder="输入 Trakt Client ID，用于获取电视节目的播出时间" title="Trakt Client ID，用于获取电视节目的播出时间">
             </div>
+            <div class="input-group api-config-group">
+              <div class="input-group-prepend">
+                <span class="input-group-text">
+                  <a href="https://github.com/settings/tokens" target="_blank" class="api-label-link" title="前往GitHub生成访问令牌（classic token，勾选 repo 或仅 public_repo 权限即可）">GitHub 访问令牌</a>
+                </span>
+              </div>
+              <input type="password" v-model="formData.github_token" class="form-control" placeholder="可选，填写后新版检测走服务端代理，避免GitHub API限流；留空则保持直连" title="GitHub访问令牌（可选）：填写后新版检测经服务端请求GitHub，避免匿名API限流（60次/小时/IP）">
+            </div>
             <p class="tmdb-attribution">部分功能基于 <a href="https://www.themoviedb.org/" target="_blank">TMDB</a> 提供的数据实现，本应用与 TMDB 无关。</p>
             </div>
 
@@ -3343,7 +3351,8 @@
               media_id: ""
             }
           },
-          tmdb_api_key: ""
+          tmdb_api_key: "",
+          github_token: ""
         },
         userInfoList: [], // 用户信息列表
         accountsDetail: [], // 账号详细信息列表
@@ -9377,7 +9386,12 @@
           
           // 延迟检查版本，避免阻塞页面加载，并添加错误处理
           setTimeout(() => {
-            axios.get('https://api.github.com/repos/sisheng36/quark-auto-save-x/tags', {
+            // 已配置GitHub访问令牌时走服务端代理接口（避免匿名API限流），未配置则保持浏览器直连
+            const hasToken = this.formData && this.formData.github_token && String(this.formData.github_token).trim();
+            const versionApi = hasToken
+              ? '/api/check_update'
+              : 'https://api.github.com/repos/sisheng36/quark-auto-save-x/tags';
+            axios.get(versionApi, {
               timeout: 5000, // 5秒超时
               validateStatus: function (status) {
                 // 对于 403 rate limit 错误，静默处理，不抛出异常
