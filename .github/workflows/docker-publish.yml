@@ -238,7 +238,16 @@ jobs:
 
           📦 **项目**: ${{ github.repository }}
           🏷 **版本**: ${{ github.ref_name }}
-          🔗 **GHCR**: ${{ env.GHCR_IMAGE }}:${{ github.ref_name }}
+          🔗 **GHCR**: ${{ env.GHCR_IMAGE }}:${{ github.ref_name }}"
+
+          # Docker Hub 已配置时附加推送地址
+          if [ -n "${{ env.DOCKERHUB_USERNAME }}" ]; then
+            MESSAGE="${MESSAGE}
+
+          🐳 **Docker Hub**: ${{ env.DOCKERHUB_IMAGE }}:${{ github.ref_name }}"
+          fi
+
+          MESSAGE="${MESSAGE}
 
           ✅ 多架构清单已推送 (amd64, arm64)"
 
