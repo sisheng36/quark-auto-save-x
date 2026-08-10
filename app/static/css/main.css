@@ -357,6 +357,14 @@ a:hover {
   opacity: 1;
   transition: opacity 0.18s ease;
 }
+/* 版本更新提示徽标：与本地版本号保持同一水平线、垂直居中 */
+.glass-sidebar .nav-text .version-badge {
+  vertical-align: middle;
+  margin-left: 2px;
+}
+.glass-sidebar .nav-text .bi-arrow-right {
+  font-size: 0.75em;
+}
 
 /* 侧边栏底部链接 */
 .glass-sidebar .bottom-links {

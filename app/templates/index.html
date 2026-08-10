@@ -9283,7 +9283,8 @@
                 
                 // 使用处理后的版本号进行比较
                 if (latestVersion && latestVersion !== localVersionClean) {
-                  this.versionTips += ` <sup><span class="badge badge-pill badge-danger">${latestVersion}</span></sup>`;
+                  // 同水平显示新版本号（不用 sup 上标，避免与本地版本号错位）
+                  this.versionTips += ` <i class="bi bi-arrow-right"></i> <span class="badge badge-pill badge-danger version-badge" title="检测到新版本，点击查看发布页">新版 ${latestVersion}</span>`;
                 }
               })
               .catch(error => {
