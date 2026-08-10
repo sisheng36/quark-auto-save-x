@@ -2494,14 +2494,6 @@ body.login-page {
   padding-left: 15px;
   padding-right: 15px;
 }
-.calendar-category-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.calendar-count-indicator {
-  min-width: auto;
-}
 .calendar-date-navigation {
   display: flex;
   align-items: center;

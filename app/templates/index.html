@@ -19,258 +19,105 @@
   <script src="./static/js/sort_file_by_name.js"></script>
   <script src="./static/js/pinyin-pro.min.js"></script>
   <script>
-  // 添加检测文本溢出的自定义指令
-  Vue.directive('check-overflow', {
-    inserted: function(el, binding, vnode) {
-      // 检查元素是否溢出
-      const isOverflowing = el.scrollWidth > el.clientWidth;
-      
-      // 如果绑定了值，则绑定到该值对应的记录属性上
-      if (binding.value) {
-        const indexAndField = binding.value.split('|');
-        const index = parseInt(indexAndField[0]);
-        const field = indexAndField[1];
-        
-        // 设置记录的_isOverflowing属性
-        // 获取记录数组
-        const records = vnode.context.filteredHistoryRecords;
-        if (records && records[index]) {
-          // 初始化_isOverflowing属性（如果不存在）
-          if (!records[index]._isOverflowing) {
-            vnode.context.$set(records[index], '_isOverflowing', {});
-          }
-          // 设置对应字段的溢出状态
-          vnode.context.$set(records[index]._isOverflowing, field, isOverflowing);
-        }
-      }
-    },
-    // 添加update钩子，在DOM更新时重新检测溢出状态
-    update: function(el, binding, vnode) {
-      // 检查元素是否溢出
-      const isOverflowing = el.scrollWidth > el.clientWidth;
-      
-      // 如果绑定了值，则绑定到该值对应的记录属性上
-      if (binding.value) {
-        const indexAndField = binding.value.split('|');
-        const index = parseInt(indexAndField[0]);
-        const field = indexAndField[1];
-        
-        // 设置记录的_isOverflowing属性
-        const records = vnode.context.filteredHistoryRecords;
-        if (records && records[index]) {
-          // 初始化_isOverflowing属性（如果不存在）
-          if (!records[index]._isOverflowing) {
-            vnode.context.$set(records[index], '_isOverflowing', {});
-          }
-          // 设置对应字段的溢出状态
-          vnode.context.$set(records[index]._isOverflowing, field, isOverflowing);
-        }
-      }
+  // 拼音工具函数：将中文转为拼音（小写），用于排序比较
+  function toPinyin(name) {
+    try {
+      return pinyinPro.pinyin(name || '', { toneType: 'none', type: 'string' }).toLowerCase();
+    } catch (e) {
+      return (name || '').toLowerCase();
     }
-  });
-  
-  // 根据文件扩展名获取对应的Bootstrap图标类名
-  function getFileIconClass(fileName, isDir = false) {
-    // 如果是文件夹，返回文件夹图标
-    if (isDir) {
-      return 'bi-folder-fill';
-    }
-
-    // 获取文件扩展名（转为小写）
-    const ext = fileName.toLowerCase().split('.').pop();
-
-    // 视频文件
-    const videoExts = ['mp4', 'mkv', 'avi', 'mov', 'rmvb', 'flv', 'wmv', 'm4v', 'ts', 'webm', '3gp', 'f4v'];
-    if (videoExts.includes(ext)) {
-      return 'bi-file-earmark-play';
-    }
-
-    // 音频文件
-    const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'ape', 'ac3', 'dts'];
-    if (audioExts.includes(ext)) {
-      return 'bi-file-earmark-music';
-    }
-
-    // 图片文件
-    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'svg', 'ico', 'raw'];
-    if (imageExts.includes(ext)) {
-      return 'bi-file-earmark-image';
-    }
-
-    // 文本文件（包括歌词文件和字幕文件）
-    const textExts = ['txt', 'md', 'rtf', 'log', 'ini', 'cfg', 'conf', 'lrc', 'srt', 'ass', 'ssa', 'vtt', 'sup'];
-    if (textExts.includes(ext)) {
-      return 'bi-file-earmark-text';
-    }
-
-    // 富文本文件
-    const richtextExts = ['rtf', 'odt'];
-    if (richtextExts.includes(ext)) {
-      return 'bi-file-earmark-richtext';
-    }
-
-    // 压缩文件
-    const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'lzma', 'cab', 'iso'];
-    if (archiveExts.includes(ext)) {
-      return 'bi-file-earmark-zip';
-    }
-
-    // 字体文件
-    const fontExts = ['ttf', 'otf', 'woff', 'woff2', 'eot'];
-    if (fontExts.includes(ext)) {
-      return 'bi-file-earmark-font';
-    }
-
-    // 代码文件
-    const codeExts = ['js', 'html', 'css', 'py', 'java', 'c', 'cpp', 'php', 'go', 'json', 'xml', 'yml', 'yaml', 'sql', 'sh', 'bat', 'ps1', 'rb', 'swift', 'kt', 'ts', 'jsx', 'tsx', 'vue', 'scss', 'sass', 'less'];
-    if (codeExts.includes(ext)) {
-      return 'bi-file-earmark-code';
-    }
-
-    // PDF文件
-    if (ext === 'pdf') {
-      return 'bi-file-earmark-pdf';
-    }
-
-    // Word文档
-    const wordExts = ['doc', 'docx'];
-    if (wordExts.includes(ext)) {
-      return 'bi-file-earmark-word';
-    }
-
-    // Excel文档
-    const excelExts = ['xls', 'xlsx', 'csv'];
-    if (excelExts.includes(ext)) {
-      return 'bi-file-earmark-excel';
-    }
-
-    // PowerPoint文档
-    const pptExts = ['ppt', 'pptx'];
-    if (pptExts.includes(ext)) {
-      return 'bi-file-earmark-ppt';
-    }
-
-    // 医疗/健康相关文件
-    const medicalExts = ['dcm', 'dicom', 'hl7'];
-    if (medicalExts.includes(ext)) {
-      return 'bi-file-earmark-medical';
-    }
-
-    // 默认文件图标
-    return 'bi-file-earmark';
   }
 
-  // 判断是否为压缩文件
+  // 溢出检测指令工厂：根据 getListFn 获取目标列表，避免三个指令大量重复代码
+  function createOverflowDirective(getListFn) {
+    function checkOverflow(el, binding, vnode) {
+      if (!binding.value) return;
+      const isOverflowing = el.scrollWidth > el.clientWidth;
+      const indexAndField = binding.value.split('|');
+      const index = parseInt(indexAndField[0]);
+      const field = indexAndField[1];
+      const list = getListFn(vnode.context);
+      if (list && list[index]) {
+        if (!list[index]._isOverflowing) {
+          vnode.context.$set(list[index], '_isOverflowing', {});
+        }
+        vnode.context.$set(list[index]._isOverflowing, field, isOverflowing);
+      }
+    }
+    return {
+      inserted: checkOverflow,
+      update: checkOverflow
+    };
+  }
+
+  // 添加检测文本溢出的自定义指令
+  Vue.directive('check-overflow', createOverflowDirective(ctx => ctx.filteredHistoryRecords));
+
+  // 文件扩展名 -> 图标映射表（O(1) 查找，替代重复的 Array.includes）
+  const _FILE_ICON_MAP = new Map([
+    ['mp4','bi-file-earmark-play'],['mkv','bi-file-earmark-play'],['avi','bi-file-earmark-play'],
+    ['mov','bi-file-earmark-play'],['rmvb','bi-file-earmark-play'],['flv','bi-file-earmark-play'],
+    ['wmv','bi-file-earmark-play'],['m4v','bi-file-earmark-play'],['ts','bi-file-earmark-play'],
+    ['webm','bi-file-earmark-play'],['3gp','bi-file-earmark-play'],['f4v','bi-file-earmark-play'],
+    ['mp3','bi-file-earmark-music'],['wav','bi-file-earmark-music'],['flac','bi-file-earmark-music'],
+    ['aac','bi-file-earmark-music'],['ogg','bi-file-earmark-music'],['m4a','bi-file-earmark-music'],
+    ['wma','bi-file-earmark-music'],['ape','bi-file-earmark-music'],['ac3','bi-file-earmark-music'],
+    ['dts','bi-file-earmark-music'],
+    ['jpg','bi-file-earmark-image'],['jpeg','bi-file-earmark-image'],['png','bi-file-earmark-image'],
+    ['gif','bi-file-earmark-image'],['bmp','bi-file-earmark-image'],['webp','bi-file-earmark-image'],
+    ['tiff','bi-file-earmark-image'],['svg','bi-file-earmark-image'],['ico','bi-file-earmark-image'],
+    ['raw','bi-file-earmark-image'],
+    ['txt','bi-file-earmark-text'],['md','bi-file-earmark-text'],['rtf','bi-file-earmark-text'],
+    ['log','bi-file-earmark-text'],['ini','bi-file-earmark-text'],['cfg','bi-file-earmark-text'],
+    ['conf','bi-file-earmark-text'],['lrc','bi-file-earmark-text'],['srt','bi-file-earmark-text'],
+    ['ass','bi-file-earmark-text'],['ssa','bi-file-earmark-text'],['vtt','bi-file-earmark-text'],
+    ['sup','bi-file-earmark-text'],['odt','bi-file-earmark-richtext'],
+    ['zip','bi-file-earmark-zip'],['rar','bi-file-earmark-zip'],['7z','bi-file-earmark-zip'],
+    ['tar','bi-file-earmark-zip'],['gz','bi-file-earmark-zip'],['bz2','bi-file-earmark-zip'],
+    ['xz','bi-file-earmark-zip'],['lzma','bi-file-earmark-zip'],['cab','bi-file-earmark-zip'],
+    ['iso','bi-file-earmark-zip'],
+    ['ttf','bi-file-earmark-font'],['otf','bi-file-earmark-font'],['woff','bi-file-earmark-font'],
+    ['woff2','bi-file-earmark-font'],['eot','bi-file-earmark-font'],
+    ['js','bi-file-earmark-code'],['html','bi-file-earmark-code'],['css','bi-file-earmark-code'],
+    ['py','bi-file-earmark-code'],['java','bi-file-earmark-code'],['c','bi-file-earmark-code'],
+    ['cpp','bi-file-earmark-code'],['php','bi-file-earmark-code'],['go','bi-file-earmark-code'],
+    ['json','bi-file-earmark-code'],['xml','bi-file-earmark-code'],['yml','bi-file-earmark-code'],
+    ['yaml','bi-file-earmark-code'],['sql','bi-file-earmark-code'],['sh','bi-file-earmark-code'],
+    ['bat','bi-file-earmark-code'],['ps1','bi-file-earmark-code'],['rb','bi-file-earmark-code'],
+    ['swift','bi-file-earmark-code'],['kt','bi-file-earmark-code'],['ts','bi-file-earmark-code'],
+    ['jsx','bi-file-earmark-code'],['tsx','bi-file-earmark-code'],['vue','bi-file-earmark-code'],
+    ['scss','bi-file-earmark-code'],['sass','bi-file-earmark-code'],['less','bi-file-earmark-code'],
+    ['pdf','bi-file-earmark-pdf'],
+    ['doc','bi-file-earmark-word'],['docx','bi-file-earmark-word'],
+    ['xls','bi-file-earmark-excel'],['xlsx','bi-file-earmark-excel'],['csv','bi-file-earmark-excel'],
+    ['ppt','bi-file-earmark-ppt'],['pptx','bi-file-earmark-ppt'],
+    ['dcm','bi-file-earmark-medical'],['dicom','bi-file-earmark-medical'],['hl7','bi-file-earmark-medical']
+  ]);
+
+  // 共享压缩文件扩展名集合（getFileIconClass 和 isArchiveFile 复用）
+  const _ARCHIVE_EXTS = new Set(['zip','rar','7z','tar','gz','bz2','xz','lzma','cab','iso']);
+
+  // 根据文件扩展名获取对应的Bootstrap图标类名（O(1) Map 查找）
+  function getFileIconClass(fileName, isDir = false) {
+    if (isDir) return 'bi-folder-fill';
+    const ext = fileName.toLowerCase().split('.').pop();
+    return _FILE_ICON_MAP.get(ext) || 'bi-file-earmark';
+  }
+
+  // 判断是否为压缩文件（共享 _ARCHIVE_EXTS 集合）
   function isArchiveFile(fileName) {
     if (!fileName) return false;
-    const ext = fileName.toLowerCase().split('.').pop();
-    const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'lzma', 'cab', 'iso'];
-    // 处理.tar.gz和.tar.bz2等复合扩展名
     const lowerName = fileName.toLowerCase();
-    if (lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tar.bz2')) {
-      return true;
-    }
-    return archiveExts.includes(ext);
+    if (lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tar.bz2')) return true;
+    return _ARCHIVE_EXTS.has(lowerName.split('.').pop());
   }
 
   // 添加检测文件整理页面文件名溢出的自定义指令
-  Vue.directive('check-file-overflow', {
-    inserted: function(el, binding, vnode) {
-      // 检查元素是否溢出
-      const isOverflowing = el.scrollWidth > el.clientWidth;
+  Vue.directive('check-file-overflow', createOverflowDirective(ctx => ctx.fileManager.fileList));
 
-      // 如果绑定了值，则绑定到该值对应的文件属性上
-      if (binding.value) {
-        const indexAndField = binding.value.split('|');
-        const index = parseInt(indexAndField[0]);
-        const field = indexAndField[1];
-
-        // 设置文件的_isOverflowing属性
-        const files = vnode.context.fileManager.fileList;
-        if (files && files[index]) {
-          // 初始化_isOverflowing属性（如果不存在）
-          if (!files[index]._isOverflowing) {
-            vnode.context.$set(files[index], '_isOverflowing', {});
-          }
-          // 设置对应字段的溢出状态
-          vnode.context.$set(files[index]._isOverflowing, field, isOverflowing);
-        }
-      }
-    },
-    // 添加update钩子，在DOM更新时重新检测溢出状态
-    update: function(el, binding, vnode) {
-      // 检查元素是否溢出
-      const isOverflowing = el.scrollWidth > el.clientWidth;
-
-      // 如果绑定了值，则绑定到该值对应的文件属性上
-      if (binding.value) {
-        const indexAndField = binding.value.split('|');
-        const index = parseInt(indexAndField[0]);
-        const field = indexAndField[1];
-
-        // 设置文件的_isOverflowing属性
-        const files = vnode.context.fileManager.fileList;
-        if (files && files[index]) {
-          // 初始化_isOverflowing属性（如果不存在）
-          if (!files[index]._isOverflowing) {
-            vnode.context.$set(files[index], '_isOverflowing', {});
-          }
-          // 设置对应字段的溢出状态
-          vnode.context.$set(files[index]._isOverflowing, field, isOverflowing);
-        }
-      }
-    }
-  });
-  
   // 添加检测模态框表格文本溢出的自定义指令
-  Vue.directive('check-modal-overflow', {
-    inserted: function(el, binding, vnode) {
-      // 检查元素是否溢出
-      const isOverflowing = el.scrollWidth > el.clientWidth;
-      
-      // 如果绑定了值，则绑定到该值对应的文件属性上
-      if (binding.value) {
-        const indexAndField = binding.value.split('|');
-        const index = parseInt(indexAndField[0]);
-        const field = indexAndField[1];
-        
-        // 设置文件的_isOverflowing属性
-        const files = vnode.context.fileSelect.fileList;
-        if (files && files[index]) {
-          // 初始化_isOverflowing属性（如果不存在）
-          if (!files[index]._isOverflowing) {
-            vnode.context.$set(files[index], '_isOverflowing', {});
-          }
-          // 设置对应字段的溢出状态
-          vnode.context.$set(files[index]._isOverflowing, field, isOverflowing);
-        }
-      }
-    },
-    // 添加update钩子，在DOM更新时重新检测溢出状态
-    update: function(el, binding, vnode) {
-      // 检查元素是否溢出
-      const isOverflowing = el.scrollWidth > el.clientWidth;
-      
-      // 如果绑定了值，则绑定到该值对应的文件属性上
-      if (binding.value) {
-        const indexAndField = binding.value.split('|');
-        const index = parseInt(indexAndField[0]);
-        const field = indexAndField[1];
-        
-        // 设置文件的_isOverflowing属性
-        const files = vnode.context.fileSelect.fileList;
-        if (files && files[index]) {
-          // 初始化_isOverflowing属性（如果不存在）
-          if (!files[index]._isOverflowing) {
-            vnode.context.$set(files[index], '_isOverflowing', {});
-          }
-          // 设置对应字段的溢出状态
-          vnode.context.$set(files[index]._isOverflowing, field, isOverflowing);
-        }
-      }
-    }
-  });
-  
+  Vue.directive('check-modal-overflow', createOverflowDirective(ctx => ctx.fileSelect.fileList));
+
   // 添加中文数字转阿拉伯数字的函数
   function chineseToArabic(chinese) {
     if (!chinese) {
@@ -3886,8 +3733,8 @@
                 }
                 
                 // 匹配状态相同时，按任务名称拼音排序
-                const aKey = pinyinPro.pinyin(a.task_name || '', { toneType: 'none', type: 'string' }).toLowerCase();
-                const bKey = pinyinPro.pinyin(b.task_name || '', { toneType: 'none', type: 'string' }).toLowerCase();
+                const aKey = toPinyin(a.task_name || '');
+                const bKey = toPinyin(b.task_name || '');
                 if (aKey < bKey) return -1; if (aKey > bKey) return 1; return 0;
               } else if (sortBy === 'airtime') {
                 // 按播出时间排序（下一个待播集的播出日期和播出时间）
@@ -3895,7 +3742,7 @@
                 const getNameKey = (task) => {
                   const name = (task && task.task_name) || '';
                   try {
-                    return pinyinPro.pinyin(name, { toneType: 'none', type: 'string' }).toLowerCase() || name.toLowerCase();
+                    return toPinyin(name) || name.toLowerCase();
                   } catch (e) {
                     return name.toLowerCase();
                   }
@@ -5041,7 +4888,31 @@
         this.stopRuntimeLogPolling();
       },
       methods: {
-        // 是否为触摸移动端（窄屏且主输入无法悬停，排除窄屏桌面鼠标窗口）
+        // ---- 排序辅助函数（calendar + tasklist 共用） ----
+        _getNameKey(task) {
+          const name = (task && (task.task_name || task.taskname) || '').toString();
+          return toPinyin(name);
+        },
+        _parseDateKey(raw) {
+          if (!raw) return null;
+          const s = String(raw).trim();
+          let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+          if (m) return parseInt(m[1] + m[2] + m[3], 10);
+          m = s.match(/(\d{1,2})[-/](\d{1,2})/);
+          if (m) {
+            return parseInt('9999' + m[1].padStart(2, '0') + m[2].padStart(2, '0'), 10);
+          }
+          return null;
+        },
+        _parseTimeMinutes(raw) {
+          if (!raw) return null;
+          const s = String(raw).trim();
+          const m = s.match(/([0-2]?\d):([0-5]\d)/);
+          if (!m) return null;
+          const h = parseInt(m[1], 10), min = parseInt(m[2], 10);
+          if (isNaN(h) || isNaN(min)) return null;
+          return Math.max(0, Math.min(23, h)) * 60 + Math.max(0, Math.min(59, min));
+        },        // 是否为触摸移动端（窄屏且主输入无法悬停，排除窄屏桌面鼠标窗口）
         isMobileDevice() {
           if (typeof window === 'undefined' || window.innerWidth > 768) {
             return false;
@@ -5332,8 +5203,8 @@
                 const an = (a.t.taskname || '').toString();
                 const bn = (b.t.taskname || '').toString();
                 try {
-                  const ak = pinyinPro.pinyin(an, { toneType: 'none', type: 'string' }).toLowerCase();
-                  const bk = pinyinPro.pinyin(bn, { toneType: 'none', type: 'string' }).toLowerCase();
+                  const ak = toPinyin(an);
+                  const bk = toPinyin(bn);
                   if (ak < bk) cmp = -1; else if (ak > bk) cmp = 1; else cmp = 0;
                 } catch (e) { cmp = an.localeCompare(bn); }
               } else if (by === 'airtime') {
@@ -5345,7 +5216,7 @@
                 const getNameKey = (task) => {
                   const name = (task && (task.taskname || task.task_name) || '').toString();
                   try {
-                    return pinyinPro.pinyin(name, { toneType: 'none', type: 'string' }).toLowerCase() || name.toLowerCase();
+                    return toPinyin(name) || name.toLowerCase();
                   } catch (e) {
                     return name.toLowerCase();
                   }
@@ -6249,8 +6120,8 @@
         // 拼音排序辅助函数
         sortTaskNamesByPinyin(taskNames) {
           return taskNames.sort((a, b) => {
-            const aKey = pinyinPro.pinyin(a, { toneType: 'none', type: 'string' }).toLowerCase();
-            const bKey = pinyinPro.pinyin(b, { toneType: 'none', type: 'string' }).toLowerCase();
+            const aKey = toPinyin(a);
+            const bKey = toPinyin(b);
             return aKey > bKey ? 1 : -1;
           });
         },
@@ -6832,8 +6703,8 @@
                 // 按节目名称拼音排序
                 const an = (a && a.show_name) ? String(a.show_name) : '';
                 const bn = (b && b.show_name) ? String(b.show_name) : '';
-                const ak = pinyinPro.pinyin(an, { toneType: 'none', type: 'string' }).toLowerCase();
-                const bk = pinyinPro.pinyin(bn, { toneType: 'none', type: 'string' }).toLowerCase();
+                const ak = toPinyin(an);
+                const bk = toPinyin(bn);
                 if (ak === bk) return 0;
                 return ak > bk ? 1 : -1;
               } else if (sortBy === 'airtime') {
@@ -6867,8 +6738,8 @@
                 if (!aHasDate && !bHasDate) {
                   const an = (a && a.show_name) ? String(a.show_name) : '';
                   const bn = (b && b.show_name) ? String(b.show_name) : '';
-                  const ak = pinyinPro.pinyin(an, { toneType: 'none', type: 'string' }).toLowerCase();
-                  const bk = pinyinPro.pinyin(bn, { toneType: 'none', type: 'string' }).toLowerCase();
+                  const ak = toPinyin(an);
+                  const bk = toPinyin(bn);
                   if (ak === bk) return 0;
                   return ak > bk ? 1 : -1;
                 }
@@ -6901,8 +6772,8 @@
                 // 最后按节目名称排序
                 const an = (a && a.show_name) ? String(a.show_name) : '';
                 const bn = (b && b.show_name) ? String(b.show_name) : '';
-                const ak = pinyinPro.pinyin(an, { toneType: 'none', type: 'string' }).toLowerCase();
-                const bk = pinyinPro.pinyin(bn, { toneType: 'none', type: 'string' }).toLowerCase();
+                const ak = toPinyin(an);
+                const bk = toPinyin(bn);
                 if (ak === bk) return 0;
                 return ak > bk ? 1 : -1;
               }
