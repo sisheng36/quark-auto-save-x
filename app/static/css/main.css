@@ -1420,12 +1420,16 @@ body.login-page {
 .tasklist-header-categories {
   flex: 0 1 auto;
   min-width: 0;
+  padding-left: 15px;
+  padding-right: 15px;
 }
 .tasklist-header-controls {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   justify-content: flex-end;
+  padding-left: 15px;
+  padding-right: 15px;
 }
 .tasklist-type-filter {
   margin-bottom: 4px;
@@ -1847,16 +1851,62 @@ body.login-page {
   font-size: 0.85rem;
   margin-bottom: 8px;
 }
+/* 转存记录表格：行悬浮卡片化（保留表头排序/多选/展开等表格功能） */
+.selectable-records {
+  border-collapse: separate;
+  border-spacing: 0 10px;
+  table-layout: fixed;
+  margin-bottom: 0;
+}
+.selectable-records thead th {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+}
 .selectable-records tbody tr {
   cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-.selectable-records tbody tr.selected-record,
+.selectable-records tbody tr td {
+  background: rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border);
+  padding: 12px 10px;
+  vertical-align: middle;
+  /* 单行截断：长文本不换行不挤压 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.selectable-records tbody tr td:first-child {
+  border-left: 1px solid var(--glass-border);
+  border-radius: 14px 0 0 14px;
+}
+.selectable-records tbody tr td:last-child {
+  border-right: 1px solid var(--glass-border);
+  border-radius: 0 14px 14px 0;
+}
+.selectable-records tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.07);
+}
+.selectable-records tbody tr.selected-record td {
+  background: rgba(139, 92, 246, 0.16);
+}
+.selectable-records tbody tr.selected-record:hover td {
+  background: rgba(139, 92, 246, 0.22);
+}
+/* 文件整理表格的选中样式（独立于记录表格） */
 .selectable-files tbody tr.selected-file {
   background: rgba(139, 92, 246, 0.16);
 }
-.selectable-records tbody tr.selected-record:hover,
 .selectable-files tbody tr.selected-file:hover {
   background: rgba(139, 92, 246, 0.22);
+}
+/* 展开的多行文本不受单行截断影响 */
+.selectable-records td .expanded-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 .expanded-text {
   color: var(--text-secondary);
@@ -1925,6 +1975,24 @@ body.login-page {
   gap: 10px;
   margin-top: 14px;
 }
+/* 分页按钮统一：页码/上下页/跳页确定 同尺寸同圆角 */
+.pagination-container .btn {
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.pagination-container .btn-primary {
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.35);
+}
 .pagination-controls {
   display: flex;
   align-items: center;
@@ -1940,8 +2008,18 @@ body.login-page {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
   color: var(--text-tertiary);
   font-size: 0.85rem;
+}
+/* 设置项不参与 flex 压缩（外层 space-between 有富余，settings 按内容自适应宽度），
+   避免"跳到第"、按钮等被压成单字折行 */
+.pagination-settings > * {
+  flex-shrink: 0;
+}
+.pagination-settings span,
+.pagination-settings .btn {
+  white-space: nowrap;
 }
 .pagination-settings .form-control {
   width: 70px;
@@ -1951,6 +2029,8 @@ body.login-page {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  /* 覆盖 Bootstrap input-group 的 width: 100%，宽度跟随输入框内容自适应 */
+  width: auto !important;
 }
 .pagination-jump-page-input {
   width: 60px;
@@ -1958,7 +2038,8 @@ body.login-page {
   padding: 2px 6px;
   font-size: 0.82rem;
   text-align: center;
-  border-radius: 8px;
+  /* 独立输入框：左右统一圆角（覆盖 input-group 的首尾列圆角规则） */
+  border-radius: 8px !important;
 }
 
 /* ============================================================
@@ -2402,12 +2483,16 @@ body.login-page {
 .calendar-header-categories {
   flex: 0 1 auto;
   min-width: 0;
+  padding-left: 15px;
+  padding-right: 15px;
 }
 .calendar-header-controls {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   justify-content: flex-end;
+  padding-left: 15px;
+  padding-right: 15px;
 }
 .calendar-category-buttons {
   display: flex;
@@ -3238,7 +3323,8 @@ body.login-page {
   line-height: 1.2;
 }
 .glass-config-toggle-title .badge {
-  transform: translateY(-1px);
+  /* 与标题字体垂直居中对齐（徽章略高时下移 1px） */
+  transform: translateY(1px);
 }
 .glass-config-body {
   margin-left: 0 !important;
