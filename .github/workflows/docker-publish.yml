@@ -1,123 +1,276 @@
-name: Docker Publish
-
-permissions:
-  contents: write
-  packages: write
+name: 构建Docker镜像并推送构建结果通知
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
     tags:
       - "v*"
+  workflow_dispatch:
 
 env:
-  IMAGE_NAME: ${{ github.repository }}
+  REGISTRY: ghcr.io
+  GHCR_IMAGE: ${{ github.repository_owner }}/quark-auto-save-x
+  # 未配置 DOCKERHUB_USERNAME 时 Docker Hub 相关步骤自动跳过
+  DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME != '' && format('{0}/quark-auto-save-x', secrets.DOCKERHUB_USERNAME) || '' }}
+  # secrets 不能在 if: 条件中直接使用，映射到 env 后用 env.X 判断
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+  TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            platform_id: amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            platform_id: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          fetch-depth: 0
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
         with:
-          images: |
-            ${{ env.IMAGE_NAME }}
-            ghcr.io/${{ env.IMAGE_NAME }}
-            registry.cn-shenzhen.aliyuncs.com/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-
-      - name: Get version
-        id: get_version
-        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          images: |
+            ${{ env.REGISTRY }}/${{ env.GHCR_IMAGE }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=tag
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
 
-      - name: Login to aliyun
-        uses: docker/login-action@v3
+      - name: Build and push by digest (GHCR)
+        id: build
+        uses: docker/build-push-action@v6
         with:
-          registry: registry.cn-shenzhen.aliyuncs.com
-          username: ${{ secrets.ALIYUN_USERNAME }}
-          password: ${{ secrets.ALIYUN_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          build-args: |
-            MAINTAINER=${{ github.repository_owner }}
-            BRANCH=${{ github.ref_name }}
-            BUILD_SHA=${{ github.sha }}
-            BUILD_TAG=${{ steps.get_version.outputs.VERSION }}
           context: .
-          platforms: |
-            linux/amd64
-            linux/arm/v7
-            linux/arm64
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BUILD_SHA=${{ github.sha }}
+            BUILD_TAG=${{ github.ref_name }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.GHCR_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: |
+            type=gha,scope=quark-auto-save-x-${{ github.ref_name }}-${{ matrix.platform_id }}
+            type=gha,scope=quark-auto-save-x-${{ matrix.platform_id }}
+          cache-to: type=gha,mode=max,scope=quark-auto-save-x-${{ github.ref_name }}-${{ matrix.platform_id }}
 
-      - name: Update repo description
-        uses: peter-evans/dockerhub-description@v4
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build and push by digest (Docker Hub)
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        id: build_dh
+        uses: docker/build-push-action@v6
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.IMAGE_NAME }}
-          short-description: ${{ github.event.repository.description }}
-          enable-url-completion: true
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BUILD_SHA=${{ github.sha }}
+            BUILD_TAG=${{ github.ref_name }}
+          outputs: type=image,name=${{ env.DOCKERHUB_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: |
+            type=gha,scope=quark-auto-save-x-${{ github.ref_name }}-${{ matrix.platform_id }}
+            type=gha,scope=quark-auto-save-x-${{ matrix.platform_id }}
+          cache-to: type=gha,mode=max,scope=quark-auto-save-x-${{ github.ref_name }}-${{ matrix.platform_id }}
 
-      - name: Get Commit Messages
-        id: get_commit_messages
+      - name: Export digest
         run: |
-          # Get the latest tag
-          LATEST_TAG=$(git describe --tags --abbrev=0 HEAD^)
-
-          # If there is no latest tag, get only the latest commit message
-          if [ -z "$LATEST_TAG" ]; then
-            COMMITS=$(git log -1 --pretty=format:'- %s (%h)')
-          else
-            COMMITS=$(git log --pretty=format:'- %s (%h)' --no-merges "$LATEST_TAG"..HEAD)
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" | sed 's/^sha256://' > /tmp/digests/ghcr-${{ matrix.platform_id }}
+          if [ -n "${{ steps.build_dh.outputs.digest }}" ]; then
+            echo "${{ steps.build_dh.outputs.digest }}" | sed 's/^sha256://' > /tmp/digests/dockerhub-${{ matrix.platform_id }}
           fi
 
-          # Output Multi-Line String
-          echo "commits<<EOF" >> $GITHUB_OUTPUT
-          echo "$COMMITS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Upload New Release
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
         with:
-          draft: false
-          prerelease: false
-          body: "## What's Changed\n\n${{ steps.get_commit_messages.outputs.commits }}"
+          name: digests-${{ matrix.platform_id }}
+          path: /tmp/digests/
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download digest artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.GHCR_IMAGE }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=tag
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Create and push multi-arch manifest (GHCR)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          mapfile -t tag_list <<<"$TAGS"
+          tag_args=()
+          for tag in "${tag_list[@]}"; do
+            [ -n "$tag" ] || continue
+            suffix="${tag#*:}"
+            tag_args+=("-t" "${{ env.REGISTRY }}/${{ env.GHCR_IMAGE }}:${suffix}")
+          done
+          ghcr_refs=()
+          for pf in amd64 arm64; do
+            digest=$(cat "/tmp/digests/ghcr-${pf}")
+            ghcr_refs+=("${{ env.REGISTRY }}/${{ env.GHCR_IMAGE }}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${ghcr_refs[@]}"
+
+      - name: Create and push multi-arch manifest (Docker Hub)
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/digests/dockerhub-amd64 ] || [ ! -f /tmp/digests/dockerhub-arm64 ]; then
+            echo "Docker Hub digests not found, skipping"
+            exit 0
+          fi
+          mapfile -t tag_list <<<"$TAGS"
+          tag_args=()
+          for tag in "${tag_list[@]}"; do
+            [ -n "$tag" ] || continue
+            suffix="${tag#*:}"
+            tag_args+=("-t" "${{ env.DOCKERHUB_IMAGE }}:${suffix}")
+          done
+          dh_refs=()
+          for pf in amd64 arm64; do
+            digest=$(cat "/tmp/digests/dockerhub-${pf}")
+            dh_refs+=("${{ env.DOCKERHUB_IMAGE }}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${dh_refs[@]}"
+
+  notify:
+    needs: [build, merge]
+    if: always()   # 无论前面的 job 成功还是失败，都执行
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine build status
+        id: status
+        run: |
+          if [[ "${{ needs.build.result }}" == "success" ]] && [[ "${{ needs.merge.result }}" == "success" ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            # 找出是哪个 job 失败了
+            FAILED=""
+            [[ "${{ needs.build.result }}" != "success" ]] && FAILED+="Build "
+            [[ "${{ needs.merge.result }}" != "success" ]] && FAILED+="Merge"
+            echo "failed_job=$FAILED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Telegram notification (Success)
+        if: steps.status.outputs.status == 'success' && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_TO != ''
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          MESSAGE="➜ **Docker 镜像构建成功**
+
+          📦 **项目**: ${{ github.repository }}
+          🏷 **版本**: ${{ github.ref_name }}
+          🔗 **GHCR**: ${{ env.GHCR_IMAGE }}:${{ github.ref_name }}
+
+          ✅ 多架构清单已推送 (amd64, arm64)"
+
+          PAYLOAD=$(jq -n \
+            --arg chat "$TELEGRAM_TO" \
+            --arg text "$MESSAGE" \
+            '{chat_id: $chat, text: $text, parse_mode: "Markdown", disable_web_page_preview: true}')
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
+
+      - name: Send Telegram notification (Failure)
+        if: steps.status.outputs.status == 'failure' && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_TO != ''
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          FAILED_JOB="${{ steps.status.outputs.failed_job }}"
+          MESSAGE="❌ **Docker 构建失败**
+
+          📦 **项目**: ${{ github.repository }}
+          🏷 **版本**: ${{ github.ref_name }}
+          ⚠️ **失败环节**: ${FAILED_JOB}
+
+          🔍 [查看详情](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+          PAYLOAD=$(jq -n \
+            --arg chat "$TELEGRAM_TO" \
+            --arg text "$MESSAGE" \
+            '{chat_id: $chat, text: $text, parse_mode: "Markdown", disable_web_page_preview: true}')
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD"
