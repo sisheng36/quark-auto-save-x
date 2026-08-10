@@ -1399,6 +1399,11 @@ body.login-page {
   padding: 0.28rem 0.85rem;
   font-size: 0.83rem;
 }
+/* 与控件区按钮等高（36px），保证第二行严格对齐 */
+.calendar-header-categories .calendar-category-btn {
+  padding-top: 0.44rem;
+  padding-bottom: 0.44rem;
+}
 .calendar-category-btn.active {
   color: #fff;
   background: var(--accent-grad);
@@ -1410,6 +1415,17 @@ body.login-page {
 }
 .tasklist-header-row {
   align-items: center;
+}
+/* 分类按钮区：自适应宽度，控件区占剩余空间（保证第二行不换行） */
+.tasklist-header-categories {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.tasklist-header-controls {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 .tasklist-type-filter {
   margin-bottom: 4px;
@@ -1462,6 +1478,30 @@ body.login-page {
   border-left: 1px solid var(--glass-border);
   white-space: nowrap;
 }
+/* 排序控件内的 filter-select：透明融入 pill 容器（无边框/背景） */
+.tasklist-sort-wrapper .filter-select {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  height: 30px;
+  box-shadow: none !important;
+}
+.tasklist-sort-wrapper .filter-select:focus-within {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+.tasklist-sort-wrapper .filter-select-native {
+  padding: 0 26px 0 10px;
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+}
+.tasklist-sort-wrapper .filter-select-native:hover {
+  color: #fff;
+}
+.tasklist-sort-wrapper .filter-select-arrow {
+  font-size: 0.7rem;
+}
 
 /* 任务计数指示器 */
 .tasklist-count-indicator,
@@ -1489,39 +1529,59 @@ body.login-page {
   line-height: 1;
 }
 
-/* 任务行 */
-.task {
-  border-radius: 12px;
-  transition: background 0.15s ease, border-color 0.15s ease;
-  padding: 4px 10px;
-  margin-left: -10px;
-  margin-right: -10px;
+/* 任务卡片：悬浮长条形卡片，点击展开为大卡片 */
+.task-card {
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 6px 22px rgba(4, 3, 18, 0.35);
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-.task:hover {
-  background: rgba(255, 255, 255, 0.03);
+.task-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 10px 30px rgba(4, 3, 18, 0.5);
 }
-.task > hr {
-  margin: 8px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+/* 展开状态：大卡片强调 */
+.task-card.expanded {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(139, 92, 246, 0.5);
+  box-shadow: 0 12px 36px rgba(139, 92, 246, 0.16), 0 6px 22px rgba(4, 3, 18, 0.4);
 }
-.task .btn-block {
-  text-align: left;
-  color: var(--text-primary);
-  font-weight: 600;
+.task-card-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 10px;
 }
-.task .btn-block > i.bi-caret-right-fill {
+.task-card-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  user-select: none;
+}
+.task-card-toggle > i.bi-caret-right-fill {
   color: var(--accent-2);
+  font-size: 0.9rem;
+  flex-shrink: 0;
   transition: transform 0.2s ease;
 }
-.task .btn-block:hover {
-  color: #fff;
-}
-.task .btn-block:hover > i.bi-caret-right-fill {
+.task-card.expanded .task-card-toggle > i.bi-caret-right-fill {
   transform: rotate(90deg);
+}
+.task-card-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-card-toggle:hover .task-card-title {
+  color: #fff;
 }
 .task-latest-file,
 .task-season-counts,
@@ -1547,6 +1607,7 @@ body.login-page {
   border-radius: 50%;
   font-size: 0.78rem;
   margin-left: 4px;
+  flex-shrink: 0;
 }
 .task-today-indicator.transferred,
 .task-today-indicator.updated {
@@ -1563,6 +1624,7 @@ body.login-page {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 .task-buttons .btn {
   min-width: 34px;
@@ -1584,20 +1646,126 @@ body.login-page {
   filter: brightness(0) invert(1);
 }
 
-/* 任务展开编辑区 */
-.task .collapse {
-  background: rgba(255, 255, 255, 0.025);
+/* 任务展开编辑区（大卡片内嵌面板） */
+.task-card-body {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 12px;
-  padding: 12px 14px;
-  margin-top: 6px;
+}
+.task-card-body .alert {
+  margin-bottom: 12px;
+}
+.task-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+.task-field {
+  min-width: 0;
+}
+.task-field-full {
+  grid-column: 1 / -1;
+}
+.task-field .col-form-label {
+  display: block;
+  padding: 0;
   margin-bottom: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
-.task .collapse .form-group.row {
-  margin-bottom: 0.9rem;
+.task-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  padding-top: 4px;
 }
-.task .collapse .form-group.row:last-child {
+
+/* 任务插件配置：统一表单风格 */
+.task-plugin-config .glass-config-toggle-wrap {
+  margin-bottom: 10px;
+}
+.task-plugin-item {
+  margin-bottom: 10px;
+}
+.task-plugin-item:last-child {
   margin-bottom: 0;
+}
+.task-plugin-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+}
+.task-plugin-field:last-child {
+  border-bottom: none;
+}
+.task-plugin-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.task-plugin-label .bi-question-circle {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  cursor: help;
+}
+.task-plugin-field > .form-control {
+  max-width: 280px;
+}
+/* 玻璃风格开关 */
+.glass-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.glass-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.glass-switch-slider {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+.glass-switch-slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 2px;
+  top: 2px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.glass-switch input:checked + .glass-switch-slider {
+  background: var(--accent-grad);
+  border-color: transparent;
+  box-shadow: 0 2px 10px rgba(139, 92, 246, 0.5);
+}
+.glass-switch input:checked + .glass-switch-slider::before {
+  transform: translateX(18px);
+  background: #fff;
+}
+.glass-switch input:disabled + .glass-switch-slider {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .task-divider {
   border-top: 1px solid var(--glass-border);
@@ -1869,6 +2037,13 @@ body.login-page {
   max-width: 420px;
   margin-bottom: 12px;
 }
+/* 账号选择栏：单行排布（夸克账号 + 选择框 + 按钮不换行） */
+.file-manager-account-selector .file-manager-rule-bar {
+  flex-wrap: nowrap;
+}
+.file-manager-account-selector .file-manager-input {
+  min-width: 100px;
+}
 .file-manager-rule-bar-responsive {
   display: flex;
   align-items: center;
@@ -1891,6 +2066,17 @@ body.login-page {
   margin-bottom: 0;
   flex: 1;
   min-width: 180px;
+}
+/* 桌面端/移动端双版本工具栏：按断点互斥显隐，避免重复渲染 */
+@media (min-width: 768px) {
+  .file-manager-rule-bar-responsive {
+    display: none !important;
+  }
+}
+@media (max-width: 767.98px) {
+  .file-manager-rule-bar {
+    display: none !important;
+  }
 }
 .file-manager-input {
   flex: 1;
@@ -2181,7 +2367,7 @@ body.login-page {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  /* 不设 margin-bottom：行间距由 .calendar-header-row 提供，避免行内元素高度不一致导致垂直错位 */
 }
 .calendar-filter-row {
   display: flex;
@@ -2190,6 +2376,20 @@ body.login-page {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
+/* 筛选行：列宽为 gap 让出份额，避免百分比列宽 + gap 超宽导致换行 */
+@media (min-width: 992px) {
+  .calendar-filter-row .col-xl-4,
+  .calendar-filter-row .col-lg-4 {
+    flex-basis: calc(33.3333% - 6.7px);
+    max-width: calc(33.3333% - 6.7px);
+  }
+}
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .calendar-filter-row .col-md-6 {
+    flex-basis: calc(50% - 5px);
+    max-width: calc(50% - 5px);
+  }
+}
 .calendar-header-row {
   display: flex;
   align-items: center;
@@ -2197,6 +2397,17 @@ body.login-page {
   flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 12px;
+}
+/* 分类按钮区：自适应宽度，控件区占剩余空间（保证第二行不换行） */
+.calendar-header-categories {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.calendar-header-controls {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
 }
 .calendar-category-buttons {
   display: flex;
@@ -2210,8 +2421,11 @@ body.login-page {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
   margin-bottom: 14px;
+  /* 日期胶囊过多时横向滚动，避免换行 */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 6px;
 }
 .calendar-date-item {
   display: flex;
@@ -2233,6 +2447,19 @@ body.login-page {
 .calendar-date-item.selected .calendar-date-day {
   color: #fff;
 }
+/* 今天高亮：accent 描边 + 光晕（用 inset 阴影模拟边框，不改变元素尺寸，保证与其它日期胶囊严格对齐） */
+.calendar-date-item.today {
+  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.5), 0 4px 14px rgba(139, 92, 246, 0.22);
+}
+.calendar-date-item.today .calendar-date-weekday {
+  color: #c7d2fe;
+}
+.calendar-date-item.today .calendar-date-day {
+  color: #a5b4fc;
+}
+.calendar-date-item.selected.today {
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.45);
+}
 .calendar-date-weekday {
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -2252,14 +2479,14 @@ body.login-page {
   width: 100%;
 }
 .calendar-poster-grid {
-  display: flex;
-  gap: 22px;
+  display: grid;
+  gap: 18px 14px;
   overflow-x: auto;
   padding: 6px 2px 14px;
   scroll-snap-type: x proximity;
 }
 .calendar-poster-column {
-  flex-shrink: 0;
+  min-width: 0;
   scroll-snap-align: start;
 }
 .calendar-poster-item {
@@ -2268,7 +2495,7 @@ body.login-page {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--glass-border);
   transition: transform 0.18s ease, box-shadow 0.18s ease;
-  width: 150px;
+  width: 100%;
 }
 .calendar-poster-item:hover {
   transform: translateY(-4px);
@@ -2276,7 +2503,7 @@ body.login-page {
 }
 .calendar-poster {
   position: relative;
-  height: 200px;
+  aspect-ratio: 2 / 3;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.03);
   cursor: pointer;
@@ -2400,8 +2627,8 @@ body.login-page {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 .calendar-month-cell {
-  min-height: 96px;
-  padding: 6px;
+  min-height: 112px;
+  padding: 8px;
   border-right: 1px solid rgba(255, 255, 255, 0.05);
   position: relative;
   overflow: hidden;
@@ -2416,9 +2643,15 @@ body.login-page {
 .calendar-month-cell.other-month {
   opacity: 0.35;
 }
+/* 周末列微区分 */
+.calendar-month-row .calendar-month-cell:nth-child(6),
+.calendar-month-row .calendar-month-cell:nth-child(7) {
+  background: rgba(255, 255, 255, 0.02);
+}
 .calendar-month-cell.today {
   background: rgba(139, 92, 246, 0.12);
-  border: 1px solid rgba(139, 92, 246, 0.4);
+  border: 1px solid rgba(139, 92, 246, 0.5);
+  box-shadow: inset 0 0 20px rgba(139, 92, 246, 0.08);
 }
 .calendar-month-cell.today .calendar-month-date {
   color: #fff;
@@ -2453,14 +2686,15 @@ body.login-page {
   overflow-y: auto;
 }
 .calendar-month-episode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding: 3px 6px;
   border-radius: 6px;
   background: rgba(139, 92, 246, 0.14);
   border: 1px solid rgba(139, 92, 246, 0.25);
   font-size: 0.72rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
   transition: background 0.12s ease;
 }
@@ -2468,11 +2702,18 @@ body.login-page {
   background: rgba(139, 92, 246, 0.28);
 }
 .calendar-month-episode .episode-title {
+  flex: 1;
+  min-width: 0;
   color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .calendar-month-episode .episode-number {
+  flex-shrink: 0;
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 .calendar-month-episode .episode-number-aired {
   color: var(--warning-color);
@@ -2697,10 +2938,46 @@ body.login-page {
 #extractFileModal .modal-body {
   max-height: 75vh;
 }
-/* 运行日志弹窗 */
+/* 运行日志弹窗（终端风格） */
 #logModal .modal-dialog {
-  max-width: 860px;
+  max-width: 1080px;
+  margin: 4rem auto;
+  width: calc(100% - 1.25rem);
 }
+#logModal .modal-body {
+  padding: 0 12px 12px;
+}
+#logModal pre {
+  margin: 0;
+  padding: 14px 16px;
+  background: rgba(8, 7, 26, 0.85);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #c7c9e0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* 日志级别着色 */
+#logModal pre .log-error {
+  color: var(--danger-color);
+  font-weight: 700;
+}
+#logModal pre .log-warning {
+  color: var(--warning-color);
+  font-weight: 700;
+}
+#logModal pre .log-success {
+  color: var(--success-color);
+  font-weight: 700;
+}
+#logModal pre .log-info {
+  color: #7dd3fc;
+  font-weight: 700;
+}
+/* 运行日志弹窗（旧规则） */
 #logModal .runlog-content {
   max-height: 65vh;
 }
@@ -2911,18 +3188,21 @@ body.login-page {
 }
 
 /* ============================================================
-   系统配置折叠卡片（插件设置 / 搜索来源）
+   系统配置折叠卡片（长条悬浮卡片）
    ============================================================ */
+.glass-config-toggle-wrap {
+  margin-bottom: 14px;
+}
 .glass-config-toggle {
-  display: inline-flex !important;
+  display: flex !important;
   align-items: center;
-  gap: 8px;
-  width: auto !important;
-  padding: 8px 16px;
-  border-radius: 10px;
+  gap: 10px;
+  width: 100% !important;
+  padding: 12px 18px;
+  border-radius: 14px;
   color: var(--text-primary);
   font-weight: 600;
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   background: rgba(255, 255, 255, 0.045);
   border: 1px solid var(--glass-border);
   cursor: pointer;
@@ -2944,23 +3224,204 @@ body.login-page {
 .glass-config-toggle-wrap[aria-expanded="true"] .glass-config-toggle > i.bi-caret-right-fill {
   transform: rotate(90deg);
 }
+/* 配置区块标题（h2 + 帮助徽章） */
+.glass-config-toggle-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.glass-config-toggle-title h2 {
+  display: inline-block;
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.2;
+}
+.glass-config-toggle-title .badge {
+  transform: translateY(-1px);
+}
 .glass-config-body {
   margin-left: 0 !important;
-  margin-top: 10px;
-  padding: 14px 16px;
+  margin-top: 0;
+  margin-bottom: 14px;
+  padding: 16px 18px;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 12px;
 }
+/* 嵌套折叠（插件/搜索来源子卡片）不重复加间距 */
+.glass-config-body .glass-config-toggle-wrap {
+  margin-bottom: 0;
+}
+.glass-config-body .glass-config-body {
+  margin-bottom: 0;
+}
 .glass-config-body .input-group {
   margin-bottom: 10px;
+  /* 强制名称/输入框/单位保持同一行（Bootstrap 默认 flex-wrap: wrap 会换行） */
+  flex-wrap: nowrap;
 }
 .glass-config-body .input-group:last-child {
   margin-bottom: 0;
 }
-.glass-config-body .input-group-text {
+/* 输入框允许收缩，但保持最小可输入宽度，避免被挤成一条缝 */
+.glass-config-body .input-group > .form-control {
+  min-width: 90px;
+}
+/* 名称标签：统一宽度右对齐，禁止折行/压缩（保证与输入框同行） */
+/* 限宽加在 prepend 上：百分比基准为 .input-group（宽度确定），
+   放在内部 text 上会因循环依赖（prepend 宽度由内容决定）而失效 */
+.glass-config-body .input-group-prepend {
+  max-width: 55%;
+}
+.glass-config-body .input-group-prepend .input-group-text {
   min-width: 88px;
+  max-width: none;
+  width: 100%;
   justify-content: flex-end;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 单位/后缀（个/秒/天等）：保持紧凑，紧贴数值输入框 */
+.glass-config-body .input-group-append .input-group-text {
+  min-width: auto;
+  justify-content: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ---------- FilterSelect 统一筛选组件 ---------- */
+/* 单层玻璃胶囊：与筛选行 input-group 同款浅玻璃底，标签与当前值同行垂直居中，自定义箭头 */
+.filter-select {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.05);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.filter-select:hover {
+  border-color: var(--glass-border-strong);
+  background: rgba(255, 255, 255, 0.065);
+}
+.filter-select:focus-within {
+  border-color: var(--focus-border-color);
+  box-shadow: 0 0 0 3px rgba(var(--focus-border-color-rgb), 0.2);
+  background: rgba(255, 255, 255, 0.065);
+}
+.filter-select-label {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 14px;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.filter-select-field {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.filter-select-native {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 100%;
+  height: 100%;
+  padding: 0 30px 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  outline: none;
+}
+/* 文本输入模式：无下拉箭头，不需要右侧留白 */
+.filter-select-input {
+  padding: 0 12px;
+}
+.filter-select-input::placeholder {
+  color: var(--text-tertiary);
+}
+.filter-select-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+}
+.filter-select-clear {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 10px;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.filter-select-clear:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------- 配置页 tab 选择栏（插件设置 / 搜索来源） ---------- */
+.config-tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.config-tab {
+  padding: 5px 15px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.config-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--glass-border-strong);
+}
+.config-tab.active {
+  color: #fff;
+  background: var(--accent-grad);
+  border-color: transparent;
+  box-shadow: 0 3px 12px rgba(139, 92, 246, 0.35);
+}
+.config-tab-pane {
+  padding: 2px 0;
+  /* tab 切换动画：元素重建时自动播放（淡入 + 轻微位移） */
+  animation: tabPaneIn 0.18s ease;
+}
+@keyframes tabPaneIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* 折叠动画：过渡时长压缩到 0.01s（保留 transitionend 事件机制使状态切换正常完成），
@@ -3042,10 +3503,11 @@ body.login-page {
     height: 155px;
   }
   .calendar-poster-item {
-    width: 128px;
+    width: 100%;
   }
   .calendar-poster {
-    height: 172px;
+    aspect-ratio: 2 / 3;
+    height: auto;
   }
   .calendar-month-cell {
     min-height: 68px;
@@ -3062,7 +3524,7 @@ body.login-page {
   .task-show-status {
     max-width: 30vw;
   }
-  .task .btn-block {
+  .task-card-title {
     font-size: 0.92rem;
   }
   .task-buttons {
@@ -3071,6 +3533,9 @@ body.login-page {
   .task-buttons .btn {
     min-width: 30px;
     padding: 0.25rem 0.45rem;
+  }
+  .task-form-grid {
+    grid-template-columns: 1fr;
   }
   .runlog-content {
     font-size: 0.76rem;

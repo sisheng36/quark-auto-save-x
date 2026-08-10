@@ -8,7 +8,7 @@
   <!-- CSS -->
   <link rel="stylesheet" href="./static/css/bootstrap.min.css">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="./static/css/main.css?v=7">
+  <link rel="stylesheet" href="./static/css/main.css?v=28">
   <!-- Bootstrap JS -->
   <script src="./static/js/jquery-3.5.1.slim.min.js"></script>
   <script src="./static/js/bootstrap.bundle.min.js"></script>
@@ -330,6 +330,69 @@
     
     return result;
   }
+  
+  // ============ 统一筛选下拉组件 FilterSelect ============
+  // 单层玻璃胶囊：标签与当前值同行垂直居中，自定义箭头，无原生 select 外观
+  // type: 'select'（默认）| 'input'（文本输入模式，无下拉箭头）
+  Vue.component('filter-select', {
+    props: {
+      value: { default: '' },
+      label: { type: String, default: '' },
+      options: { type: Array, default: () => [] },  // [{value, text}] 或 ['a','b']
+      placeholder: { type: String, default: '' },
+      clearable: { type: Boolean, default: false },
+      title: { type: String, default: '' },
+      type: { type: String, default: 'select' }
+    },
+    computed: {
+      hasValue() {
+        return this.value !== '' && this.value !== null && this.value !== undefined;
+      }
+    },
+    methods: {
+      clearValue() {
+        this.$emit('input', '');
+      },
+      // 原生 select 的值总是字符串，这里按 options 还原原始类型（布尔/数字），并透传 change 事件
+      onChange($event) {
+        const raw = $event.target.value;
+        let matched = raw;
+        const found = this.options.find(o => {
+          const v = o && o.value !== undefined ? o.value : o;
+          return String(v) === raw;
+        });
+        if (found !== undefined) {
+          matched = found && found.value !== undefined ? found.value : found;
+        }
+        this.$emit('input', matched);
+        this.$emit('change', matched);
+      },
+      // 文本输入模式：透传 change 事件
+      onInput($event) {
+        this.$emit('input', $event.target.value);
+        this.$emit('change', $event.target.value);
+      }
+    },
+    template: `
+      <div class="filter-select" :title="title">
+        <span class="filter-select-label" v-if="label">{{ label }}</span>
+        <div class="filter-select-field">
+          <select v-if="type !== 'input'" class="filter-select-native" :value="value" @change="onChange">
+            <option v-if="placeholder" value="">{{ placeholder }}</option>
+            <option v-for="opt in options" :key="opt && opt.value !== undefined ? opt.value : opt"
+                    :value="opt && opt.value !== undefined ? opt.value : opt"
+                    v-html="opt && opt.text !== undefined ? opt.text : opt"></option>
+          </select>
+          <input v-else type="text" class="filter-select-native filter-select-input"
+                 :value="value" @input="onInput" :placeholder="placeholder">
+          <i v-if="type !== 'input'" class="bi bi-chevron-down filter-select-arrow"></i>
+        </div>
+        <button type="button" class="filter-select-clear" v-if="clearable && hasValue" @click="clearValue" title="清除筛选">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    `
+  });
   </script>
 </head>
 
@@ -443,14 +506,26 @@
 
           <div v-if="activeTab === 'config'" class="glass-tab">
             <div style="height: 0.5px;"></div>
-            <div class="row title" title="夸克自动转存WebUI账号设置">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">账号设置</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="#" title="夸克自动转存WebUI账号设置"><i class="bi bi-question-circle"></i></a>
+            <!-- 全部展开/收起 -->
+            <div class="row" style="margin-bottom: 14px;">
+              <div class="col d-flex justify-content-end">
+                <button type="button" class="btn btn-outline-secondary btn-sm" @click="toggleAllConfigSections" :title="allConfigExpanded ? '收起所有配置区块' : '展开所有配置区块'">
+                  <i :class="allConfigExpanded ? 'bi bi-chevron-bar-up' : 'bi bi-chevron-bar-down'"></i> {{ allConfigExpanded ? '全部收起' : '全部展开' }}
+                </button>
+              </div>
+            </div>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_account" aria-expanded="false" aria-controls="cfg_account" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="夸克自动转存WebUI账号设置">
+                  <h2>账号设置</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="#" title="夸克自动转存WebUI账号设置"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_account">
             <div class="row mb-2">
               <div class="col webui-username-col">
                 <div class="input-group">
@@ -474,15 +549,20 @@
                 </div>
               </div>
             </div>
+            </div>
 
-            <div class="row title" title="夸克网盘账号的Cookie，用于转存、签到和文件整理，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">Cookie</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/使用技巧集锦" target="_blank" title="夸克网盘账号的Cookie，用于转存、签到和文件整理，查阅Wiki了解详情"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_cookie" aria-expanded="false" aria-controls="cfg_cookie" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="夸克网盘账号的Cookie，用于转存、签到和文件整理，查阅Wiki了解详情">
+                  <h2>Cookie</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/使用技巧集锦" target="_blank" title="夸克网盘账号的Cookie，用于转存、签到和文件整理，查阅Wiki了解详情"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_cookie">
             <div v-for="(value, index) in formData.cookie" :key="index" class="input-group mb-2">
               <div class="input-group-prepend" v-if="userInfoList[index]">
                 <span class="input-group-text" 
@@ -500,15 +580,20 @@
                 <button v-if="formData.cookie.length > 1" type="button" class="btn btn-outline-danger" @click="removeCookie(index)"><i class="bi bi-dash-lg"></i></button>
               </div>
             </div>
+            </div>
 
-            <div class="row title" title="设置任务的定时、延迟规则与执行周期模式，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">定时规则</h2>
-                <span class="badge badge-pill badge-light">
-                  <a target="_blank" href="https://github.com/x1ao4/quark-auto-save-x/wiki/定时规则" title="设置任务的定时、延迟规则与执行周期模式，查阅Wiki了解详情"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_crontab" aria-expanded="false" aria-controls="cfg_crontab" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="设置任务的定时、延迟规则与执行周期模式，查阅Wiki了解详情">
+                  <h2>定时规则</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a target="_blank" href="https://github.com/x1ao4/quark-auto-save-x/wiki/定时规则" title="设置任务的定时、延迟规则与执行周期模式，查阅Wiki了解详情"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_crontab">
             <div class="row mb-2 crontab-setting-row">
               <div class="col-lg-4 col-md-6 col-12 mb-2 mb-lg-0">
                 <div class="input-group">
@@ -532,36 +617,27 @@
                 </div>
               </div>
               <div class="col-lg-4 col-md-6 col-12 mb-2 mb-lg-0">
-                <div class="input-group" title="执行周期判断方式：按自选周期执行（自选）使用任务的执行周期和截止日期判断；按任务进度执行（自动）根据任务进度是否100%判断，100%则跳过">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">执行周期</span>
-                  </div>
-                  <select v-model="formData.execution_mode" class="form-control" @change="onExecutionModeChange">
-                    <option value="manual">按自选周期执行（自选）</option>
-                    <option value="auto">按任务进度执行（自动）</option>
-                  </select>
-                </div>
+                <filter-select v-model="formData.execution_mode" label="执行周期" title="执行周期判断方式：按自选周期执行（自选）使用任务的执行周期和截止日期判断；按任务进度执行（自动）根据任务进度是否100%判断，100%则跳过"
+                               @change="onExecutionModeChange"
+                               :options="[{value:'manual',text:'按自选周期执行（自选）'},{value:'auto',text:'按任务进度执行（自动）'}]"></filter-select>
               </div>
             </div>
+            </div>
 
-            <div class="row title" title="通知推送，支持多个渠道，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">通知设置</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/通知设置" target="_blank"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_notify" aria-expanded="false" aria-controls="cfg_notify" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="通知推送，支持多个渠道，查阅Wiki了解详情">
+                  <h2>通知设置</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/通知设置" target="_blank"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
-            <div class="input-group mb-2">
-              <div class="input-group-prepend">
-                <span class="input-group-text">推送通知</span>
-              </div>
-              <select v-model="formData.push_notify_type" class="form-control">
-                <option value="full">推送完整信息（转存成功、转存失败、资源失效）</option>
-                <option value="success_only">推送成功信息（转存成功）</option>
-                <option value="exclude_invalid">排除失效信息（转存成功、转存失败）</option>
-              </select>
-            </div>
+            <div class="collapse glass-config-body" id="cfg_notify">
+            <filter-select v-model="formData.push_notify_type" label="推送通知"
+              :options="[{value:'full',text:'推送完整信息（转存成功、转存失败、资源失效）'},{value:'success_only',text:'推送成功信息（转存成功）'},{value:'exclude_invalid',text:'排除失效信息（转存成功、转存失败）'}]"></filter-select>
             <div v-for="(value, key, index) in formData.push_config" :key="key" class="input-group mb-2">
               <div class="input-group-prepend">
                 <span class="input-group-text" v-html="key"></span>
@@ -575,135 +651,129 @@
                 <button v-if="Object.keys(formData.push_config).length > 1" type="button" class="btn btn-outline-danger" @click="removePush(key)"><i class="bi bi-dash-lg"></i></button>
               </div>
             </div>
+            </div>
 
-            <div class="row title" v-if="Object.keys(getAvailablePlugins(formData.plugins)).length" title="插件设置，具体键值由插件定义，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">插件设置</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/插件设置" target="_blank"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" v-if="Object.keys(getAvailablePlugins(formData.plugins)).length" data-target="#cfg_plugins" aria-expanded="false" aria-controls="cfg_plugins" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="插件设置，具体键值由插件定义，查阅Wiki了解详情">
+                  <h2>插件设置</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/插件设置" target="_blank"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
-            <div v-for="(plugin, pluginName) in getAvailablePlugins(formData.plugins)" :key="pluginName" style="margin-bottom: 14px;">
-              <div class="form-group row mb-0" style="display:flex; align-items:center;">
-                <div data-toggle="collapse" class="glass-config-toggle-wrap" :data-target="'#collapse_'+pluginName" aria-expanded="true" :aria-controls="'collapse_'+pluginName">
-                  <div class="btn btn-block text-left glass-config-toggle">
-                    <i class="bi bi-caret-right-fill"></i> <span v-html="getPluginDisplayName(pluginName)"></span>
-                  </div>
-                </div>
+            <div class="collapse glass-config-body" v-if="Object.keys(getAvailablePlugins(formData.plugins)).length" id="cfg_plugins">
+              <!-- 一行选择栏：插件切换 -->
+              <div class="config-tab-bar">
+                <button type="button" class="config-tab" v-for="(plugin, pluginName) in getAvailablePlugins(formData.plugins)" :key="pluginName"
+                        :class="{ active: activePluginConfigTab === pluginName }"
+                        @click="pluginConfigTab = pluginName">
+                  <span v-html="getPluginDisplayName(pluginName)"></span>
+                </button>
               </div>
-              <div class="collapse glass-config-body" :id="'collapse_'+pluginName">
-                <div v-for="(value, key, keyIndex) in plugin" :key="key" class="input-group mb-2">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text" v-html="key" :title="getPluginConfigHelp(pluginName, key)"></span>
-                  </div>
-                  <input type="text" v-model="formData.plugins[pluginName][key]" class="form-control"
-                    :placeholder="getPluginConfigPlaceholder(pluginName, key)"
-                    :title="getPluginConfigHelp(pluginName, key)">
-                </div>
-                <!-- 为特定插件添加全局配置选项 -->
-                <div v-if="['aria2', 'alist_strm_gen', 'emby'].includes(pluginName)" class="input-group mb-2">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text" :title="getPluginConfigModeHelp(pluginName)">插件配置模式</span>
-                  </div>
-                  <select class="form-control" v-model="formData.plugin_config_mode[pluginName]" @change="onPluginConfigModeChange(pluginName)" :title="getPluginConfigModeHelp(pluginName)">
-                    <option value="independent">独立配置</option>
-                    <option value="global">全局配置</option>
-                  </select>
-                </div>
-                <!-- 全局插件配置选项 -->
-                <div v-if="['aria2', 'alist_strm_gen', 'emby'].includes(pluginName) && formData.plugin_config_mode[pluginName] === 'global'">
-                  <div v-for="(taskConfig, taskKey) in getPluginTaskConfig(pluginName)" :key="taskKey" class="input-group mb-2">
+              <!-- 选中插件的配置（切换动画：key 变化重建元素，CSS 动画自动播放） -->
+              <div class="config-tab-pane" :key="activePluginConfigTab" v-if="activePluginConfigTab">
+                  <div v-for="(value, key, keyIndex) in activePluginConfig" :key="key" class="input-group mb-2">
                     <div class="input-group-prepend">
-                      <span class="input-group-text" v-html="taskKey" :title="getPluginTaskConfigHelp(pluginName, taskKey)"></span>
+                      <span class="input-group-text" v-html="key" :title="getPluginConfigHelp(activePluginConfigTab, key)"></span>
                     </div>
-                    <select v-if="typeof formData.global_plugin_config[pluginName][taskKey] === 'boolean'" class="form-control" v-model="formData.global_plugin_config[pluginName][taskKey]" @change="onGlobalPluginConfigChange()" :title="getPluginTaskConfigHelp(pluginName, taskKey)">
-                      <option :value="true">true</option>
-                      <option :value="false">false</option>
-                    </select>
-                    <input v-else type="text" class="form-control" v-model="formData.global_plugin_config[pluginName][taskKey]"
-                      :placeholder="getPluginTaskConfigPlaceholder(pluginName, taskKey)"
-                      :title="getPluginTaskConfigHelp(pluginName, taskKey)"
-                      @input="onGlobalPluginConfigChange()">
+                    <input type="text" v-model="formData.plugins[activePluginConfigTab][key]" class="form-control"
+                      :placeholder="getPluginConfigPlaceholder(activePluginConfigTab, key)"
+                      :title="getPluginConfigHelp(activePluginConfigTab, key)">
+                  </div>
+                  <!-- 为特定插件添加插件配置模式（独立/全局） -->
+                  <div v-if="['aria2', 'alist_strm_gen', 'emby'].includes(activePluginConfigTab)" class="mb-2">
+                    <filter-select v-model="formData.plugin_config_mode[activePluginConfigTab]" label="插件配置模式" :title="getPluginConfigModeHelp(activePluginConfigTab)"
+                                   @change="onPluginConfigModeChange(activePluginConfigTab)"
+                                   :options="[{value:'independent',text:'独立配置'},{value:'global',text:'全局配置'}]"></filter-select>
+                  </div>
+                  <!-- 全局插件配置选项 -->
+                  <div v-if="['aria2', 'alist_strm_gen', 'emby'].includes(activePluginConfigTab) && formData.plugin_config_mode[activePluginConfigTab] === 'global'">
+                    <div v-for="(taskConfig, taskKey) in getPluginTaskConfig(activePluginConfigTab)" :key="taskKey" class="mb-2">
+                      <filter-select v-if="typeof formData.global_plugin_config[activePluginConfigTab][taskKey] === 'boolean'"
+                                     v-model="formData.global_plugin_config[activePluginConfigTab][taskKey]"
+                                     :label="taskKey" :title="getPluginTaskConfigHelp(activePluginConfigTab, taskKey)"
+                                     @change="onGlobalPluginConfigChange()"
+                                     :options="[{value:true,text:'true'},{value:false,text:'false'}]"></filter-select>
+                      <filter-select v-else type="input"
+                                     v-model="formData.global_plugin_config[activePluginConfigTab][taskKey]"
+                                     :label="taskKey" :title="getPluginTaskConfigHelp(activePluginConfigTab, taskKey)"
+                                     :placeholder="getPluginTaskConfigPlaceholder(activePluginConfigTab, taskKey)"
+                                     @change="onGlobalPluginConfigChange()"></filter-select>
+                    </div>
                   </div>
                 </div>
-              </div>
             </div>
             
-            <div class="row title" title="资源搜索服务配置，用于任务名称智能搜索，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">搜索来源</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/资源搜索" target="_blank"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_sources" aria-expanded="false" aria-controls="cfg_sources" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="资源搜索服务配置，用于任务名称智能搜索，查阅Wiki了解详情">
+                  <h2>搜索来源</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/资源搜索" target="_blank"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
-            <!-- 按插件风格显示为可展开项 -->
-            <div>
-              <!-- CloudSaver -->
-              <div style="margin-bottom: 14px;">
-                <div class="form-group row mb-0" style="display:flex; align-items:center;">
-                  <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#collapse_source_cloudsaver" aria-expanded="true" aria-controls="collapse_source_cloudsaver">
-                    <div class="btn btn-block text-left glass-config-toggle">
-                      <i class="bi bi-caret-right-fill"></i> CloudSaver
-                    </div>
-                  </div>
-                </div>
-                <div class="collapse glass-config-body" id="collapse_source_cloudsaver">
-                  <div class="input-group mb-2">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">服务器</span>
-                    </div>
-                    <input type="text" v-model="formData.source.cloudsaver.server" class="form-control" placeholder="CloudSaver 服务器地址，如：http://192.168.1.100:8008">
-                  </div>
-                  <div class="input-group mb-2">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">用户名</span>
-                    </div>
-                    <input type="text" v-model="formData.source.cloudsaver.username" class="form-control" placeholder="CloudSaver 用户名">
-                  </div>
-                  <div class="input-group mb-2">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">密码</span>
-                    </div>
-                    <input :type="showCloudSaverPassword ? 'text' : 'password'" v-model="formData.source.cloudsaver.password" class="form-control" placeholder="CloudSaver 密码">
-                    <div class="input-group-append">
-                      <button type="button" class="btn btn-outline-secondary" @click="toggleCloudSaverPassword">
-                        <i :class="['bi', showCloudSaverPassword ? 'bi-eye' : 'bi-eye-slash']"></i>
-                      </button>
-                    </div>
-                  </div>
-                </div>
+            <div class="collapse glass-config-body" id="cfg_sources">
+              <!-- 一行选择栏：搜索来源切换 -->
+              <div class="config-tab-bar">
+                <button type="button" class="config-tab" :class="{ active: activeSourceConfigTab === 'cloudsaver' }" @click="sourceConfigTab = 'cloudsaver'">CloudSaver</button>
+                <button type="button" class="config-tab" :class="{ active: activeSourceConfigTab === 'pansou' }" @click="sourceConfigTab = 'pansou'">PanSou</button>
               </div>
-
-              <!-- PanSou -->
-              <div style="margin-bottom: 14px;">
-                <div class="form-group row mb-0" style="display:flex; align-items:center;">
-                  <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#collapse_source_pansou" aria-expanded="false" aria-controls="collapse_source_pansou">
-                    <div class="btn btn-block text-left glass-config-toggle">
-                      <i class="bi bi-caret-right-fill"></i> PanSou
+              <!-- 选中来源的配置（切换动画：key 变化重建元素，CSS 动画自动播放） -->
+              <div class="config-tab-pane" :key="activeSourceConfigTab">
+                  <template v-if="activeSourceConfigTab === 'cloudsaver'">
+                    <div class="input-group mb-2">
+                      <div class="input-group-prepend">
+                        <span class="input-group-text">服务器</span>
+                      </div>
+                      <input type="text" v-model="formData.source.cloudsaver.server" class="form-control" placeholder="CloudSaver 服务器地址，如：http://192.168.1.100:8008">
                     </div>
-                  </div>
-                </div>
-                <div class="collapse glass-config-body" id="collapse_source_pansou">
-                  <div class="input-group mb-2">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">服务器</span>
+                    <div class="input-group mb-2">
+                      <div class="input-group-prepend">
+                        <span class="input-group-text">用户名</span>
+                      </div>
+                      <input type="text" v-model="formData.source.cloudsaver.username" class="form-control" placeholder="CloudSaver 用户名">
                     </div>
-                    <input type="text" v-model="formData.source.pansou.server" class="form-control" placeholder="PanSou 服务器地址，如：http://192.168.1.100:80，默认地址 https://so.252035.xyz 为 PanSou 官方地址，建议自部署以获得更稳定的体验">
-                  </div>
+                    <div class="input-group mb-2">
+                      <div class="input-group-prepend">
+                        <span class="input-group-text">密码</span>
+                      </div>
+                      <input :type="showCloudSaverPassword ? 'text' : 'password'" v-model="formData.source.cloudsaver.password" class="form-control" placeholder="CloudSaver 密码">
+                      <div class="input-group-append">
+                        <button type="button" class="btn btn-outline-secondary" @click="toggleCloudSaverPassword">
+                          <i :class="['bi', showCloudSaverPassword ? 'bi-eye' : 'bi-eye-slash']"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="input-group mb-2">
+                      <div class="input-group-prepend">
+                        <span class="input-group-text">服务器</span>
+                      </div>
+                      <input type="text" v-model="formData.source.pansou.server" class="form-control" placeholder="PanSou 服务器地址，如：http://192.168.1.100:80，默认地址 https://so.252035.xyz 为 PanSou 官方地址，建议自部署以获得更稳定的体验">
+                    </div>
+                  </template>
                 </div>
-              </div>
             </div>
 
-            <div class="row title" title="预定义的正则匹配规则，在任务列表中可直接点击使用，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">魔法匹配</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/命名规则#21-魔法匹配" target="_blank"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_magic" aria-expanded="false" aria-controls="cfg_magic" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="预定义的正则匹配规则，在任务列表中可直接点击使用，查阅Wiki了解详情">
+                  <h2>魔法匹配</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/命名规则#21-魔法匹配" target="_blank"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_magic">
             <div v-for="(value, key, index) in formData.magic_regex" :key="key" class="form-group mb-2">
               <div class="input-group" :class="{ 'magic-regex-single': Object.keys(formData.magic_regex).length === 1 }">
                 <div class="input-group-prepend">
@@ -724,16 +794,21 @@
                 </div>
               </div>
             </div>
+            </div>
 
             <!-- 剧集识别模块 -->
-            <div class="row title" title="配置剧集编号与电视任务的识别规则，用于剧集命名的集编号提取和编辑任务时的智能填充判定，留空使用内置默认规则，或添加自定义规则作为补充，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">剧集识别</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/命名规则#25-剧集命名" target="_blank"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_episode" aria-expanded="false" aria-controls="cfg_episode" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="配置剧集编号与电视任务的识别规则，用于剧集命名的集编号提取和编辑任务时的智能填充判定，留空使用内置默认规则，或添加自定义规则作为补充，查阅Wiki了解详情">
+                  <h2>剧集识别</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/命名规则#25-剧集命名" target="_blank"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_episode">
             <div class="form-group">
               <div class="input-group">
                 <div class="input-group-prepend">
@@ -750,16 +825,21 @@
                 <input type="text" class="form-control" v-model="tvShowKeywordsText" placeholder="留空使用内置默认关键词，或输入自定义关键词作为补充，多个关键词用竖线分隔" title="设置电视任务识别关键词，留空时仅使用内置关键词，填写后会追加到内置关键词中共同匹配保存路径，多个关键词用竖线分隔，保存路径包含关键词的任务将被判定为电视任务，并应用电视节目智能填充规则，在编辑任务时自动填充或同步配置">
               </div>
             </div>
+            </div>
 
             <!-- 任务设置模块 -->
-            <div class="row title" title="配置影视发现页面创建任务时的智能填充规则，请使用你的网盘目录替换默认的目录前缀，否则将自动继承任务列表最后一个任务的保存路径，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">任务设置</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/任务设置" target="_blank"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_tasksettings" aria-expanded="false" aria-controls="cfg_tasksettings" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="配置影视发现页面创建任务时的智能填充规则，请使用你的网盘目录替换默认的目录前缀，否则将自动继承任务列表最后一个任务的保存路径，查阅Wiki了解详情">
+                  <h2>任务设置</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/任务设置" target="_blank"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_tasksettings">
 
             <div class="form-group">
               <div class="input-group">
@@ -864,26 +944,12 @@
 
             <div class="form-group task-auto-search-group">
               <div class="task-auto-search-item">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">创建任务时自动搜索资源</span>
-                  </div>
-                  <select class="form-control" v-model="formData.task_settings.auto_search_resources" title="启用后，在影视发现页面点击海报创建任务时，如果配置了有效的搜索来源，将自动触发资源搜索功能">
-                    <option value="enabled">启用</option>
-                    <option value="disabled">禁用</option>
-                  </select>
-                </div>
+                <filter-select v-model="formData.task_settings.auto_search_resources" label="创建任务时自动搜索资源" title="启用后，在影视发现页面点击海报创建任务时，如果配置了有效的搜索来源，将自动触发资源搜索功能"
+                               :options="[{value:'enabled',text:'启用'},{value:'disabled',text:'禁用'}]"></filter-select>
               </div>
               <div class="task-auto-search-item">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">编辑任务时自动搜索资源</span>
-                  </div>
-                  <select class="form-control" v-model="formData.task_settings.auto_search_resources_on_edit" title="启用后，在所有任务编辑场景中修改任务名称时，如果配置了有效的搜索来源，将自动触发资源搜索功能">
-                    <option value="enabled">启用</option>
-                    <option value="disabled">禁用</option>
-                  </select>
-                </div>
+                <filter-select v-model="formData.task_settings.auto_search_resources_on_edit" label="编辑任务时自动搜索资源" title="启用后，在所有任务编辑场景中修改任务名称时，如果配置了有效的搜索来源，将自动触发资源搜索功能"
+                               :options="[{value:'enabled',text:'启用'},{value:'disabled',text:'禁用'}]"></filter-select>
               </div>
             </div>
 
@@ -892,81 +958,77 @@
                 <div class="input-group-prepend">
                   <span class="input-group-text">自动解压压缩包</span>
                 </div>
-                <select class="form-control" v-model="formData.task_settings.auto_extract_archive" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压">
-                  <option value="keep_structure_keep_archive">保持原目录结构，保留压缩包</option>
-                  <option value="flat_files_keep_archive">扁平化提取文件，保留压缩包</option>
-                  <option value="keep_structure_delete_archive">保持原目录结构，删除压缩包</option>
-                  <option value="flat_files_delete_archive">扁平化提取文件，删除压缩包</option>
-                  <option value="disabled">禁用</option>
-                </select>
+                <filter-select v-model="formData.task_settings.auto_extract_archive" label="自动解压压缩包" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压"
+                             :options="[{value:'keep_structure_keep_archive',text:'保持原目录结构，保留压缩包'},{value:'flat_files_keep_archive',text:'扁平化提取文件，保留压缩包'},{value:'keep_structure_delete_archive',text:'保持原目录结构，删除压缩包'},{value:'flat_files_delete_archive',text:'扁平化提取文件，删除压缩包'},{value:'disabled',text:'禁用'}]"></filter-select>
               </div>
             </div>
+            </div>
 
-            <div class="row title" title="设置任务列表、追剧日历等页面的任务按钮和相关信息的显示及排序方式，支持拖拽模块调整显示顺序，个别项目的禁用状态将被应用到所有页面，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">显示设置</h2>
-                <span class="badge badge-pill badge-light">
-                  <a target="_blank" href="https://github.com/x1ao4/quark-auto-save-x/wiki/显示设置"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_display" aria-expanded="false" aria-controls="cfg_display" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="设置任务列表、追剧日历等页面的任务按钮和相关信息的显示及排序方式，支持拖拽模块调整显示顺序，个别项目的禁用状态将被应用到所有页面，查阅Wiki了解详情">
+                  <h2>显示设置</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a target="_blank" href="https://github.com/x1ao4/quark-auto-save-x/wiki/显示设置"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_display">
             
             <!-- 可拖拽显示设置（统一在一个容器中渲染，保持原样式，仅可拖动排序） -->
             <div class="row mb-2 display-setting-row" id="display-setting-draggable">
-              <div class="col-lg-3 col-md-6 mb-2 draggable-item" v-for="key in formData.button_display_order" :key="key" draggable="true" @dragstart="onDisplayDragStart($event, key)" @dragend="onDisplayDragEnd($event)" @dragover.prevent="onDisplayDragOver($event)" @drop="onDisplayDrop($event, key)">
+              <div class="col-lg-4 col-md-6 mb-2 draggable-item" v-for="key in formData.button_display_order" :key="key" draggable="true" @dragstart="onDisplayDragStart($event, key)" @dragend="onDisplayDragEnd($event)" @dragover.prevent="onDisplayDragOver($event)" @drop="onDisplayDrop($event, key)">
                 <div class="input-group">
                   <div class="input-group-prepend">
                     <span class="input-group-text" :title="getDisplayHelp(key)">{{ getDisplayLabel(key) }}</span>
                   </div>
-                  <select v-if="key==='run_task' || key==='delete_task'" class="form-control" v-model="formData.button_display[key]" :title="getDisplayHelp(key)">
-                    <option value="always">始终显示</option>
-                    <option value="hover">悬停显示</option>
-                  </select>
-                  <select v-else class="form-control" v-model="formData.button_display[key]" :title="getDisplayHelp(key)">
-                    <option value="always">始终显示</option>
-                    <option value="hover">悬停显示</option>
-                    <option value="disabled">禁用</option>
-                  </select>
+                  <filter-select v-model="formData.button_display[key]" :label="getDisplayLabel(key)" :title="getDisplayHelp(key)"
+                    :options="key==='run_task' || key==='delete_task'
+                      ? [{value:'always',text:'始终显示'},{value:'hover',text:'悬停显示'}]
+                      : [{value:'always',text:'始终显示'},{value:'hover',text:'悬停显示'},{value:'disabled',text:'禁用'}]"></filter-select>
                 </div>
               </div>
               
               <!-- 海报语言设置（不支持拖拽，但样式与其他设置一致） -->
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group">
                   <div class="input-group-prepend">
                     <span class="input-group-text" title="任务列表与追剧日历的海报语言优先级，选择中文将优先使用zh-CN海报，选择原始语言将优先使用原始语言海报">海报语言</span>
                   </div>
-                  <select class="form-control" v-model="formData.poster_language" title="任务列表与追剧日历的海报语言优先级，选择中文将优先使用zh-CN海报，选择原始语言将优先使用原始语言海报">
-                    <option value="zh-CN">中文</option>
-                    <option value="original">原始语言</option>
-                  </select>
+                  <filter-select v-model="formData.poster_language" label="海报语言" title="任务列表与追剧日历的海报语言优先级，选择中文将优先使用zh-CN海报，选择原始语言将优先使用原始语言海报"
+                             :options="[{value:'zh-CN',text:'中文'},{value:'original',text:'原始语言'}]"></filter-select>
                 </div>
               </div>
               <!-- 追剧日历时区设置 -->
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group">
                   <div class="input-group-prepend">
                     <span class="input-group-text" title="追剧日历中剧集播出日期的显示时区：选择原始时区时，按节目原始发行地的播出日期显示；选择本地时区时，按节目在本地（北京时间）的实际播出日期显示">追剧日历时区</span>
                   </div>
-                  <select class="form-control" v-model="formData.calendar_timezone_mode" title="原始时区：节目原始发行地时区，播出日期与TMDB一致；本地时区：东八时区（北京时间），跨时区换算后播出日期可能发生变化（最多相差1天）">
-                    <option value="original">原始时区</option>
-                    <option value="local">本地时区</option>
-                  </select>
+                  <filter-select v-model="formData.calendar_timezone_mode" label="追剧日历时区" title="原始时区：节目原始发行地时区，播出日期与TMDB一致；本地时区：东八时区（北京时间），跨时区换算后播出日期可能发生变化（最多相差1天）"
+                             :options="[{value:'original',text:'原始时区'},{value:'local',text:'本地时区'}]"></filter-select>
                 </div>
               </div>
             </div>
+            </div>
 
             <!-- 性能设置 -->
-            <div class="row title" title="配置文件加载、数据缓存和自动刷新的关键参数，以兼顾性能与效率，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">性能设置</h2>
-                <span class="badge badge-pill badge-light">
-                  <a target="_blank" href="https://github.com/x1ao4/quark-auto-save-x/wiki/性能设置"><i class="bi bi-question-circle"></i></a>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_perf" aria-expanded="false" aria-controls="cfg_perf" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="配置文件加载、数据缓存和自动刷新的关键参数，以兼顾性能与效率，查阅Wiki了解详情">
+                  <h2>性能设置</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a target="_blank" href="https://github.com/x1ao4/quark-auto-save-x/wiki/性能设置"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_perf">
             <div class="row mb-2 performance-setting-row">
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="每次请求夸克API时获取的文件数量，适当增大该数值可减少请求次数，提升大文件夹的加载效率。建议值：100–500">
                   <div class="input-group-prepend">
                     <span class="input-group-text">单次请求文件数量</span>
@@ -977,7 +1039,7 @@
                   </div>
                 </div>
               </div>
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="文件列表在本地缓存的持续时间，过期后将自动清除。设置过短会增加API请求次数，设置过长可能无法及时反映最新变动。建议值：0-300（0表示不缓存）">
                   <div class="input-group-prepend">
                     <span class="input-group-text">文件列表缓存时长</span>
@@ -988,7 +1050,7 @@
                   </div>
                 </div>
               </div>
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="影视发现页面每个榜单显示的项目数量。建议值：20-100">
                   <div class="input-group-prepend">
                     <span class="input-group-text">影视榜单项目数量</span>
@@ -999,7 +1061,7 @@
                   </div>
                 </div>
               </div>
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="追剧日历最新季元数据自动刷新周期，设置为0或负数可关闭自动刷新。默认值：21600（6小时）">
                   <div class="input-group-prepend">
                     <span class="input-group-text">追剧日历刷新周期</span>
@@ -1010,7 +1072,7 @@
                   </div>
                 </div>
               </div>
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="已播出集数（及任务进度）自动刷新时间，24小时制，格式：HH:MM；无播出时间的节目将使用该值作为默认播出时间。默认值：00:00（每天0点）">
                   <div class="input-group-prepend">
                     <span class="input-group-text">播出集数刷新时间</span>
@@ -1018,7 +1080,7 @@
                   <input type="text" class="form-control no-spinner" v-model="formData.performance.aired_refresh_time" placeholder="00:00">
                 </div>
               </div>
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="运行日志页面显示的日志时间范围。默认值：1（最近24小时）">
                   <div class="input-group-prepend">
                     <span class="input-group-text">运行日志显示范围</span>
@@ -1029,7 +1091,7 @@
                   </div>
                 </div>
               </div>
-              <div class="col-lg-3 col-md-6 mb-2">
+              <div class="col-lg-4 col-md-6 mb-2">
                 <div class="input-group" title="云解压任务的等待超时时间，包含自动解压压缩包和文件整理页面的云解压操作，超时后将视为解压失败。建议值：60–300，默认值：100">
                   <div class="input-group-prepend">
                     <span class="input-group-text">云解压超时时间</span>
@@ -1041,14 +1103,19 @@
                 </div>
               </div>
             </div>
-            <div class="row title" title="配置与任务处理、节目元数据获取及外部服务交互相关的API访问凭证，查阅Wiki了解详情">
-              <div class="col">
-                <h2 style="display: inline-block; font-size: 1.5rem;">API</h2>
-                <span class="badge badge-pill badge-light">
-                  <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/API" target="_blank" title="配置与任务处理、节目元数据获取及外部服务交互相关的API访问凭证，查阅Wiki了解详情"><i class="bi bi-question-circle"></i></a>
+            </div>
+            <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_api" aria-expanded="false" aria-controls="cfg_api" @click="syncConfigExpandAll">
+              <div class="btn btn-block text-left glass-config-toggle">
+                <i class="bi bi-caret-right-fill"></i>
+                <span class="glass-config-toggle-title" title="配置与任务处理、节目元数据获取及外部服务交互相关的API访问凭证，查阅Wiki了解详情">
+                  <h2>API</h2>
+                  <span class="badge badge-pill badge-light">
+                    <a href="https://github.com/x1ao4/quark-auto-save-x/wiki/API" target="_blank" title="配置与任务处理、节目元数据获取及外部服务交互相关的API访问凭证，查阅Wiki了解详情"><i class="bi bi-question-circle"></i></a>
+                  </span>
                 </span>
               </div>
             </div>
+            <div class="collapse glass-config-body" id="cfg_api">
             <div class="input-group api-config-group">
               <div class="input-group-prepend">
                 <span class="input-group-text" title="QASX Token，用于授权第三方访问系统的API接口并执行受控操作">QASX Token</span>
@@ -1072,6 +1139,7 @@
               <input type="text" v-model="formData.trakt.client_id" class="form-control" placeholder="输入 Trakt Client ID，用于获取电视节目的播出时间" title="Trakt Client ID，用于获取电视节目的播出时间">
             </div>
             <p class="tmdb-attribution">部分功能基于 <a href="https://www.themoviedb.org/" target="_blank">TMDB</a> 提供的数据实现，本应用与 TMDB 无关。</p>
+            </div>
 
           </div>
 
@@ -1079,49 +1147,13 @@
             <div style="height: 20px;"></div>
             <div class="row tasklist-filter-row" style="margin-bottom: 20px;">
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">内容筛选</span>
-                  </div>
-                  <input type="text" class="form-control" v-model="runtimeLogFilters.keyword" placeholder="日志内容关键词">
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearRuntimeLogFilter('keyword')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <filter-select v-model="runtimeLogFilters.keyword" label="内容筛选" placeholder="日志内容关键词" clearable type="input" ></filter-select>
               </div>
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">任务筛选</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select" v-model="runtimeLogFilters.task">
-                      <option value="">全部</option>
-                      <option v-for="task in taskNames" :value="task" v-html="task"></option>
-                    </select>
-                  </div>
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearRuntimeLogFilter('task')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <filter-select v-model="runtimeLogFilters.task" label="任务筛选" placeholder="全部" clearable :options="taskNames" ></filter-select>
               </div>
-              <div class="col-xl-4 col-lg-4 col-md-6">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">级别筛选</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select"
-                            v-model="runtimeLogFilters.level"
-                           >
-                      <option value="">全部</option>
-                      <option v-for="level in runtimeLogLevels" :value="level">{{ level }}</option>
-                    </select>
-                  </div>
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearRuntimeLogFilter('level')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
+              <filter-select v-model="runtimeLogFilters.level" label="级别筛选" placeholder="全部" clearable :options="runtimeLogLevels" ></filter-select>
               </div>
             </div>
             <div class="row" style="margin-bottom: 20px;">
@@ -1148,61 +1180,18 @@
             <div style="height: 20px;"></div>
             <div class="row tasklist-filter-row" style="margin-bottom: 8px;">
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">名称筛选</span>
-                  </div>
-                  <input type="text" class="form-control" v-model="taskNameFilter" placeholder="任务名称关键词">
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearData('taskNameFilter')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <filter-select v-model="taskNameFilter" label="名称筛选" placeholder="任务名称关键词" clearable type="input" ></filter-select>
               </div>
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">任务筛选</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select" v-model="taskDirSelected">
-                      <option value="">全部</option>
-                      <option v-for="task in taskNames" :value="task" v-html="task"></option>
-                    </select>
-                    <!-- <i class="bi bi-chevron-down select-arrow" style="position: absolute; pointer-events: none; color: var(--dark-text-color);"></i> -->
-                  </div>
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearData('taskDirSelected')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <filter-select v-model="taskDirSelected" label="任务筛选" placeholder="全部" clearable :options="taskNames" ></filter-select>
               </div>
-              <div class="col-xl-4 col-lg-4 col-md-6">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">状态筛选</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select"
-                            v-model="taskStatusFilter"
-                           >
-                      <option value="">全部</option>
-                      <option value="incomplete">未完成</option>
-                      <option value="ongoing">进行中</option>
-                      <option value="completed">已完成</option>
-                      <option value="airing">播出中</option>
-                      <option value="finale">本季终</option>
-                      <option value="ended">已完结</option>
-                      <option value="unmatched">未匹配</option>
-                    </select>
-                  </div>
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearData('taskStatusFilter')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
+              <filter-select v-model="taskStatusFilter" label="状态筛选" placeholder="全部" clearable :options="[{value:'incomplete',text:'未完成'},{value:'ongoing',text:'进行中'},{value:'completed',text:'已完成'},{value:'airing',text:'播出中'},{value:'finale',text:'本季终'},{value:'ended',text:'已完结'},{value:'unmatched',text:'未匹配'}]" ></filter-select>
               </div>
             </div>
             <!-- 任务列表：类型筛选按钮和排序组件（复用追剧日历移动端样式） -->
             <div class="row mb-3 tasklist-header-row">
-              <div class="col-lg-8 col-md-6">
+              <div class="tasklist-header-categories">
                 <!-- 类型筛选按钮 -->
                 <div class="calendar-category-buttons tasklist-type-filter">
                   <button type="button"
@@ -1221,19 +1210,13 @@
                   </button>
                 </div>
               </div>
-              <div class="col-lg-4 col-md-6">
+              <div class="tasklist-header-controls">
                 <!-- 排序组件 -->
                 <div class="tasklist-sort-controls d-flex justify-content-end">
                   <div class="tasklist-sort-wrapper">
                     <span class="tasklist-sort-pill tasklist-sort-pill-icon" title="切换排序">按</span>
-                    <select class="tasklist-sort-pill tasklist-sort-select task-filter-select" :value="tasklistSort.by" @change="changeTasklistSortBy($event.target.value)" title="选择排序方式">
-                      <option value="index">任务编号</option>
-                      <option value="name">任务名称</option>
-                      <option v-if="formData.tmdb_api_key" value="progress">任务进度</option>
-                      <option value="update_time">更新时间</option>
-                      <option value="airtime">播出时间</option>
-                      <option value="subscribe_duration">订阅时长</option>
-                    </select>
+                    <filter-select class="tasklist-sort-embed" v-model="tasklistSort.by" @change="changeTasklistSortBy" title="选择排序方式"
+                      :options="[{value:'index',text:'任务编号'},{value:'name',text:'任务名称'}].concat(formData.tmdb_api_key ? [{value:'progress',text:'任务进度'}] : []).concat([{value:'update_time',text:'更新时间'},{value:'airtime',text:'播出时间'},{value:'subscribe_duration',text:'订阅时长'}])"></filter-select>
                     <span class="tasklist-sort-pill tasklist-sort-order" @click="toggleTasklistSortOrder" title="切换升降序">
                       {{ tasklistSort.order === 'asc' ? '升序排列' : '降序排列' }}
                     </span>
@@ -1275,48 +1258,46 @@
             </div>
             <!-- 任务列表：列表视图 -->
             <template v-if="tasklist.viewMode === 'list'">
-            <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task mb-3" v-show="shouldShowTasklist">
+            <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task task-card mb-3" :class="{'expanded': !!taskExpandState[index]}" v-show="shouldShowTasklist">
               <template v-if="(taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
-                <hr>
-                <div class="form-group row" style="align-items:center" :title="getTaskShareSubscriptionHoverText(task)">
-                  <div class="col pl-0" data-toggle="collapse" :data-target="'#collapse_'+index" aria-expanded="true" :aria-controls="'collapse_'+index">
-                    <div class="btn btn-block text-left">
-                      <i class="bi bi-caret-right-fill"></i> #<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span>
-                      <template v-for="key in formData.button_display_order">
-                        <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && taskLatestFiles[task.taskname]"
-                              class="task-latest-file"
-                              :class="{'hover-only': formData.button_display.latest_transfer_file === 'hover'}">
-                           · {{ taskLatestFiles[task.taskname] }}
-                        </span>
-                        <span v-else-if="key==='season_counts' && formData.button_display.season_counts !== 'disabled' && getTaskSeasonCounts(task.taskname)"
-                              class="task-season-counts"
-                              :class="{'hover-only': formData.button_display.season_counts === 'hover'}"
-                              v-html="' · ' + formatSeasonCounts(getTaskSeasonCounts(task.taskname))">
-                        </span>
-                        <span v-else-if="key==='latest_update_date' && formData.button_display.latest_update_date !== 'disabled' && taskLatestRecords[task.taskname]"
-                              class="task-latest-date"
-                              :class="{'hover-only': formData.button_display.latest_update_date === 'hover'}">
-                           · {{ getTaskLatestRecordDisplay(task.taskname) }}
-                        </span>
-                        <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task.taskname) !== null"
-                              class="task-progress"
-                              :class="{'hover-only': formData.button_display.task_progress === 'hover'}">
-                           · {{ getTaskProgress(task.taskname) }}%
-                        </span>
-                        <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(task.taskname)"
-                              class="task-show-status"
-                              :class="{'hover-only': formData.button_display.show_status === 'hover'}">
-                           · {{ getTaskShowStatus(task.taskname) }}
-                        </span>
-                      </template>
-                      <span v-if="isTaskUpdatedToday(task.taskname) && shouldShowTodayIndicator()"
-                            class="task-today-indicator"
-                            :class="getTodayIndicatorClass()">
-                        <i class="bi bi-stars"></i>
+                <div class="task-card-header">
+                  <div class="task-card-toggle" data-toggle="collapse" :data-target="'#collapse_'+index" aria-expanded="false" :aria-controls="'collapse_'+index" @click="toggleTaskExpand(index)" :title="getTaskShareSubscriptionHoverText(task)">
+                    <i class="bi bi-caret-right-fill"></i>
+                    <span class="task-card-title">#<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span></span>
+                    <template v-for="key in formData.button_display_order">
+                      <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && taskLatestFiles[task.taskname]"
+                            class="task-latest-file"
+                            :class="{'hover-only': formData.button_display.latest_transfer_file === 'hover'}">
+                         · {{ taskLatestFiles[task.taskname] }}
                       </span>
-                    </div>
+                      <span v-else-if="key==='season_counts' && formData.button_display.season_counts !== 'disabled' && getTaskSeasonCounts(task.taskname)"
+                            class="task-season-counts"
+                            :class="{'hover-only': formData.button_display.season_counts === 'hover'}"
+                            v-html="' · ' + formatSeasonCounts(getTaskSeasonCounts(task.taskname))">
+                      </span>
+                      <span v-else-if="key==='latest_update_date' && formData.button_display.latest_update_date !== 'disabled' && taskLatestRecords[task.taskname]"
+                            class="task-latest-date"
+                            :class="{'hover-only': formData.button_display.latest_update_date === 'hover'}">
+                         · {{ getTaskLatestRecordDisplay(task.taskname) }}
+                      </span>
+                      <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task.taskname) !== null"
+                            class="task-progress"
+                            :class="{'hover-only': formData.button_display.task_progress === 'hover'}">
+                         · {{ getTaskProgress(task.taskname) }}%
+                      </span>
+                      <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(task.taskname)"
+                            class="task-show-status"
+                            :class="{'hover-only': formData.button_display.show_status === 'hover'}">
+                         · {{ getTaskShowStatus(task.taskname) }}
+                      </span>
+                    </template>
+                    <span v-if="isTaskUpdatedToday(task.taskname) && shouldShowTodayIndicator()"
+                          class="task-today-indicator"
+                          :class="getTodayIndicatorClass()">
+                      <i class="bi bi-stars"></i>
+                    </span>
                   </div>
-                  <div class="col-auto task-buttons">
+                  <div class="task-buttons">
                     <template v-for="key in formData.button_display_order">
                       <button v-if="key==='refresh_plex' && formData.plugins && formData.plugins.plex && formData.plugins.plex.url && formData.plugins.plex.token && formData.plugins.plex.quark_root_path && formData.button_display.refresh_plex !== 'disabled'" type="button" class="btn btn-outline-plex" :class="{'hover-only': formData.button_display.refresh_plex === 'hover'}" @click="refreshPlexLibrary(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新Plex媒体库"><img src="./static/images/Plex.svg" class="plex-icon"></button>
                       <button v-else-if="key==='refresh_alist' && formData.plugins && formData.plugins.alist && formData.plugins.alist.url && formData.plugins.alist.token && formData.plugins.alist.storage_id && formData.button_display.refresh_alist !== 'disabled'" type="button" class="btn btn-outline-alist" :class="{'hover-only': formData.button_display.refresh_alist === 'hover'}" @click="refreshAlistDirectory(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新AList目录"><img src="https://cdn.jsdelivr.net/gh/alist-org/logo@main/logo.svg" class="alist-icon"></button>
@@ -1328,167 +1309,151 @@
                     </template>
                   </div>
                 </div>
-                <div class="collapse ml-3" :id="'collapse_'+index">
+                <div class="collapse task-card-body" :id="'collapse_'+index">
                   <div class="alert alert-warning" role="alert" v-if="task.shareurl_ban" v-html="formatShareUrlBanMessage(task.shareurl_ban) || task.shareurl_ban"></div>
-                  <div class="form-group row">
-                    <label class="col-sm-2 col-form-label">任务名称</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <input type="text" name="taskname[]" class="form-control" v-model="task.taskname" placeholder="必填" @focus="smart_param.showSuggestions=true;focusTaskname(task.__originalIndex !== undefined ? task.__originalIndex : index, task)" @input="changeTaskname(task.__originalIndex !== undefined ? task.__originalIndex : index, task)">
-                        <div class="dropdown-menu show task-suggestions" v-if="smart_param.showSuggestions && smart_param.index === (task.__originalIndex !== undefined ? task.__originalIndex : index) && (smart_param.taskSuggestions.success || smart_param.isSearching)">
-                          <div class="task-suggestions-inner">
-                            <div class="dropdown-item text-muted" v-if="smart_param.isSearching" style="font-size:14px; padding: 0 8px; text-align: left;">
-                              <span v-if="smart_param.validating">
-                                <i class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></i> 
-                                正在验证链接有效性...（{{ smart_param.validateProgress.current }}/{{ smart_param.validateProgress.total }}）<span v-if="smart_param.validateProgress.valid > 0">已找到 {{ smart_param.validateProgress.valid }} 个有效链接</span>
-                              </span>
-                              <span v-else>正在搜索资源...</span>
-                            </div>
-                            <div class="dropdown-item text-muted" v-else style="font-size:14px; padding-left: 8px; text-align: left;">
-                              {{ smart_param.taskSuggestions.message ? smart_param.taskSuggestions.message : smart_param.taskSuggestions.data && smart_param.taskSuggestions.data.length ? `以下资源由 ${(smart_param.taskSuggestions.source || '').replace(/,\s*/g, '、')} 搜索提供（仅显示有效链接，共 ${(smart_param.taskSuggestions.data || []).length} 个），如有侵权请联系资源发布方` : "未搜索到有效资源" }}
-                            </div>
-                            <div
-                              v-for="(suggestion, suggestionIndex) in smart_param.taskSuggestions.data || []"
-                              :key="(suggestion.shareurl || '') + '_' + (suggestion.taskname || '') + '_' + (suggestion.publish_date || '')"
-                              class="dropdown-item cursor-pointer"
-                              :class="{ 'current-suggestion': isCurrentSuggestion(suggestion), 'same-sharer-suggestion': isSameSharerSuggestion(suggestion), 'preferred-sharer-suggestion': isPreferredSharerSuggestion(suggestion) }"
-                              @click.prevent="selectSuggestion(task.__originalIndex !== undefined ? task.__originalIndex : index, suggestion)"
-                              style="font-size: 14px;"
-                              :title="getSuggestionHoverTitle(suggestion, suggestionIndex)"
-                            >
-                              <span v-html="suggestion.verify ? '✅': ''"></span> {{ suggestion.taskname }}
-                              <small class="text-muted">
-                                <a :href="suggestion.shareurl" target="_blank" @click.stop> · {{ suggestion.shareurl.replace(/^https?:\/\/pan\.(quark|qoark)\.cn\/s\//, '').split('#')[0] }}</a>
-                                <template v-if="suggestion.source"><span class="source-badge" :class="suggestion.source.toLowerCase()" :data-publish-date="suggestion.publish_date ? ' · ' + formatPublishDate(suggestion.publish_date, suggestion.pansou_source, suggestion.source) : ''">{{ suggestion.source }}</span></template>
-                              </small>
-                            </div>
+                  <div class="task-form-grid">
+                  <div class="task-field task-field-full">
+                    <label class="col-form-label">任务名称</label>
+                    <div class="input-group">
+                      <input type="text" name="taskname[]" class="form-control" v-model="task.taskname" placeholder="必填" @focus="smart_param.showSuggestions=true;focusTaskname(task.__originalIndex !== undefined ? task.__originalIndex : index, task)" @input="changeTaskname(task.__originalIndex !== undefined ? task.__originalIndex : index, task)">
+                      <div class="dropdown-menu show task-suggestions" v-if="smart_param.showSuggestions && smart_param.index === (task.__originalIndex !== undefined ? task.__originalIndex : index) && (smart_param.taskSuggestions.success || smart_param.isSearching)">
+                        <div class="task-suggestions-inner">
+                          <div class="dropdown-item text-muted" v-if="smart_param.isSearching" style="font-size:14px; padding: 0 8px; text-align: left;">
+                            <span v-if="smart_param.validating">
+                              <i class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></i> 
+                              正在验证链接有效性...（{{ smart_param.validateProgress.current }}/{{ smart_param.validateProgress.total }}）<span v-if="smart_param.validateProgress.valid > 0">已找到 {{ smart_param.validateProgress.valid }} 个有效链接</span>
+                            </span>
+                            <span v-else>正在搜索资源...</span>
+                          </div>
+                          <div class="dropdown-item text-muted" v-else style="font-size:14px; padding-left: 8px; text-align: left;">
+                            {{ smart_param.taskSuggestions.message ? smart_param.taskSuggestions.message : smart_param.taskSuggestions.data && smart_param.taskSuggestions.data.length ? `以下资源由 ${(smart_param.taskSuggestions.source || '').replace(/,\s*/g, '、')} 搜索提供（仅显示有效链接，共 ${(smart_param.taskSuggestions.data || []).length} 个），如有侵权请联系资源发布方` : "未搜索到有效资源" }}
+                          </div>
+                          <div
+                            v-for="(suggestion, suggestionIndex) in smart_param.taskSuggestions.data || []"
+                            :key="(suggestion.shareurl || '') + '_' + (suggestion.taskname || '') + '_' + (suggestion.publish_date || '')"
+                            class="dropdown-item cursor-pointer"
+                            :class="{ 'current-suggestion': isCurrentSuggestion(suggestion), 'same-sharer-suggestion': isSameSharerSuggestion(suggestion), 'preferred-sharer-suggestion': isPreferredSharerSuggestion(suggestion) }"
+                            @click.prevent="selectSuggestion(task.__originalIndex !== undefined ? task.__originalIndex : index, suggestion)"
+                            style="font-size: 14px;"
+                            :title="getSuggestionHoverTitle(suggestion, suggestionIndex)"
+                          >
+                            <span v-html="suggestion.verify ? '✅': ''"></span> {{ suggestion.taskname }}
+                            <small class="text-muted">
+                              <a :href="suggestion.shareurl" target="_blank" @click.stop> · {{ suggestion.shareurl.replace(/^https?:\/\/pan\.(quark|qoark)\.cn\/s\//, '').split('#')[0] }}</a>
+                              <template v-if="suggestion.source"><span class="source-badge" :class="suggestion.source.toLowerCase()" :data-publish-date="suggestion.publish_date ? ' · ' + formatPublishDate(suggestion.publish_date, suggestion.pansou_source, suggestion.source) : ''">{{ suggestion.source }}</span></template>
+                            </small>
                           </div>
                         </div>
-                        <div class="input-group-append" title="资源搜索">
-                          <button class="btn btn-primary" type="button" @click="searchSuggestions(task.__originalIndex !== undefined ? task.__originalIndex : index, task.taskname)">
-                            <i v-if="smart_param.isSearching && smart_param.index === (task.__originalIndex !== undefined ? task.__originalIndex : index)" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></i>
-                            <i v-else class="bi bi-search"></i>
-                          </button>
-                          <div class="input-group-text" title="谷歌搜索">
-                            <a target="_blank" :href="`https://www.google.com/search?q=%22pan.quark.cn/s%22+${cleanTaskNameForSearch(task.taskname)}`"><i class="bi bi-google"></i></a>
-                          </div>
-                          <div class="input-group-text" title="TMDB搜索">
-                            <a target="_blank" :href="`https://www.themoviedb.org/search?query=${cleanTaskNameForSearch(task.taskname)}`"><img src="./static/images/TMDB.svg" class="tmdb-icon"></a>
-                          </div>
-                          <div class="input-group-text" title="豆瓣搜索">
-                            <a target="_blank" :href="`https://search.douban.com/movie/subject_search?search_text=${cleanTaskNameForSearch(task.taskname)}`"><img src="./static/images/Douban.svg" class="douban-icon"></a>
-                          </div>
+                      </div>
+                      <div class="input-group-append" title="资源搜索">
+                        <button class="btn btn-primary" type="button" @click="searchSuggestions(task.__originalIndex !== undefined ? task.__originalIndex : index, task.taskname)">
+                          <i v-if="smart_param.isSearching && smart_param.index === (task.__originalIndex !== undefined ? task.__originalIndex : index)" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></i>
+                          <i v-else class="bi bi-search"></i>
+                        </button>
+                        <div class="input-group-text" title="谷歌搜索">
+                          <a target="_blank" :href="`https://www.google.com/search?q=%22pan.quark.cn/s%22+${cleanTaskNameForSearch(task.taskname)}`"><i class="bi bi-google"></i></a>
+                        </div>
+                        <div class="input-group-text" title="TMDB搜索">
+                          <a target="_blank" :href="`https://www.themoviedb.org/search?query=${cleanTaskNameForSearch(task.taskname)}`"><img src="./static/images/TMDB.svg" class="tmdb-icon"></a>
+                        </div>
+                        <div class="input-group-text" title="豆瓣搜索">
+                          <a target="_blank" :href="`https://search.douban.com/movie/subject_search?search_text=${cleanTaskNameForSearch(task.taskname)}`"><img src="./static/images/Douban.svg" class="douban-icon"></a>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div class="form-group row" title="支持子目录链接，Web端打开分享点入目录，复制浏览器的URL即可；支持带提取码链接，查阅Wiki了解详情">
-                    <label class="col-sm-2 col-form-label">分享链接</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <input type="text" name="shareurl[]" class="form-control" v-model="task.shareurl" placeholder="必填" @blur="changeShareurl(task)">
-                        <div class="input-group-append" v-if="task.shareurl">
-                          <button type="button" class="btn btn-outline-secondary" @click="fileSelect.selectDir=true;fileSelect.previewRegex=false;showShareSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择需转存的文件夹"><i class="bi bi-folder"></i></button>
-                          <div class="input-group-text">
-                            <a target="_blank" :href="task.shareurl"><i class="bi bi-link-45deg"></i></a>
-                          </div>
+                  <div class="task-field task-field-full" title="支持子目录链接，Web端打开分享点入目录，复制浏览器的URL即可；支持带提取码链接，查阅Wiki了解详情">
+                    <label class="col-form-label">分享链接</label>
+                    <div class="input-group">
+                      <input type="text" name="shareurl[]" class="form-control" v-model="task.shareurl" placeholder="必填" @blur="changeShareurl(task)">
+                      <div class="input-group-append" v-if="task.shareurl">
+                        <button type="button" class="btn btn-outline-secondary" @click="fileSelect.selectDir=true;fileSelect.previewRegex=false;showShareSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择需转存的文件夹"><i class="bi bi-folder"></i></button>
+                        <div class="input-group-text">
+                          <a target="_blank" :href="task.shareurl"><i class="bi bi-link-45deg"></i></a>
                         </div>
                       </div>
                     </div>
                   </div>
-                  <div class="form-group row">
-                    <label class="col-sm-2 col-form-label">保存路径</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <input type="text" name="savepath[]" class="form-control" v-model="task.savepath" placeholder="必填" @focus="focusTaskname(task.__originalIndex !== undefined ? task.__originalIndex : index, task)" @input="onSavepathChange(task.__originalIndex !== undefined ? task.__originalIndex : index, task)">
-                        <div class="input-group-append">
-                          <button class="btn btn-outline-secondary" type="button" v-if="smart_param.savepath && smart_param.index == (task.__originalIndex !== undefined ? task.__originalIndex : index) && task.savepath != smart_param.origin_savepath" @click="task.savepath = smart_param.origin_savepath" title="恢复保存路径"><i class="bi bi-reply"></i></button>
-                          <button class="btn btn-outline-secondary" type="button" @click="showSavepathSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择保存到的文件夹"><i class="bi bi-folder"></i></button>
-                          <button type="button" class="btn btn-outline-secondary" @click="resetFolderContent(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="重置文件夹：此操作将删除当前保存路径中的所有文件及相关转存记录，且不可恢复，请谨慎操作"><i class="bi bi-folder-x"></i></button>
-                        </div>
+                  <div class="task-field">
+                    <label class="col-form-label">保存路径</label>
+                    <div class="input-group">
+                      <input type="text" name="savepath[]" class="form-control" v-model="task.savepath" placeholder="必填" @focus="focusTaskname(task.__originalIndex !== undefined ? task.__originalIndex : index, task)" @input="onSavepathChange(task.__originalIndex !== undefined ? task.__originalIndex : index, task)">
+                      <div class="input-group-append">
+                        <button class="btn btn-outline-secondary" type="button" v-if="smart_param.savepath && smart_param.index == (task.__originalIndex !== undefined ? task.__originalIndex : index) && task.savepath != smart_param.origin_savepath" @click="task.savepath = smart_param.origin_savepath" title="恢复保存路径"><i class="bi bi-reply"></i></button>
+                        <button class="btn btn-outline-secondary" type="button" @click="showSavepathSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择保存到的文件夹"><i class="bi bi-folder"></i></button>
+                        <button type="button" class="btn btn-outline-secondary" @click="resetFolderContent(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="重置文件夹：此操作将删除当前保存路径中的所有文件及相关转存记录，且不可恢复，请谨慎操作"><i class="bi bi-folder-x"></i></button>
                       </div>
                     </div>
                   </div>
-                  <div class="form-group row" :title="task.use_sequence_naming || task.use_episode_naming ? (task.use_sequence_naming ? '输入带{}占位符的重命名格式，如：剧名 - S01E{}、剧名.S03E{}等，{}将被替换为集序号（按文件名和修改日期智能排序），目录中的文件夹会被自动过滤' : '输入带[]占位符的重命名格式，如：剧名 - S01E[]、剧名.S03E[]等，[]将被替换为从文件名中提取的集编号，目录中的文件夹会被自动过滤') : '可用作筛选，只转存匹配到文件名的文件，留空则直接转存所有文件'">
-                    <label class="col-sm-2 col-form-label">命名规则</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <div class="input-group-prepend">
-                          <button class="btn btn-outline-secondary" type="button" @click="fileSelect.selectDir=true;fileSelect.previewRegex=true;fileSelect.sortBy='file_name_re';fileSelect.sortOrder='desc';showShareSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" :title="task.use_sequence_naming ? '预览顺序命名效果' : (task.use_episode_naming ? '预览剧集命名效果' : '预览正则命名效果')">
-                            {{ task.use_sequence_naming ? '顺序命名' : (task.use_episode_naming ? '剧集命名' : '正则命名') }}
-                          </button>
-                        </div>
-                        <input type="text" name="pattern[]" class="form-control" v-model="task.pattern" :placeholder="task.use_sequence_naming ? '输入带{}占位符的重命名格式，如：剧名 - S01E{}' : (task.use_episode_naming ? '输入带[]占位符的重命名格式，如：剧名 - S01E[]' : '匹配表达式')"  list="magicRegex" @input="detectNamingMode(task); onPatternChange(task.__originalIndex !== undefined ? task.__originalIndex : index, task)">
-                        <input v-if="!task.use_sequence_naming && !task.use_episode_naming" type="text" name="replace[]" class="form-control" v-model="task.replace" placeholder="替换表达式">
-                        <div class="input-group-append" title="保存时只比较文件名的部分，01.mp4和01.mkv视同为同一文件，不重复转存">
-                          <div class="input-group-text">
-                            <input type="checkbox" v-model="task.ignore_extension">&nbsp;忽略后缀
-                          </div>
+                  <div class="task-field task-field-full" :title="task.use_sequence_naming || task.use_episode_naming ? (task.use_sequence_naming ? '输入带{}占位符的重命名格式，如：剧名 - S01E{}、剧名.S03E{}等，{}将被替换为集序号（按文件名和修改日期智能排序），目录中的文件夹会被自动过滤' : '输入带[]占位符的重命名格式，如：剧名 - S01E[]、剧名.S03E[]等，[]将被替换为从文件名中提取的集编号，目录中的文件夹会被自动过滤') : '可用作筛选，只转存匹配到文件名的文件，留空则直接转存所有文件'">
+                    <label class="col-form-label">命名规则</label>
+                    <div class="input-group">
+                      <div class="input-group-prepend">
+                        <button class="btn btn-outline-secondary" type="button" @click="fileSelect.selectDir=true;fileSelect.previewRegex=true;fileSelect.sortBy='file_name_re';fileSelect.sortOrder='desc';showShareSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" :title="task.use_sequence_naming ? '预览顺序命名效果' : (task.use_episode_naming ? '预览剧集命名效果' : '预览正则命名效果')">
+                          {{ task.use_sequence_naming ? '顺序命名' : (task.use_episode_naming ? '剧集命名' : '正则命名') }}
+                        </button>
+                      </div>
+                      <input type="text" name="pattern[]" class="form-control" v-model="task.pattern" :placeholder="task.use_sequence_naming ? '输入带{}占位符的重命名格式，如：剧名 - S01E{}' : (task.use_episode_naming ? '输入带[]占位符的重命名格式，如：剧名 - S01E[]' : '匹配表达式')"  list="magicRegex" @input="detectNamingMode(task); onPatternChange(task.__originalIndex !== undefined ? task.__originalIndex : index, task)">
+                      <input v-if="!task.use_sequence_naming && !task.use_episode_naming" type="text" name="replace[]" class="form-control" v-model="task.replace" placeholder="替换表达式">
+                      <div class="input-group-append" title="保存时只比较文件名的部分，01.mp4和01.mkv视同为同一文件，不重复转存">
+                        <div class="input-group-text">
+                          <input type="checkbox" v-model="task.ignore_extension">&nbsp;忽略后缀
                         </div>
                       </div>
-                      <datalist id="magicRegex">
-                        <option v-for="(value, key) in formData.magic_regex" :key="key" :value="`${key}`" v-html="`${value.pattern.replace('<', '<\u200B')} → ${value.replace}`"></option>
-                      </datalist>
                     </div>
+                    <datalist id="magicRegex">
+                      <option v-for="(value, key) in formData.magic_regex" :key="key" :value="`${key}`" v-html="`${value.pattern.replace('<', '<\u200B')} → ${value.replace}`"></option>
+                    </datalist>
                   </div>
                   
-                  <div class="form-group row" title="名称包含过滤词汇的项目不会被转存，多个词用逗号分隔，支持通过文件名和扩展名过滤文件和文件夹，支持使用保留词|过滤词的格式实现高级过滤，查阅Wiki了解详情">
-                    <label class="col-sm-2 col-form-label">过滤规则</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <input type="text" name="filterwords[]" class="form-control" v-model="task.filterwords" placeholder="可选，输入过滤词汇，用逗号分隔，如：纯享，txt，超前企划，名称包含过滤词汇的项目不会被转存，支持使用保留词|过滤词的格式实现高级过滤">
-                      </div>
+                  <div class="task-field" title="名称包含过滤词汇的项目不会被转存，多个词用逗号分隔，支持通过文件名和扩展名过滤文件和文件夹，支持使用保留词|过滤词的格式实现高级过滤，查阅Wiki了解详情">
+                    <label class="col-form-label">过滤规则</label>
+                    <div class="input-group">
+                      <input type="text" name="filterwords[]" class="form-control" v-model="task.filterwords" placeholder="可选，输入过滤词汇，用逗号分隔，如：纯享，txt，超前企划，名称包含过滤词汇的项目不会被转存，支持使用保留词|过滤词的格式实现高级过滤">
                     </div>
                   </div>
 
-                  <div class="form-group row" title="只转存比选中文件更新的文件，请在符合筛选条件的文件中进行选择，在更换分享链接时非常有用">
-                    <label class="col-sm-2 col-form-label">起始文件</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <input type="text" class="form-control" placeholder="可选，只转存比此文件更新的文件，请在符合筛选条件的文件中进行选择" name="startfid[]" v-model="task.startfid">
-                        <div class="input-group-append" v-if="task.shareurl">
-                          <button class="btn btn-outline-secondary" type="button" @click="fileSelect.selectDir=false;fileSelect.previewRegex=false;showShareSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择起始文件"><i class="bi bi-folder"></i></button>
-                        </div>
+                  <div class="task-field" title="只转存比选中文件更新的文件，请在符合筛选条件的文件中进行选择，在更换分享链接时非常有用">
+                    <label class="col-form-label">起始文件</label>
+                    <div class="input-group">
+                      <input type="text" class="form-control" placeholder="可选，只转存比此文件更新的文件，请在符合筛选条件的文件中进行选择" name="startfid[]" v-model="task.startfid">
+                      <div class="input-group-append" v-if="task.shareurl">
+                        <button class="btn btn-outline-secondary" type="button" @click="fileSelect.selectDir=false;fileSelect.previewRegex=false;showShareSelect(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择起始文件"><i class="bi bi-folder"></i></button>
                       </div>
                     </div>
                   </div>
-                  <div class="form-group row" title="匹配到的目录及其所有子目录、文件都会参与更新，并应用与根目录相同的正则命名和过滤规则（剧集、顺序命名仅支持对根目录文件重命名）。目录是逐级索引的，无法直接指定某个深层目录；目录层级或文件数量过多时会明显增加扫描耗时，慎用.*">
-                    <label class="col-sm-2 col-form-label">更新目录</label>
-                    <div class="col-sm-10">
-                      <input type="text" name="update_subdir[]" class="form-control" v-model="task.update_subdir" placeholder="可选，输入需要更新的子目录的文件夹名称（或正则表达式），多个项目用竖线分隔，如：4K|1080P">
-                    </div>
+                  <div class="task-field" title="匹配到的目录及其所有子目录、文件都会参与更新，并应用与根目录相同的正则命名和过滤规则（剧集、顺序命名仅支持对根目录文件重命名）。目录是逐级索引的，无法直接指定某个深层目录；目录层级或文件数量过多时会明显增加扫描耗时，慎用.*">
+                    <label class="col-form-label">更新目录</label>
+                    <input type="text" name="update_subdir[]" class="form-control" v-model="task.update_subdir" placeholder="可选，输入需要更新的子目录的文件夹名称（或正则表达式），多个项目用竖线分隔，如：4K|1080P">
                   </div>
 
-                  <div class="form-group row" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情">
-                    <label class="col-sm-2 col-form-label">自动解压</label>
-                    <div class="col-sm-10">
-                      <select class="form-control" v-model="task.auto_extract_archive" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情">
-                        <option value="">{{ getInheritAutoExtractArchiveLabel() }}</option>
-                        <option value="keep_structure_keep_archive">保持原目录结构，保留压缩包</option>
-                        <option value="flat_files_keep_archive">扁平化提取文件，保留压缩包</option>
-                        <option value="keep_structure_delete_archive">保持原目录结构，删除压缩包</option>
-                        <option value="flat_files_delete_archive">扁平化提取文件，删除压缩包</option>
-                        <option value="disabled">禁用</option>
-                      </select>
-                    </div>
+                  <div class="task-field" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情">
+                    <label class="col-form-label">自动解压</label>
+                    <filter-select v-model="task.auto_extract_archive" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情"
+                                   :placeholder="getInheritAutoExtractArchiveLabel()"
+                                   :options="[
+                                     { value: 'keep_structure_keep_archive', text: '保持原目录结构，保留压缩包' },
+                                     { value: 'flat_files_keep_archive', text: '扁平化提取文件，保留压缩包' },
+                                     { value: 'keep_structure_delete_archive', text: '保持原目录结构，删除压缩包' },
+                                     { value: 'flat_files_delete_archive', text: '扁平化提取文件，删除压缩包' },
+                                     { value: 'disabled', text: '禁用' }
+                                   ]"></filter-select>
                   </div>
 
-                  <div class="form-group row">
-                    <label class="col-sm-2 col-form-label">截止日期</label>
-                    <div class="col-sm-10">
-                      <div class="input-group">
-                        <input type="date" name="enddate[]" class="form-control date-input-no-icon" v-model="task.enddate" placeholder="可选" :ref="'enddate_' + index">
-                        <div class="input-group-append">
-                          <button type="button" class="btn btn-outline-secondary" @click="openDatePicker(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择截止日期">
-                            <i class="bi bi-calendar3"></i>
-                          </button>
-                        </div>
+                  <div class="task-field">
+                    <label class="col-form-label">截止日期</label>
+                    <div class="input-group">
+                      <input type="date" name="enddate[]" class="form-control date-input-no-icon" v-model="task.enddate" placeholder="可选" :ref="'enddate_' + index">
+                      <div class="input-group-append">
+                        <button type="button" class="btn btn-outline-secondary" @click="openDatePicker(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="选择截止日期">
+                          <i class="bi bi-calendar3"></i>
+                        </button>
                       </div>
                     </div>
                   </div>
-                  <div class="form-group row" title="只在勾选的星期时才运行，对周更的内容非常有用；使用自动模式将按任务进度执行，若任务进度达到100%则跳过，未完成则会在每次定时运行全部任务时尝试执行，查阅Wiki了解详情">
-                    <label class="col-sm-2 col-form-label">执行周期</label>
-                    <div class="col-sm-10 col-form-label">
+                  <div class="task-field task-field-full" title="只在勾选的星期时才运行，对周更的内容非常有用；使用自动模式将按任务进度执行，若任务进度达到100%则跳过，未完成则会在每次定时运行全部任务时尝试执行，查阅Wiki了解详情">
+                    <label class="col-form-label">执行周期</label>
+                    <div class="task-weekdays">
                       <div class="form-check form-check-inline" title="也可用作任务总开关">
                         <input class="form-check-input" type="checkbox" :checked="task.runweek.length === 7" @change="toggleAllWeekdays(task)" :indeterminate.prop="task.runweek.length > 0 && task.runweek.length < 7" :disabled="(task.execution_mode || formData.execution_mode || 'manual') === 'auto'">
                         <label class="form-check-label" :class="{'text-muted': (task.execution_mode || formData.execution_mode || 'manual') === 'auto'}">全选</label>
@@ -1503,11 +1468,31 @@
                       </div>
                     </div>
                   </div>
-                  <div class="form-group row" v-if="Object.keys(getAvailablePlugins(formData.plugins)).length" :title="getPluginConfigTitle(task)">
-                    <label class="col-sm-2 col-form-label">插件配置</label>
-                    <div class="col-sm-10">
-                      <v-jsoneditor v-model="task.addition" :options="{mode:'tree'}" :plus="false" height="151.5px" style="margin-bottom: -8px;" :disabled="isPluginConfigDisabled(task)"></v-jsoneditor>
+                  <div class="task-field task-field-full task-plugin-config" v-if="Object.keys(getAvailablePlugins(formData.plugins)).length" :title="getPluginConfigTitle(task)">
+                    <label class="col-form-label">插件配置</label>
+                    <div v-for="(plugin, pluginName) in getAvailablePlugins(formData.plugins)" :key="pluginName" class="task-plugin-item">
+                      <div data-toggle="collapse" class="glass-config-toggle-wrap" :data-target="'#taskplugin_'+pluginName+'_'+index" aria-expanded="false" :aria-controls="'taskplugin_'+pluginName+'_'+index">
+                        <div class="btn btn-block text-left glass-config-toggle">
+                          <i class="bi bi-caret-right-fill"></i> <span v-html="getPluginDisplayName(pluginName)"></span>
+                        </div>
+                      </div>
+                      <div class="collapse glass-config-body" :id="'taskplugin_'+pluginName+'_'+index">
+                        <div v-for="(defaultVal, key) in getPluginTaskConfig(pluginName)" :key="key" class="task-plugin-field">
+                          <label class="task-plugin-label">
+                            <span v-html="key"></span>
+                            <i v-if="getPluginTaskConfigHelp(pluginName, key)" class="bi bi-question-circle" :title="getPluginTaskConfigHelp(pluginName, key)"></i>
+                          </label>
+                          <template v-if="typeof defaultVal === 'boolean'">
+                            <label class="glass-switch">
+                              <input type="checkbox" :checked="getTaskPluginValue(task, pluginName, key)" @change="setTaskPluginValue(task, pluginName, key, $event.target.checked)" :disabled="isPluginConfigDisabled(task)">
+                              <span class="glass-switch-slider"></span>
+                            </label>
+                          </template>
+                          <input v-else type="text" class="form-control" :value="getTaskPluginValue(task, pluginName, key)" @input="setTaskPluginValue(task, pluginName, key, $event.target.value)" :placeholder="getPluginTaskConfigPlaceholder(pluginName, key)" :disabled="isPluginConfigDisabled(task)">
+                        </div>
+                      </div>
                     </div>
+                  </div>
                   </div>
                 </div>
               </template>
@@ -1642,56 +1627,13 @@
             <div style="height: 20px;"></div>
             <div class="row tasklist-filter-row" style="margin-bottom: 20px;">
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">名称筛选</span>
-                  </div>
-                  <input type="text" class="form-control" v-model="historyNameFilter" placeholder="任务或转存为名称关键词">
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearData('historyNameFilter')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <filter-select v-model="historyNameFilter" label="名称筛选" placeholder="任务或转存为名称关键词" clearable type="input" ></filter-select>
               </div>
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">任务筛选</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select" v-model="historyTaskSelected">
-                      <option value="">全部</option>
-                      <option v-for="task in historyTasks" :value="task" v-html="task"></option>
-                    </select>
-                  </div>
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearData('historyTaskSelected')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <filter-select v-model="historyTaskSelected" label="任务筛选" placeholder="全部" clearable :options="historyTasks" ></filter-select>
               </div>
-              <div class="col-xl-4 col-lg-4 col-md-6">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">状态筛选</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select"
-                            v-model="historyStatusFilter"
-                           >
-                      <option value="">全部</option>
-                      <option value="incomplete">未完成</option>
-                      <option value="ongoing">进行中</option>
-                      <option value="completed">已完成</option>
-                      <option value="airing">播出中</option>
-                      <option value="finale">本季终</option>
-                      <option value="ended">已完结</option>
-                      <option value="unmatched">未匹配</option>
-                      <option value="ended_task">已结束</option>
-                    </select>
-                  </div>
-                  <div class="input-group-append">
-                    <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearData('historyStatusFilter')"><i class="bi bi-x-lg"></i></button>
-                  </div>
-                </div>
+              <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
+              <filter-select v-model="historyStatusFilter" label="状态筛选" placeholder="全部" clearable :options="[{value:'incomplete',text:'未完成'},{value:'ongoing',text:'进行中'},{value:'completed',text:'已完成'},{value:'airing',text:'播出中'},{value:'finale',text:'本季终'},{value:'ended',text:'已完结'},{value:'unmatched',text:'未匹配'},{value:'ended_task',text:'已结束'}]" ></filter-select>
               </div>
             </div>
             
@@ -1789,6 +1731,9 @@
                       @mouseleave="historyTotalHover = false">共 {{ history.pagination ? history.pagination.total_records : 0 }} 条记录<template v-if="selectedRecords.length === 0 && historyTotalHover && history.pagination && history.pagination.total_records > 0">，<span class="history-select-all-btn" @click.stop="selectAllHistoryRecords">全选</span></template></span>{{ selectedRecords.length > 0 ? '，已选中 ' + selectedRecords.length + ' 条记录' : '' }}
               </div>
               <div class="pagination-controls d-flex align-items-center">
+                <button v-if="selectedRecords.length > 0" type="button" class="btn btn-outline-danger btn-sm mx-1" @click="deleteSelectedRecords" :title="'删除选中的 ' + selectedRecords.length + ' 条记录'">
+                  <i class="bi bi-trash3"></i> 删除选中 ({{ selectedRecords.length }})
+                </button>
                 <button type="button" class="btn btn-outline-secondary btn-sm mx-1" :class="{ disabled: historyParams.page <= 1 }" @click="changePage(historyParams.page - 1)" :disabled="historyParams.page <= 1">
                   <i class="bi bi-chevron-left"></i>
                 </button>
@@ -1856,14 +1801,9 @@
               <div class="col-12">
                 <!-- 桌面端账号选择 -->
                 <div class="d-flex align-items-center file-manager-rule-bar">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text">夸克账号</span>
-                  </div>
-                  <div class="position-relative" style="flex: 1;">
-                    <select class="form-control task-filter-select file-manager-input file-manager-account-select" v-model="fileManager.selectedAccountIndex" @change="onAccountChange">
-                      <option v-for="(account, index) in accountsDetail" :key="index" :value="index">{{ account.display_text }}</option>
-                    </select>
-                  </div>
+                  <filter-select class="file-manager-input" v-model="fileManager.selectedAccountIndex" label="夸克账号"
+                                 @change="onAccountChange"
+                                 :options="accountsDetail.map((a, i) => ({ value: i, text: a.display_text }))"></filter-select>
                   <button type="button" class="btn btn-outline-plex batch-rename-btn" v-if="formData.plugins && formData.plugins.plex && formData.plugins.plex.url && formData.plugins.plex.token && formData.plugins.plex.quark_root_path && formData.button_display.refresh_plex !== 'disabled'" @click="refreshFileManagerPlexLibrary" title="刷新Plex媒体库"><img src="./static/images/Plex.svg" class="plex-icon"></button>
                   <button type="button" class="btn btn-outline-alist batch-rename-btn" v-if="formData.plugins && formData.plugins.alist && formData.plugins.alist.url && formData.plugins.alist.token && formData.plugins.alist.storage_id && formData.button_display.refresh_alist !== 'disabled'" @click="refreshFileManagerAlistDirectory" title="刷新AList目录"><img src="https://cdn.jsdelivr.net/gh/alist-org/logo@main/logo.svg" class="alist-icon"></button>
                   <button type="button" class="btn btn-outline-primary batch-rename-btn" @click="createNewFolder" title="新建文件夹">
@@ -1876,14 +1816,9 @@
                 <!-- 移动端账号选择 -->
                 <div class="file-manager-rule-bar-responsive">
                   <div class="d-flex align-items-center">
-                    <div class="input-group" style="flex: 1;">
-                      <div class="input-group-prepend">
-                        <span class="input-group-text">夸克账号</span>
-                      </div>
-                      <select class="form-control task-filter-select file-manager-account-select" v-model="fileManager.selectedAccountIndex" @change="onAccountChange">
-                        <option v-for="(account, index) in accountsDetail" :key="index" :value="index">{{ account.display_text }}</option>
-                      </select>
-                    </div>
+                    <filter-select class="file-manager-input" style="flex: 1; min-width: 0;" v-model="fileManager.selectedAccountIndex" label="夸克账号"
+                                   @change="onAccountChange"
+                                   :options="accountsDetail.map((a, i) => ({ value: i, text: a.display_text }))"></filter-select>
                     <button type="button" class="btn btn-outline-plex batch-rename-btn" v-if="formData.plugins && formData.plugins.plex && formData.plugins.plex.url && formData.plugins.plex.token && formData.plugins.plex.quark_root_path && formData.button_display.refresh_plex !== 'disabled'" @click="refreshFileManagerPlexLibrary" title="刷新Plex媒体库"><img src="./static/images/Plex.svg" class="plex-icon"></button>
                     <button type="button" class="btn btn-outline-alist batch-rename-btn" v-if="formData.plugins && formData.plugins.alist && formData.plugins.alist.url && formData.plugins.alist.token && formData.plugins.alist.storage_id && formData.button_display.refresh_alist !== 'disabled'" @click="refreshFileManagerAlistDirectory" title="刷新AList目录"><img src="https://cdn.jsdelivr.net/gh/alist-org/logo@main/logo.svg" class="alist-icon"></button>
                     <button type="button" class="btn btn-outline-primary batch-rename-btn" @click="createNewFolder" title="新建文件夹">
@@ -2217,61 +2152,32 @@
               <!-- 顶部筛选和导航 -->
               <div class="row tasklist-filter-row calendar-filter-row">
                 <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                  <div class="input-group">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">名称筛选</span>
-                    </div>
-                    <input type="text" class="form-control" v-model="calendar.nameFilter" placeholder="任务或节目名称关键词">
-                    <div class="input-group-append">
-                      <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearCalendarFilter('nameFilter')"><i class="bi bi-x-lg"></i></button>
-                    </div>
-                  </div>
+                <filter-select v-model="calendar.nameFilter" label="名称筛选" placeholder="任务或节目名称关键词" clearable type="input" ></filter-select>
                 </div>
                 <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                  <div class="input-group">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">任务筛选</span>
-                    </div>
-                    <div class="position-relative" style="flex: 1;">
-                      <select class="form-control task-filter-select" v-model="calendar.taskFilter">
-                        <option value="">全部</option>
-                        <option v-for="task in calendar.taskNames" :value="task" v-html="task"></option>
-                      </select>
-                    </div>
-                    <div class="input-group-append">
-                      <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearCalendarFilter('taskFilter')"><i class="bi bi-x-lg"></i></button>
-                    </div>
-                  </div>
+                <filter-select v-model="calendar.taskFilter" label="任务筛选" placeholder="全部" clearable :options="calendar.taskNames" ></filter-select>
                 </div>
                 <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-                  <div class="input-group">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text">状态筛选</span>
-                    </div>
-                    <div class="position-relative" style="flex: 1;">
-                      <select class="form-control task-filter-select"
-                              v-model="calendar.statusFilter"
-                             >
-                        <option value="">全部</option>
-                        <option value="incomplete">未完成</option>
-                        <option value="ongoing">进行中</option>
-                        <option value="completed">已完成</option>
-                        <option value="airing">播出中</option>
-                        <option value="finale">本季终</option>
-                        <option value="ended">已完结</option>
-                        <option value="unmatched">未匹配</option>
-                      </select>
-                    </div>
-                    <div class="input-group-append">
-                      <button type="button" class="btn btn-outline-secondary filter-btn-square" @click="clearCalendarFilter('statusFilter')"><i class="bi bi-x-lg"></i></button>
-                    </div>
-                  </div>
+                  <filter-select v-model="calendar.statusFilter"
+                                 label="状态筛选"
+                                 placeholder="全部"
+                                 clearable
+                                 title="按剧集状态筛选：未完成 / 进行中 / 已完成 / 播出中 / 本季终 / 已完结 / 未匹配"
+                                 :options="[
+                                   { value: 'incomplete', text: '未完成' },
+                                   { value: 'ongoing', text: '进行中' },
+                                   { value: 'completed', text: '已完成' },
+                                   { value: 'airing', text: '播出中' },
+                                   { value: 'finale', text: '本季终' },
+                                   { value: 'ended', text: '已完结' },
+                                   { value: 'unmatched', text: '未匹配' }
+                                 ]" ></filter-select>
                 </div>
               </div>
               
               <!-- 分类按钮和视图切换 -->
               <div class="row mb-3 calendar-header-row">
-                <div class="col-lg-8 col-md-6">
+                <div class="calendar-header-categories">
                   <!-- 分类按钮 -->
                   <div class="calendar-category-buttons">
                     <button type="button" 
@@ -2290,17 +2196,15 @@
                     </button>
                   </div>
                 </div>
-                <div class="col-lg-4 col-md-6">
+                <div class="calendar-header-controls">
                   <!-- 日期切换和视图切换 -->
                   <div class="calendar-controls d-flex justify-content-end">
                     <!-- 排序组件 -->
                     <div class="tasklist-sort-controls" style="margin-right: 0;">
                       <div class="tasklist-sort-wrapper">
                         <span class="tasklist-sort-pill tasklist-sort-pill-icon" title="切换排序">按</span>
-                        <select class="tasklist-sort-pill tasklist-sort-select task-filter-select" :value="calendar.sortBy" @change="changeCalendarSortBy($event.target.value)" title="选择排序方式">
-                          <option value="name">节目名称</option>
-                          <option value="airtime">播出时间</option>
-                        </select>
+                        <filter-select class="tasklist-sort-embed" v-model="calendar.sortBy" @change="changeCalendarSortBy" title="选择排序方式"
+                          :options="[{value:'name',text:'节目名称'},{value:'airtime',text:'播出时间'}]"></filter-select>
                         <span class="tasklist-sort-pill tasklist-sort-order" @click="toggleCalendarSortOrder" title="切换升降序">
                           {{ calendar.sortOrder === 'asc' ? '升序排列' : '降序排列' }}
                         </span>
@@ -2457,7 +2361,7 @@
                   <div class="calendar-date-item" 
                        v-for="(date, index) in calendar.weekDates" 
                        :key="index"
-                       :class="{ 'selected': date.date === calendar.selectedDate }"
+                       :class="{ 'selected': date.date === calendar.selectedDate, 'today': date.isToday }"
                        :title="getDateCountInfo(date.date)"
                        @click="selectPosterDate(date.date)">
                     <div class="calendar-date-weekday">{{ date.weekday }}</div>
@@ -2465,8 +2369,8 @@
                   </div>
                 </div>
                 
-                <!-- 海报网格 -->
-                <div class="calendar-poster-grid">
+                <!-- 海报网格：固定一周 7 列，随容器宽度自适应均分 -->
+                <div class="calendar-poster-grid" :style="{'grid-template-columns': 'repeat(' + calendar.weekDates.length + ', minmax(96px, 1fr))'}">
                   <div class="calendar-poster-column" 
                        v-for="(date, dateIndex) in calendar.weekDates" 
                        :key="dateIndex">
@@ -3048,14 +2952,9 @@
               <div class="form-group row" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情">
                 <label class="col-sm-2 col-form-label">自动解压</label>
                 <div class="col-sm-10">
-                  <select class="form-control" v-model="createTask.taskData.auto_extract_archive" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情">
-                    <option value="">{{ getInheritAutoExtractArchiveLabel() }}</option>
-                    <option value="keep_structure_keep_archive">保持原目录结构，保留压缩包</option>
-                    <option value="flat_files_keep_archive">扁平化提取文件，保留压缩包</option>
-                    <option value="keep_structure_delete_archive">保持原目录结构，删除压缩包</option>
-                    <option value="flat_files_delete_archive">扁平化提取文件，删除压缩包</option>
-                    <option value="disabled">禁用</option>
-                  </select>
+                  <filter-select v-model="createTask.taskData.auto_extract_archive" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压，任务级设置优先于全局设置，查阅Wiki了解详情"
+                            :placeholder="getInheritAutoExtractArchiveLabel()"
+                            :options="[{value:'keep_structure_keep_archive',text:'保持原目录结构，保留压缩包'},{value:'flat_files_keep_archive',text:'扁平化提取文件，保留压缩包'},{value:'keep_structure_delete_archive',text:'保持原目录结构，删除压缩包'},{value:'flat_files_delete_archive',text:'扁平化提取文件，删除压缩包'},{value:'disabled',text:'禁用'}]"></filter-select>
                 </div>
               </div>
               <div class="form-group row">
@@ -3091,7 +2990,28 @@
               <div class="form-group row" v-if="Object.keys(getAvailablePlugins(formData.plugins)).length" :title="getCreateTaskPluginConfigTitle()">
                 <label class="col-sm-2 col-form-label">插件配置</label>
                 <div class="col-sm-10">
-                  <v-jsoneditor v-model="createTask.taskData.addition" :options="{mode:'tree'}" :plus="false" height="151.5px" :disabled="isPluginConfigDisabled(createTask.taskData)"></v-jsoneditor>
+                  <div v-for="(plugin, pluginName) in getAvailablePlugins(formData.plugins)" :key="pluginName" class="task-plugin-item">
+                    <div data-toggle="collapse" class="glass-config-toggle-wrap" :data-target="'#modalplugin_'+pluginName" aria-expanded="false" :aria-controls="'modalplugin_'+pluginName">
+                      <div class="btn btn-block text-left glass-config-toggle">
+                        <i class="bi bi-caret-right-fill"></i> <span v-html="getPluginDisplayName(pluginName)"></span>
+                      </div>
+                    </div>
+                    <div class="collapse glass-config-body" :id="'modalplugin_'+pluginName">
+                      <div v-for="(defaultVal, key) in getPluginTaskConfig(pluginName)" :key="key" class="task-plugin-field">
+                        <label class="task-plugin-label">
+                          <span v-html="key"></span>
+                          <i v-if="getPluginTaskConfigHelp(pluginName, key)" class="bi bi-question-circle" :title="getPluginTaskConfigHelp(pluginName, key)"></i>
+                        </label>
+                        <template v-if="typeof defaultVal === 'boolean'">
+                          <label class="glass-switch">
+                            <input type="checkbox" :checked="getTaskPluginValue(createTask.taskData, pluginName, key)" @change="setTaskPluginValue(createTask.taskData, pluginName, key, $event.target.checked)" :disabled="isPluginConfigDisabled(createTask.taskData)">
+                            <span class="glass-switch-slider"></span>
+                          </label>
+                        </template>
+                        <input v-else type="text" class="form-control" :value="getTaskPluginValue(createTask.taskData, pluginName, key)" @input="setTaskPluginValue(createTask.taskData, pluginName, key, $event.target.value)" :placeholder="getPluginTaskConfigPlaceholder(pluginName, key)" :disabled="isPluginConfigDisabled(createTask.taskData)">
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3155,19 +3075,8 @@
                   </div>
                 </div>
                 <div class="col-md-6 mb-2">
-                  <div class="input-group">
-                    <div class="input-group-prepend">
-                      <span class="input-group-text" style="background-color: var(--button-gray-background-color);">任务类型</span>
-                    </div>
-                    <select class="form-control" v-model="editMetadata.form.content_type">
-                      <option value="tv">剧集</option>
-                      <option value="anime">动画</option>
-                      <option value="variety">综艺</option>
-                      <option value="documentary">纪录片</option>
-                      <option value="movie">电影</option>
-                      <option value="other">其他</option>
-                    </select>
-                  </div>
+                  <filter-select v-model="editMetadata.form.content_type" label="任务类型"
+                    :options="[{value:'tv',text:'剧集'},{value:'anime',text:'动画'},{value:'variety',text:'综艺'},{value:'documentary',text:'纪录片'},{value:'movie',text:'电影'},{value:'other',text:'其他'}]"></filter-select>
                 </div>
               </div>
 
@@ -3821,6 +3730,14 @@
         },
         // 任务列表海报加载标记：taskname -> boolean（用于优先显示图片，再渐进显示其他信息）
         tasklistPosterLoaded: {},
+        // 任务列表展开状态：排序索引 -> boolean（悬浮卡片点击展开/收起）
+        taskExpandState: {},
+        // 系统配置：全部展开/收起标记
+        allConfigExpanded: false,
+        // 系统配置：插件设置当前选中的插件 tab
+        pluginConfigTab: '',
+        // 系统配置：搜索来源当前选中的来源 tab
+        sourceConfigTab: 'cloudsaver',
         // 任务列表排序设置（记忆到localStorage）
         tasklistSort: (() => {
           try {
@@ -4129,6 +4046,26 @@
         },
 
         // 任务列表：整体进度（100% 任务 / 所有存在任务进度的任务）
+        // 系统配置：插件设置当前选中的插件（无选中或已不存在时回退到第一个）
+        activePluginConfigTab() {
+          try {
+            const names = Object.keys(this.getAvailablePlugins(this.formData.plugins) || {});
+            if (names.length === 0) return '';
+            if (names.includes(this.pluginConfigTab)) return this.pluginConfigTab;
+            return names[0];
+          } catch (e) { return ''; }
+        },
+        // 系统配置：当前选中插件的配置对象
+        activePluginConfig() {
+          try {
+            const plugins = this.getAvailablePlugins(this.formData.plugins) || {};
+            return plugins[this.activePluginConfigTab] || {};
+          } catch (e) { return {}; }
+        },
+        // 系统配置：搜索来源当前选中的来源（回退到 cloudsaver）
+        activeSourceConfigTab() {
+          return this.sourceConfigTab === 'pansou' ? 'pansou' : 'cloudsaver';
+        },
         tasklistOverallProgress() {
           try {
             const tasks = this.tasklistVisibleTasks || [];
@@ -5267,6 +5204,35 @@
             this.tasklist.viewMode = this.tasklist.viewMode === 'list' ? 'poster' : 'list';
             try { localStorage.setItem('tasklist_view_mode', this.tasklist.viewMode); } catch (e) {}
           } catch (e) {}
+        },
+        // 任务卡片展开/收起状态（配合 Bootstrap collapse，仅用于样式类）
+        toggleTaskExpand(index) {
+          this.$set(this.taskExpandState, index, !this.taskExpandState[index]);
+        },
+        // 系统配置：全部展开/收起
+        toggleAllConfigSections() {
+          const ids = ['cfg_account','cfg_cookie','cfg_crontab','cfg_notify','cfg_plugins','cfg_sources','cfg_magic','cfg_episode','cfg_tasksettings','cfg_display','cfg_perf','cfg_api'];
+          const allExpanded = ids.every(id => {
+            const el = $(`#${id}`);
+            return el.length === 0 || el.hasClass('show');
+          });
+          ids.forEach(id => {
+            const el = $(`#${id}`);
+            if (el.length) {
+              if (allExpanded) { el.collapse('hide'); } else { el.collapse('show'); }
+            }
+          });
+          this.allConfigExpanded = !allExpanded;
+        },
+        // 同步系统配置全部展开状态（点击单个配置卡片后更新按钮文案）
+        syncConfigExpandAll() {
+          setTimeout(() => {
+            const ids = ['cfg_account','cfg_cookie','cfg_crontab','cfg_notify','cfg_plugins','cfg_sources','cfg_magic','cfg_episode','cfg_tasksettings','cfg_display','cfg_perf','cfg_api'];
+            this.allConfigExpanded = ids.every(id => {
+              const el = $(`#${id}`);
+              return el.length === 0 || el.hasClass('show');
+            });
+          }, 0);
         },
         // 根据任务名获取对应的日历任务对象（若已加载）
         getCalendarTaskByName(taskName) {
@@ -6677,16 +6643,9 @@
           const today = new Date();
           const currentDay = new Date(this.calendar.currentDate);
           
-          // 动态计算显示的列数，根据主内容区域宽度自动调整
-          const availableWidth = this.getCalendarAvailableWidth();
-          const minColumnWidth = 140; // 最小列宽
-          const columnGap = 20; // 列间距
-          // 计算列数：n = floor((W + gap - eps) / (minWidth + gap))，避免边界像素/滚动条导致的多列
-          const eps = 0.1;
-          const maxColumns = Math.max(2, Math.floor((availableWidth + columnGap - eps) / (minColumnWidth + columnGap)));
-          
+          // 固定显示一周 7 天（窄屏下海报列与日期导航横向滚动）
+          const maxColumns = 7;
 
-          
           // 从当前日期开始，向后扩展日期范围（今天始终在第一列）
           const startDate = new Date(currentDay);
           
@@ -8881,6 +8840,28 @@
           return false;
         },
 
+        // 获取任务级插件配置的值（缺省时返回插件默认值）
+        getTaskPluginValue(task, pluginName, key) {
+          try {
+            const addition = task.addition;
+            if (addition && addition[pluginName] && key in addition[pluginName]) {
+              return addition[pluginName][key];
+            }
+          } catch (e) {}
+          return this.getPluginTaskConfig(pluginName)[key];
+        },
+
+        // 设置任务级插件配置的值（自动初始化缺失的配置对象）
+        setTaskPluginValue(task, pluginName, key, value) {
+          if (!task.addition) {
+            this.$set(task, 'addition', {});
+          }
+          if (!task.addition[pluginName]) {
+            this.$set(task.addition, pluginName, { ...this.getPluginTaskConfig(pluginName) });
+          }
+          this.$set(task.addition[pluginName], key, value);
+        },
+
         // 插件配置模式改变时的处理
         onPluginConfigModeChange(pluginName) {
           if (this.formData.plugin_config_mode[pluginName] === 'global') {
@@ -9886,6 +9867,7 @@
             if (sortedIndex !== -1) {
               // 展开新任务的编辑模块
               $(`#collapse_${sortedIndex}`).collapse('show');
+              this.$set(this.taskExpandState, sortedIndex, true);
               // 滚动到新任务位置
               this.scrollToX();
               // 移除临时标识
@@ -11679,7 +11661,12 @@
                     }
                     return;
                   }
-                  this.run_log += eventData + '\n';
+                  // 日志级别标记着色（[ERROR]/[WARNING]/[SUCCESS]/[INFO]）
+                  this.run_log += eventData
+                    .replace(/\[(ERROR|CRITICAL|FATAL)\]/g, '<span class="log-error">[$1]</span>')
+                    .replace(/\[(WARNING|WARN)\]/g, '<span class="log-warning">[$1]</span>')
+                    .replace(/\[(SUCCESS|OK)\]/g, '<span class="log-success">[$1]</span>')
+                    .replace(/\[(INFO|DEBUG|DEBUG2)\]/g, '<span class="log-info">[$1]</span>') + '\n';
                   // 在更新 run_log 后将滚动条滚动到底部
                   this.$nextTick(() => {
                     const modalBody = document.querySelector('.modal-body');
@@ -18329,7 +18316,12 @@
                     if (callback) callback();
                     return;
                   }
-                  this.run_log += eventData + '\n';
+                  // 日志级别标记着色（[ERROR]/[WARNING]/[SUCCESS]/[INFO]）
+                  this.run_log += eventData
+                    .replace(/\[(ERROR|CRITICAL|FATAL)\]/g, '<span class="log-error">[$1]</span>')
+                    .replace(/\[(WARNING|WARN)\]/g, '<span class="log-warning">[$1]</span>')
+                    .replace(/\[(SUCCESS|OK)\]/g, '<span class="log-success">[$1]</span>')
+                    .replace(/\[(INFO|DEBUG|DEBUG2)\]/g, '<span class="log-info">[$1]</span>') + '\n';
                   // 在更新 run_log 后将滚动条滚动到底部
                   this.$nextTick(() => {
                     const modalBody = document.querySelector('.modal-body');
@@ -18412,6 +18404,15 @@
         
         // 获取追剧日历页面的可用宽度（排除侧边栏）
         getCalendarAvailableWidth() {
+          // 优先直接测量主内容区域（当前激活的 glass-tab）的实际宽度，
+          // 比窗口估算更准确（估算值与 page-width 模式的 CSS max-width 易失配，导致列数虚高）
+          try {
+            const tab = document.querySelector('.glass-tab');
+            if (tab) {
+              const width = tab.getBoundingClientRect().width - 40; // 减去 tab 左右内边距（20px×2）
+              return Math.max(width, 300);
+            }
+          } catch (e) {}
           const windowWidth = window.innerWidth || document.documentElement.clientWidth;
           
           // 移动设备（小屏幕）
@@ -18435,9 +18436,9 @@
           // 对应 CSS: .page-width-narrow/.page-width-medium/.page-width-wide 的 container-fluid max-width
           let maxContentWidth;
           if (this.pageWidthMode === 'narrow') {
-            maxContentWidth = 1440; // 与 CSS 保持一致
+            maxContentWidth = 1000; // 与 CSS 保持一致
           } else if (this.pageWidthMode === 'medium') {
-            maxContentWidth = 1680; // 与 CSS 保持一致
+            maxContentWidth = 1280; // 与 CSS 保持一致
           } else {
             maxContentWidth = 2160; // 宽模式上限
           }
