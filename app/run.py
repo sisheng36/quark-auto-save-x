@@ -2415,6 +2415,10 @@ def get_data():
     if "tmdb_api_key" not in data:
         data["tmdb_api_key"] = ""
 
+    # 初始化GitHub访问令牌（如果不存在；用于新版检测接口避免限流，可留空）
+    if "github_token" not in data:
+        data["github_token"] = ""
+
     # 初始化搜索来源默认结构
     if "source" not in data or not isinstance(data.get("source"), dict):
         data["source"] = {}
@@ -2586,6 +2590,9 @@ def update():
             elif key == "tmdb_api_key":
                 # 更新TMDB API密钥
                 config_data[key] = value
+            elif key == "github_token":
+                # 更新GitHub访问令牌（去除首尾空白）
+                config_data[key] = (value or '').strip()
             elif key == "trakt":
                 # 更新 Trakt 配置，仅接收 client_id 字段，其它字段忽略
                 if not isinstance(value, dict):
@@ -2798,6 +2805,27 @@ def update():
     else:
         logging.info(f">>> 配置更新失败")
         return jsonify({"success": False, "message": "配置更新失败"})
+
+
+# 新版检测代理：前端带令牌时经此接口请求GitHub（避免API限流），无令牌时前端仍直连GitHub
+@app.route("/api/check_update")
+def api_check_update():
+    try:
+        token = (config_data.get('github_token') or '').strip()
+        headers = {'Accept': 'application/vnd.github+json'}
+        if token:
+            headers['Authorization'] = f'Bearer {token}'
+        resp = requests.get(
+            'https://api.github.com/repos/sisheng36/quark-auto-save-x/tags',
+            headers=headers,
+            timeout=8
+        )
+        try:
+            return jsonify(resp.json()), resp.status_code
+        except Exception:
+            return jsonify({'error': 'invalid response'}), resp.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 502
 
 
 # 处理运行脚本请求
