@@ -273,6 +273,67 @@ a:hover {
   color: #fff;
 }
 
+/* --------------- 悬浮操作按钮（右侧） --------------- */
+.floating-action-buttons {
+  position: fixed;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1050;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 8px;
+  box-shadow: var(--glass-shadow);
+}
+.floating-action-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.floating-action-btn:hover {
+  color: #fff;
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.4);
+  transform: scale(1.08);
+}
+.floating-action-btn:active {
+  background: rgba(139, 92, 246, 0.4);
+  color: #fff;
+  transform: scale(0.95);
+}
+@media (max-width: 767.98px) {
+  .floating-action-buttons {
+    right: 10px;
+    top: auto;
+    bottom: 20px;
+    transform: none;
+    flex-direction: column;
+    padding: 6px;
+    gap: 4px;
+    border-radius: 14px;
+  }
+  .floating-action-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+  }
+}
+
 /* 移动端菜单按钮 */
 .navbar-toggler {
   border: none;
@@ -295,7 +356,7 @@ a:hover {
 /* --------------- 悬浮侧边栏 --------------- */
 .glass-sidebar {
   position: fixed;
-  top: calc(var(--navbar-height) + var(--sidebar-offset));
+  top: var(--sidebar-offset);
   left: var(--sidebar-offset);
   bottom: var(--sidebar-offset);
   width: var(--sidebar-width);
@@ -437,7 +498,7 @@ a:hover {
 /* --------------- Toast 通知 --------------- */
 .toast-container {
   position: fixed;
-  top: calc(var(--navbar-height) + 12px);
+  top: 12px;
   right: 24px;
   z-index: 1080;
 }
@@ -834,6 +895,7 @@ label {
 }
 td[colspan] {
   background: rgba(255, 255, 255, 0.02);
+  border-radius: 14px;
 }
 
 /* --------------- 徽章 --------------- */
@@ -2530,7 +2592,7 @@ body.login-page {
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;
-  /* 日期胶囊过多时横向滚动，避免换行 */
+  flex: 1;
   flex-wrap: nowrap;
   overflow-x: auto;
   padding-bottom: 6px;
@@ -2538,11 +2600,15 @@ body.login-page {
 .calendar-date-item {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
   padding: 6px 14px;
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s ease, box-shadow 0.15s ease;
+  overflow: hidden;
 }
 .calendar-date-item:hover {
   background: rgba(255, 255, 255, 0.07);
@@ -2571,12 +2637,16 @@ body.login-page {
 .calendar-date-weekday {
   font-size: 0.85rem;
   color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .calendar-date-day {
   font-size: 1.5rem;
   font-weight: 700;
   color: #fff;
   line-height: 1;
+  white-space: nowrap;
 }
 .calendar-date-day + .calendar-date-day {
   margin-left: 10px;
@@ -3546,6 +3616,23 @@ body.login-page {
   }
 }
 
+/* 小屏追剧日历日期行自适应 */
+@media (max-width: 767.98px) {
+  .calendar-date-navigation {
+    gap: 6px;
+  }
+  .calendar-date-item {
+    padding: 5px 8px;
+    gap: 5px;
+  }
+  .calendar-date-weekday {
+    font-size: 0.75rem;
+  }
+  .calendar-date-day {
+    font-size: 1.2rem;
+  }
+}
+
 /* ============================================================
    响应式适配
    ============================================================ */
@@ -3560,7 +3647,7 @@ body.login-page {
   .glass-sidebar,
   .glass-sidebar.collapse {
     position: fixed;
-    top: var(--navbar-height);
+    top: 0;
     left: 0;
     bottom: 0;
     width: 78%;
@@ -3653,7 +3740,7 @@ body.login-page {
     justify-content: center;
   }
   .toast-container {
-    top: calc(var(--navbar-height) + 10px);
+    top: 10px;
     right: 12px;
     left: 12px;
   }

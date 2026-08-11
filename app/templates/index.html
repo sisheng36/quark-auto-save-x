@@ -260,29 +260,21 @@
       <span class="aurora-orb aurora-orb-3"></span>
     </div>
 
-    <nav class="navbar navbar-dark glass-navbar sticky-top flex-md-nowrap p-0">
-      <a class="navbar-brand mr-0 px-3" href="#" @click.prevent="window.innerWidth > 767.98 && toggleSidebar()" :class="{'sidebar-collapsed-navbar-brand': sidebarCollapsed}" :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'">
-        <i class="bi bi-clouds brand-logo"></i> <span class="navbar-title">夸克自动转存</span>
-      </a>
-      <!-- 顶部操作按钮组 -->
-      <div class="navbar-actions">
-        <button type="button" class="navbar-action-btn" title="保存（CTRL+S）" @click="saveConfig()">
-          <i class="bi bi-check2"></i>
-        </button>
-        <button type="button" class="navbar-action-btn" title="运行全部任务（CTRL+R）" @click="runScriptNow()">
-          <i class="bi bi-caret-right"></i>
-        </button>
-        <button type="button" class="navbar-action-btn" title="单击回到顶部/双击回到底部" @click="scrollToX(0)" @dblclick="scrollToX()">
-          <i class="bi bi-chevron-expand"></i>
-        </button>
-        <button type="button" class="navbar-action-btn d-none d-md-inline-block" :title="'页面宽度：' + (pageWidthMode === 'narrow' ? '窄' : pageWidthMode === 'medium' ? '中' : '宽')" @click="togglePageWidth()">
-          <i class="bi bi-arrows"></i>
-        </button>
-      </div>
-      <button class="navbar-toggler navbar-toggler-square position-absolute d-md-none collapsed" type="button" data-toggle="collapse" data-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false">
-        <i class="bi bi-list"></i>
+    <!-- 悬浮操作按钮 -->
+    <div class="floating-action-buttons">
+      <button type="button" class="floating-action-btn" title="保存（CTRL+S）" @click="saveConfig()">
+        <i class="bi bi-check2"></i>
       </button>
-    </nav>
+      <button type="button" class="floating-action-btn" title="运行全部任务（CTRL+R）" @click="runScriptNow()">
+        <i class="bi bi-caret-right"></i>
+      </button>
+      <button type="button" class="floating-action-btn" title="单击回到顶部/双击回到底部" @click="scrollToX(0)" @dblclick="scrollToX()">
+        <i class="bi bi-chevron-expand"></i>
+      </button>
+      <button type="button" class="floating-action-btn" :title="'页面宽度：' + (pageWidthMode === 'narrow' ? '窄' : pageWidthMode === 'medium' ? '中' : '宽')" @click="togglePageWidth()">
+        <i class="bi bi-arrows"></i>
+      </button>
+    </div>
 
     <div class="container-fluid">
       <nav id="sidebarMenu" class="d-md-block sidebar collapse glass-sidebar" :class="{'sidebar-collapsed': sidebarCollapsed}">
@@ -3132,7 +3124,7 @@
         sidebarCollapsed: false,
         showCloudSaverPassword: false,
         showWebuiPassword: false,
-        pageWidthMode: 'medium', // 页面宽度模式：narrow, medium, wide
+        pageWidthMode: 'wide', // 页面宽度模式：narrow, medium, wide
         pluginDisplayAliases: {
           alist: 'AList',
           alist_strm: 'AList Strm',
@@ -4767,8 +4759,8 @@
           this.pageWidthMode = savedPageWidthMode;
           document.body.classList.add('page-width-' + this.pageWidthMode);
         } else {
-          // 默认使用中等宽度
-          document.body.classList.add('page-width-medium');
+          // 默认使用宽宽度
+          document.body.classList.add('page-width-wide');
         }
         
         $('[data-toggle="tooltip"]').tooltip();
