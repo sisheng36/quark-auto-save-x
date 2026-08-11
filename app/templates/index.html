@@ -17491,24 +17491,31 @@
         applyTmdbMatchFromDiscovery(item, movieData) {
           const mediaType = item && item.media_type;
           const tmdbId = Number(item && item.tmdb_id);
-          if (!Number.isInteger(tmdbId) || tmdbId <= 0 || !['movie', 'tv'].includes(mediaType)) {
-            return;
-          }
+          const hasTmdbMeta = Number.isInteger(tmdbId) && tmdbId > 0 && ['movie', 'tv'].includes(mediaType);
 
           const calendarInfo = this.createTask.taskData.calendar_info || {};
           const extracted = calendarInfo.extracted || {};
+          const showName = this.createTask.taskData.taskname || movieData.title || '';
+
+          // 榜单卡片（无 tmdb_id/media_type）也能拿到正确的剧名：
+          // 把 show_name 写进 extracted，让后端无需从保存路径猜剧名（否则季目录
+          // 如 "Season 03" 会被当成剧名去 TMDB 搜索，可能匹配到无关节目）。
           calendarInfo.extracted = {
             ...extracted,
-            show_name: this.createTask.taskData.taskname || movieData.title || '',
+            show_name: showName,
             year: movieData.year || '',
             content_type: this.createTask.taskData.content_type || this.getDiscoveryContentType(item)
           };
-          // 只保存已由用户选择的 ID；后台会补齐名称、季和本地海报。
-          calendarInfo.match = {
-            ...(calendarInfo.match || {}),
-            tmdb_id: tmdbId,
-            media_type: mediaType
-          };
+
+          // 只有带 TMDB 元数据（如搜索卡片）时，才写入用户已选的 ID；
+          // 后台会补齐名称、季和本地海报。
+          if (hasTmdbMeta) {
+            calendarInfo.match = {
+              ...(calendarInfo.match || {}),
+              tmdb_id: tmdbId,
+              media_type: mediaType
+            };
+          }
           this.$set(this.createTask.taskData, 'calendar_info', calendarInfo);
         },
         smartFillTaskData(item, movieData) {

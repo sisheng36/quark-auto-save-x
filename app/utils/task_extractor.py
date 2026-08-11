@@ -28,6 +28,32 @@ class TaskExtractor:
             r'(\d{4})\.(\d{1,2})\.(\d{1,2})',  # 2025.01.01
         ]
     
+    @staticmethod
+    def _is_season_dir_name(name: str) -> bool:
+        """
+        判断目录名是否为"季目录"（如 Season 03 / S03 / 第3季 / 第三季 / Season 3 等）。
+        这类目录名不应被当作剧名用于 TMDB 搜索，否则会匹配到毫不相关的节目。
+        """
+        if not name:
+            return False
+        n = name.strip()
+        if not n:
+            return False
+        # Season 03 / season 3 / S03 / S3 / S 03 等
+        if re.fullmatch(r'(?:[Ss]eason\s*\d{1,3}|[Ss]\d{1,3}|[Ss]\s*\d{1,3})', n):
+            return True
+        # 第3季 / 第三季 / 第 3 季 / 3季 等
+        if re.fullmatch(r'第\s*\d{1,3}\s*季', n):
+            return True
+        if re.fullmatch(r'第[一二三四五六七八九十百\d]+季', n):
+            return True
+        if re.fullmatch(r'\d{1,3}\s*季', n):
+            return True
+        # Season 1 (2026) 等（季名带年份）
+        if re.fullmatch(r'(?:[Ss]eason|[Ss])\s*\d{1,3}\s*[\(（]?\d{4}[\)）]?', n):
+            return True
+        return False
+
     def extract_show_info_from_path(self, save_path: str) -> Dict:
         """
         从保存路径中提取剧名和年份信息
@@ -67,9 +93,17 @@ class TaskExtractor:
             if show_name and year:
                 break
         
-        # 如果没有找到年份信息，尝试从任务名称中提取
+        # 如果没有找到年份信息，尝试从路径中提取剧名。
+        # 从后往前查找第一个"非季目录"的段作为剧名，
+        # 避免把 "Season 03" / "S03" / "第3季" 之类的季目录名误当作剧名，
+        # 否则用该季目录名搜索 TMDB 会命中完全无关的节目（如 "Season 03" → 数码宝贝驯兽师之王）。
         if not show_name:
-            show_name = self.extract_show_name_from_taskname(path_parts[-1] if path_parts else '')
+            for part in reversed(path_parts):
+                if self._is_season_dir_name(part):
+                    continue
+                show_name = self.extract_show_name_from_taskname(part)
+                if show_name:
+                    break
         
         # 判断内容类型
         content_type = self.determine_content_type(save_path)

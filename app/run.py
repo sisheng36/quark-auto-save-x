@@ -212,6 +212,85 @@ def compute_aired_count_by_episode_check(tmdb_id: int, season_number: int, now_l
         return 0
 
 
+def get_localized_show_status(tmdb_id, latest_season_number, raw_status):
+    """
+    将 TMDB 原始节目状态本地化为中文展示状态，并对 returning_series 场景做本季终/播出中判断。
+
+    - 非 returning_series：走 TMDBService.map_show_status_cn 的单表映射（已完结/已取消/制作中等）。
+    - returning_series：按本地 episodes/seasons 数据判断本季是否已播完：
+        存在 finale 类型集，且已播出集数 >= 本季总集数 => 本季终；否则 播出中。
+
+    该方法原先缺失（历史代码在 4 处调用 tmdb_service.get_localized_show_status 但因方法不存在
+    被 except 吞掉，导致 shows.status 写入英文原状态）。这里统一在 run.py 本地实现，
+    直接复用 is_episode_aired 与 CalendarDB，与任务列表展示口径保持一致。
+    """
+    try:
+        if not raw_status:
+            return ''
+        key = str(raw_status).strip().lower().replace(' ', '_')
+        if key != 'returning_series':
+            _svc = TMDBService(config_data.get('tmdb_api_key', ''), get_poster_language_setting())
+            return _svc.map_show_status_cn(raw_status)
+
+        # returning_series：判断本季是否已播完（有 finale 集且已播出集数 >= 本季总集数）
+        has_finale = False
+        try:
+            if tmdb_id and latest_season_number:
+                _cal = CalendarDB()
+                _cur = _cal.conn.cursor()
+                _cur.execute(
+                    """
+                    SELECT 1 FROM episodes
+                    WHERE tmdb_id=? AND season_number=? AND LOWER(COALESCE(type, '')) LIKE '%finale%'
+                    LIMIT 1
+                    """,
+                    (int(tmdb_id), int(latest_season_number))
+                )
+                has_finale = _cur.fetchone() is not None
+        except Exception:
+            has_finale = False
+
+        try:
+            from zoneinfo import ZoneInfo as _ZoneInfo
+            _local_tz = _ZoneInfo(_get_local_timezone())
+            _now_local_dt = datetime.now(_local_tz)
+        except Exception:
+            _now_local_dt = datetime.now()
+
+        aired = 0
+        total = 0
+        try:
+            if tmdb_id and latest_season_number:
+                _cal = CalendarDB()
+                _cur = _cal.conn.cursor()
+                _cur.execute(
+                    'SELECT episode_count FROM seasons WHERE tmdb_id=? AND season_number=?',
+                    (int(tmdb_id), int(latest_season_number))
+                )
+                _row = _cur.fetchone()
+                total = int((_row or [0])[0] or 0)
+                _cur.execute(
+                    'SELECT episode_number FROM episodes WHERE tmdb_id=? AND season_number=?',
+                    (int(tmdb_id), int(latest_season_number))
+                )
+                for (_ep_no,) in _cur.fetchall() or []:
+                    try:
+                        if is_episode_aired(int(tmdb_id), int(latest_season_number), int(_ep_no), _now_local_dt):
+                            aired += 1
+                    except Exception:
+                        continue
+        except Exception:
+            aired, total = 0, 0
+
+        return '本季终' if (has_finale and total > 0 and aired >= total) else '播出中'
+    except Exception:
+        try:
+            _svc = TMDBService(config_data.get('tmdb_api_key', ''), get_poster_language_setting())
+            return _svc.map_show_status_cn(raw_status)
+        except Exception:
+            return raw_status
+
+
 def is_movie_task(task: dict) -> bool:
     """判断任务是否是电影，并兼容曾被错误标记为 other 的旧任务。"""
     try:
@@ -3340,8 +3419,13 @@ def ensure_calendar_info_for_tasks() -> bool:
             info = extractor.extract_show_info_from_path(save_path)
             # 优先使用任务已有的 content_type（从创建位置判定），如果没有则使用从保存路径判定的类型
             existing_content_type = task.get('content_type') or extracted.get('content_type') or info.get('type', 'other')
+            # 剧名兜底：保存路径可能只有季目录（如 末日地堡/Season 03），
+            # extract_show_info_from_path 已跳过季目录段；若仍提取为空，
+            # 回退到任务名（任务名通常就是明确的剧名）。
+            path_show_name = info.get('show_name', '') or ''
+            task_show_name = extractor.extract_show_name_from_taskname(task_name) or ''
             extracted = {
-                'show_name': info.get('show_name', ''),
+                'show_name': path_show_name or task_show_name or task_name,
                 'year': info.get('year', ''),
                 'content_type': existing_content_type,
             }
@@ -6887,8 +6971,13 @@ def process_single_task_async(task, tmdb_service, cal_db):
             info = extractor.extract_show_info_from_path(save_path)
             # 优先使用任务已有的 content_type（从创建位置判定），如果没有则使用从保存路径判定的类型
             existing_content_type = task.get('content_type') or extracted.get('content_type') or info.get('type', 'other')
+            # 剧名兜底：保存路径可能只有季目录（如 末日地堡/Season 03），
+            # extract_show_info_from_path 已跳过季目录段；若仍提取为空，
+            # 回退到任务名（任务名通常就是明确的剧名）。
+            path_show_name = info.get('show_name', '') or ''
+            task_show_name = extractor.extract_show_name_from_taskname(task_name) or ''
             extracted = {
-                'show_name': info.get('show_name', ''),
+                'show_name': path_show_name or task_show_name or task_name,
                 'year': info.get('year', ''),
                 'content_type': existing_content_type,
             }
@@ -7267,7 +7356,7 @@ def process_single_task_async(task, tmdb_service, cal_db):
 
                 raw_status = (details.get('status') or '')
                 try:
-                    localized_status = tmdb_service.get_localized_show_status(int(tmdb_id), int(latest_season_number or 1), raw_status)
+                    localized_status = get_localized_show_status(int(tmdb_id), int(latest_season_number or 1), raw_status)
                     status = localized_status
                 except Exception:
                     status = raw_status
@@ -7457,7 +7546,7 @@ def do_calendar_bootstrap() -> tuple:
             # 将原始状态转换为本地化中文，且对 returning_series 场景做本季终/播出中判断
             raw_status = (details.get('status') or '')
             try:
-                localized_status = tmdb_service.get_localized_show_status(int(tmdb_id), int(match.get('latest_season_number') or 1), raw_status)
+                localized_status = get_localized_show_status(int(tmdb_id), int(match.get('latest_season_number') or 1), raw_status)
                 status = localized_status
             except Exception:
                 status = raw_status
@@ -8667,7 +8756,7 @@ def calendar_refresh_show():
         raw_status = (details.get('status') or '')
         try:
             latest_sn_for_status = int((existing_show or {}).get('latest_season_number') or 1)
-            localized_status = tmdb_service.get_localized_show_status(int(tmdb_id), latest_sn_for_status, raw_status)
+            localized_status = get_localized_show_status(int(tmdb_id), latest_sn_for_status, raw_status)
         except Exception:
             localized_status = raw_status
 
@@ -9553,7 +9642,7 @@ def run_calendar_refresh_all_internal():
                         raw_status = (raw_details.get('status') or '')
                         latest_sn_for_status = int((existing_show or {}).get('latest_season_number') or 1)
                         try:
-                            localized_status = tmdb_service.get_localized_show_status(int(tmdb_id), latest_sn_for_status, raw_status)
+                            localized_status = get_localized_show_status(int(tmdb_id), latest_sn_for_status, raw_status)
                         except Exception:
                             localized_status = raw_status
 
