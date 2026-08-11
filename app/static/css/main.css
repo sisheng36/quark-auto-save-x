@@ -2283,6 +2283,29 @@ body.login-page {
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
+.discovery-search-toggle {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 38px;
+}
+.discovery-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 420px;
+  min-width: 0;
+}
+.discovery-search .input-group {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.discovery-search-type {
+  flex: 0 0 auto;
+}
 .discovery-main-buttons,
 .discovery-sub-buttons {
   display: flex;
@@ -3640,6 +3663,16 @@ body.login-page {
 }
 
 @media (max-width: 575.98px) {
+  .discovery-search {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+  .discovery-search-type {
+    width: 100%;
+  }
+  .discovery-search-type .btn {
+    flex: 1 1 0;
+  }
   .discovery-grid {
     grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
     gap: 8px;
@@ -3693,6 +3726,4 @@ body.login-page {
     width: 460px;
   }
 }
-
-
 

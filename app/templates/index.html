@@ -1910,8 +1910,49 @@
             <div style="height: 20px;"></div>
             <!-- 榜单切换按钮区域 -->
             <div class="discovery-controls">
+              <button v-if="!discovery.isSearchOpen"
+                      type="button"
+                      class="btn btn-outline-secondary discovery-search-toggle"
+                      title="搜索影视"
+                      aria-label="搜索影视"
+                      :aria-expanded="discovery.isSearchOpen"
+                      @click="openDiscoverySearch">
+                <i class="bi bi-search"></i>
+              </button>
+              <div v-else class="discovery-search" role="search">
+                <div class="input-group">
+                  <div class="input-group-prepend">
+                    <span class="input-group-text" title="TMDB 搜索">
+                      <img src="./static/images/TMDB.svg" class="tmdb-icon" alt="TMDB">
+                    </span>
+                  </div>
+                  <input type="search"
+                         class="form-control"
+                         ref="discoverySearchInput"
+                         v-model="discovery.searchQuery"
+                         placeholder="搜索电影、剧集"
+                         autocomplete="off"
+                         :disabled="discovery.isSearching"
+                         @keydown.enter.prevent="searchDiscovery"
+                         @keydown.esc.prevent="clearDiscoverySearch">
+                  <div class="input-group-append">
+                    <button type="button" class="btn btn-primary" :disabled="discovery.isSearching" @click="searchDiscovery" title="搜索">
+                      <i v-if="discovery.isSearching" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></i>
+                      <i v-else class="bi bi-search"></i>
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" @click="clearDiscoverySearch" title="返回榜单">
+                      <i class="bi bi-x-lg"></i>
+                    </button>
+                  </div>
+                </div>
+                <div class="btn-group discovery-search-type" role="group" aria-label="搜索类型">
+                  <button type="button" class="btn btn-outline-secondary discovery-btn" :class="{ active: discovery.searchType === 'all' }" :aria-pressed="discovery.searchType === 'all'" @click="setDiscoverySearchType('all')">全部</button>
+                  <button type="button" class="btn btn-outline-secondary discovery-btn" :class="{ active: discovery.searchType === 'movie' }" :aria-pressed="discovery.searchType === 'movie'" @click="setDiscoverySearchType('movie')">电影</button>
+                  <button type="button" class="btn btn-outline-secondary discovery-btn" :class="{ active: discovery.searchType === 'tv' }" :aria-pressed="discovery.searchType === 'tv'" @click="setDiscoverySearchType('tv')">剧集</button>
+                </div>
+              </div>
               <!-- 第一排：主榜单按钮 -->
-              <div class="discovery-main-buttons">
+              <div v-if="!discovery.isSearchOpen" class="discovery-main-buttons">
                 <button type="button"
                         class="btn btn-outline-secondary discovery-btn"
                         v-for="category in discovery.mainCategories"
@@ -1923,7 +1964,7 @@
               </div>
 
               <!-- 第二排：子榜单按钮 -->
-              <div class="discovery-sub-buttons">
+              <div v-if="!discovery.isSearchOpen" class="discovery-sub-buttons">
                 <!-- 调试信息 -->
                 <div v-if="currentSubCategories.length === 0" style="color: var(--danger-color); font-size: 12px;">
                   调试：当前主分类 {{ discovery.selectedMainCategory }}，子分类数量：{{ currentSubCategories.length }}
@@ -1948,7 +1989,7 @@
               </div>
 
               <!-- 影片海报网格 -->
-              <div v-else-if="discovery.items.length > 0" class="discovery-grid">
+              <div v-else-if="discovery.items.length > 0 && (!discovery.isSearchOpen || discovery.isSearchMode)" class="discovery-grid">
                 <div class="discovery-item"
                      v-for="item in discovery.items"
                      :key="item.id">
@@ -1979,13 +2020,17 @@
                   </div>
                   <div class="discovery-info">
                     <div class="discovery-title" :title="item.title" @click="openDoubanPage(item)">{{ item.title }}</div>
-                    <div class="discovery-year" v-if="item.year">{{ item.year }}</div>
+                    <div class="discovery-year" v-if="item.year || item.source === 'tmdb'">
+                      <span v-if="item.year">{{ item.year }}</span>
+                      <span v-if="item.year && item.source === 'tmdb'"> / </span>
+                      <span v-if="item.source === 'tmdb'">{{ getContentTypeCN(item.content_type) }}</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
               <!-- 空状态 - 只有在加载完成且无数据且无错误时才显示 -->
-              <div v-else-if="discovery.hasLoaded" class="text-center py-5 text-muted">
+              <div v-else-if="discovery.hasLoaded && (!discovery.isSearchOpen || discovery.isSearchMode) && !discovery.isSearching" class="text-center py-5 text-muted">
                 <i class="bi bi-film" style="font-size: 3rem;"></i>
                 <div class="mt-2">暂无数据</div>
               </div>
@@ -3449,6 +3494,13 @@
           isInitialized: false, // 标记是否已初始化，避免页面刷新时闪烁
           error: null,
           items: [],
+          searchQuery: '',
+          searchType: 'all',
+          isSearching: false,
+          isSearchOpen: false,
+          isSearchMode: false,
+          searchRequestId: 0,
+          discoveryRequestId: 0,
           selectedMainCategory: localStorage.getItem('discovery_main_category') || 'movie_hot', // 从localStorage读取或默认选中热门电影
           selectedSubCategory: localStorage.getItem('discovery_sub_category') || '全部', // 从localStorage读取或默认选中全部
           mainCategories: [
@@ -16636,6 +16688,9 @@
         },
         // 影视发现相关方法
         selectMainCategory(categoryKey) {
+          this.discovery.searchRequestId += 1;
+          this.discovery.isSearching = false;
+          this.discovery.isSearchMode = false;
           this.discovery.selectedMainCategory = categoryKey;
           // 保存主榜单选择到localStorage
           localStorage.setItem('discovery_main_category', categoryKey);
@@ -16651,6 +16706,9 @@
           this.loadDiscoveryData();
         },
         selectSubCategory(subCategoryKey) {
+          this.discovery.searchRequestId += 1;
+          this.discovery.isSearching = false;
+          this.discovery.isSearchMode = false;
           this.discovery.selectedSubCategory = subCategoryKey;
           // 保存子榜单选择到localStorage
           localStorage.setItem('discovery_sub_category', subCategoryKey);
@@ -16684,7 +16742,98 @@
             }
           }
         },
+        setDiscoverySearchType(type) {
+          if (!['all', 'movie', 'tv'].includes(type)) return;
+          this.discovery.searchType = type;
+          if (this.discovery.isSearchOpen && this.discovery.isSearchMode && this.discovery.searchQuery.trim()) {
+            this.searchDiscovery();
+          }
+        },
+        openDiscoverySearch() {
+          this.discovery.searchRequestId += 1;
+          this.discovery.discoveryRequestId += 1;
+          this.discovery.isSearching = false;
+          this.discovery.isSearchMode = false;
+          this.discovery.isSearchOpen = true;
+          this.discovery.error = null;
+          this.$nextTick(() => {
+            const input = this.$refs.discoverySearchInput;
+            if (input && typeof input.focus === 'function') {
+              input.focus();
+            }
+          });
+        },
+        clearDiscoverySearch() {
+          this.discovery.searchRequestId += 1;
+          this.discovery.discoveryRequestId += 1;
+          this.discovery.isSearching = false;
+          this.discovery.searchQuery = '';
+          this.discovery.items = [];
+          this.discovery.isSearchMode = false;
+          this.discovery.isSearchOpen = false;
+          this.discovery.error = null;
+          this.loadDiscoveryData();
+        },
+        async searchDiscovery() {
+          const query = this.discovery.searchQuery.trim();
+          if (!query) {
+            this.discovery.searchRequestId += 1;
+            this.discovery.isSearching = false;
+            this.discovery.isSearchMode = false;
+            this.discovery.items = [];
+            this.discovery.error = null;
+            return;
+          }
+
+          this.discovery.isInitialized = true;
+          this.discovery.isSearchMode = true;
+          this.discovery.items = [];
+
+          if (!this.formData.tmdb_api_key) {
+            this.discovery.error = '请先在系统配置中填写 TMDB API 密钥';
+            this.discovery.hasLoaded = true;
+            return;
+          }
+
+          this.discovery.isSearching = true;
+          this.discovery.error = null;
+          const requestId = ++this.discovery.searchRequestId;
+          try {
+            const configuredLimit = Number(this.formData.file_performance && this.formData.file_performance.discovery_items_count) || 20;
+            const response = await axios.get('/api/tmdb/search', {
+              params: {
+                query: query,
+                type: this.discovery.searchType,
+                limit: Math.max(1, Math.min(configuredLimit, 50))
+              }
+            });
+
+            if (response.data.success) {
+              if (requestId !== this.discovery.searchRequestId) return;
+              this.discovery.items = response.data.data.items || [];
+              this.discovery.isSearchMode = true;
+            } else {
+              if (requestId !== this.discovery.searchRequestId) return;
+              this.discovery.error = response.data.message || '搜索影视失败';
+            }
+          } catch (error) {
+            console.error('TMDB 搜索失败:', error);
+            if (requestId !== this.discovery.searchRequestId) return;
+            this.discovery.error = (error.response && error.response.data && error.response.data.message) || '网络错误，请稍后重试';
+          } finally {
+            if (requestId === this.discovery.searchRequestId) {
+              this.discovery.isSearching = false;
+              this.discovery.hasLoaded = true;
+            }
+          }
+        },
         async loadDiscoveryData() {
+          if (this.discovery.isSearchOpen) {
+            if (this.discovery.isSearchMode && this.discovery.searchQuery.trim()) {
+              return this.searchDiscovery();
+            }
+            return;
+          }
           // 如果配置还没有加载完成，直接返回，不清空现有数据
           if (!this.formData.file_performance || this.formData.file_performance.discovery_items_count === undefined) {
             return;
@@ -16699,6 +16848,7 @@
             this.discovery.items = [];
           }
           this.discovery.error = null;
+          const requestId = ++this.discovery.discoveryRequestId;
 
           try {
             // 构建API路径 - 使用通用接口
@@ -16746,15 +16896,20 @@
             });
 
             if (response.data.success) {
+              if (requestId !== this.discovery.discoveryRequestId || this.discovery.isSearchOpen) return;
               this.discovery.items = response.data.data.items || [];
             } else {
+              if (requestId !== this.discovery.discoveryRequestId || this.discovery.isSearchOpen) return;
               this.discovery.error = response.data.message || '获取榜单数据失败';
             }
           } catch (error) {
             console.error('获取豆瓣榜单失败:', error);
+            if (requestId !== this.discovery.discoveryRequestId || this.discovery.isSearchOpen) return;
             this.discovery.error = '网络错误，请稍后重试';
           } finally {
-            this.discovery.hasLoaded = true;
+            if (requestId === this.discovery.discoveryRequestId && !this.discovery.isSearchOpen) {
+              this.discovery.hasLoaded = true;
+            }
           }
         },
         openDoubanPage(item) {
@@ -16992,6 +17147,7 @@
 
             // 智能填充任务数据
             this.smartFillTaskData(item, movieData);
+            this.applyTmdbMatchFromDiscovery(item, movieData);
 
             // 打开创建任务模态框
             $('#createTaskModal').modal('show');
@@ -17185,42 +17341,53 @@
           const psValid = ps.server;
           return !!(csValid || psValid);
         },
+        getDiscoveryContentType(item) {
+          const itemType = item && item.content_type;
+          if (['movie', 'tv', 'anime', 'variety', 'documentary'].includes(itemType)) {
+            return itemType;
+          }
+
+          const categoryTypeMap = {
+            movie_hot: 'movie',
+            movie_latest: 'movie',
+            movie_top: 'movie',
+            movie_underrated: 'movie',
+            tv_drama: 'tv',
+            tv_animation: 'anime',
+            tv_variety: 'variety',
+            tv_documentary: 'documentary'
+          };
+          return categoryTypeMap[this.discovery.selectedMainCategory] || 'movie';
+        },
+        applyTmdbMatchFromDiscovery(item, movieData) {
+          const mediaType = item && item.media_type;
+          const tmdbId = Number(item && item.tmdb_id);
+          if (!Number.isInteger(tmdbId) || tmdbId <= 0 || !['movie', 'tv'].includes(mediaType)) {
+            return;
+          }
+
+          const calendarInfo = this.createTask.taskData.calendar_info || {};
+          const extracted = calendarInfo.extracted || {};
+          calendarInfo.extracted = {
+            ...extracted,
+            show_name: this.createTask.taskData.taskname || movieData.title || '',
+            year: movieData.year || '',
+            content_type: this.createTask.taskData.content_type || this.getDiscoveryContentType(item)
+          };
+          // 只保存已由用户选择的 ID；后台会补齐名称、季和本地海报。
+          calendarInfo.match = {
+            ...(calendarInfo.match || {}),
+            tmdb_id: tmdbId,
+            media_type: mediaType
+          };
+          this.$set(this.createTask.taskData, 'calendar_info', calendarInfo);
+        },
         smartFillTaskData(item, movieData) {
           // 智能填充任务数据
           const taskSettings = this.formData.task_settings || {};
-
-          // 获取当前榜单类型
-          const selectedMainCategory = this.discovery.selectedMainCategory;
-
-          // 根据主分类确定榜单类型名称
-          const categoryNameMap = {
-            'movie_hot': '热门电影',
-            'movie_latest': '最新电影',
-            'movie_top': '豆瓣高分',
-            'movie_underrated': '冷门佳片',
-            'tv_drama': '热门剧集',
-            'tv_animation': '热门动画',
-            'tv_variety': '热门综艺',
-            'tv_documentary': '热门纪录片'
-          };
-
-          const currentRanking = categoryNameMap[selectedMainCategory] || '热门电影';
-
-          // 判断是否为电视类内容
-          const isTvContent = currentRanking.includes('剧集') || currentRanking.includes('动画') ||
-                             currentRanking.includes('综艺') || currentRanking.includes('纪录片');
-
-          // 判断当前内容类型
-          let contentType = 'movie'; // 默认为电影
-          if (currentRanking.includes('剧集')) {
-            contentType = 'tv';
-          } else if (currentRanking.includes('动画')) {
-            contentType = 'anime';
-          } else if (currentRanking.includes('综艺')) {
-            contentType = 'variety';
-          } else if (currentRanking.includes('纪录片')) {
-            contentType = 'documentary';
-          }
+          // 搜索结果自带媒体类型，榜单项则继续使用当前分类的既有规则。
+          const contentType = this.getDiscoveryContentType(item);
+          const isTvContent = contentType !== 'movie';
 
           // 设置内容类型到任务数据
           this.createTask.taskData.content_type = contentType;
@@ -17654,32 +17821,10 @@
             return taskData.taskname; // 如果没有影视数据，使用任务名称
           }
 
-          // 获取当前榜单类型
-          const selectedMainCategory = this.discovery.selectedMainCategory;
-          const categoryNameMap = {
-            'movie_hot': '热门电影',
-            'movie_latest': '最新电影',
-            'movie_top': '豆瓣高分',
-            'movie_underrated': '冷门佳片',
-            'tv_drama': '热门剧集',
-            'tv_animation': '热门动画',
-            'tv_variety': '热门综艺',
-            'tv_documentary': '热门纪录片'
-          };
-
-          const currentRanking = categoryNameMap[selectedMainCategory] || '热门电影';
-
-          // 判断内容类型
-          let contentType = 'movie';
-          if (currentRanking.includes('剧集')) {
-            contentType = 'tv';
-          } else if (currentRanking.includes('动画')) {
-            contentType = 'anime';
-          } else if (currentRanking.includes('综艺')) {
-            contentType = 'variety';
-          } else if (currentRanking.includes('纪录片')) {
-            contentType = 'documentary';
-          }
+          // 优先使用搜索或创建流程已确定的类型，避免当前榜单分类覆盖它。
+          const contentType = this.getDiscoveryContentType({
+            content_type: taskData && taskData.content_type
+          });
 
           // 检查是否有自定义路径设置
           let savePathTemplate = '';

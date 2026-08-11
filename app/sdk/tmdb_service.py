@@ -33,6 +33,7 @@ class TMDBService:
         # 简单内存缓存，避免短时间重复请求
         self._cache = {}
         self._cache_ttl_seconds = 600
+        self.last_error = None
         
     def is_configured(self) -> bool:
         """检查TMDB API是否已配置"""
@@ -50,11 +51,29 @@ class TMDBService:
     def is_using_backup_url(self) -> bool:
         """检查是否正在使用备用地址"""
         return self.current_url == self.backup_url
+
+    @staticmethod
+    def _get_request_error_message(error: Exception) -> str:
+        """返回可展示且不含请求参数的 TMDB 错误信息。"""
+        response = getattr(error, 'response', None)
+        status_code = getattr(response, 'status_code', None)
+        if status_code == 401:
+            return 'TMDB API 密钥无效或未获授权'
+        if status_code == 429:
+            return 'TMDB 请求频率过高，请稍后重试'
+        if status_code:
+            return f'TMDB 服务请求失败（HTTP {status_code}）'
+        if isinstance(error, requests.Timeout):
+            return 'TMDB 请求超时，请稍后重试'
+        return 'TMDB 服务连接失败，请稍后重试'
     
     def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
         """发送API请求，支持自动切换备用地址"""
         if not self.is_configured():
+            self.last_error = 'TMDB API 密钥未配置'
             return None
+
+        self.last_error = None
             
         if params is None:
             params = {}
@@ -81,13 +100,15 @@ class TMDBService:
             response = self.session.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
+            self.last_error = None
             try:
                 self._cache[cache_key] = (_now(), data)
             except Exception:
                 pass
             return data
         except Exception as e:
-            logger.debug(f"TMDB主地址请求失败: {e}")
+            self.last_error = self._get_request_error_message(e)
+            logger.debug("TMDB 主地址请求失败: %s", self.last_error)
             
             # 如果当前使用的是主地址，尝试切换到备用地址
             if self.current_url == self.primary_url:
@@ -99,19 +120,21 @@ class TMDBService:
                     response.raise_for_status()
                     logger.debug("TMDB备用地址连接成功")
                     data = response.json()
+                    self.last_error = None
                     try:
                         self._cache[cache_key] = (_now(), data)
                     except Exception:
                         pass
                     return data
                 except Exception as backup_e:
-                    logger.error(f"TMDB备用地址请求也失败: {backup_e}")
+                    self.last_error = self._get_request_error_message(backup_e)
+                    logger.error("TMDB 备用地址请求失败: %s", self.last_error)
                     # 重置回主地址，下次请求时重新尝试
                     self.current_url = self.primary_url
                     return None
             else:
                 # 如果备用地址也失败，重置回主地址
-                logger.debug(f"TMDB备用地址请求失败: {e}")
+                logger.debug("TMDB 备用地址请求失败: %s", self.last_error)
                 self.current_url = self.primary_url
                 return None
     
@@ -140,6 +163,41 @@ class TMDBService:
             params['year'] = year
 
         result = self._make_request('/search/movie', params)
+        if result and result.get('results'):
+            return result['results']
+        return []
+
+    def search_multi(self, query: str, page: int = 1) -> List[Dict]:
+        """搜索电影和剧集，忽略人物等非媒体结果。"""
+        params = {
+            'query': query,
+            'page': max(1, int(page or 1)),
+        }
+        result = self._make_request('/search/multi', params)
+        if not result or not result.get('results'):
+            return []
+
+        return [
+            item for item in result['results']
+            if item.get('media_type') in ('movie', 'tv')
+        ]
+
+    def search_movies(self, query: str, page: int = 1) -> List[Dict]:
+        """按页搜索电影。"""
+        result = self._make_request('/search/movie', {
+            'query': query,
+            'page': max(1, int(page or 1)),
+        })
+        if result and result.get('results'):
+            return result['results']
+        return []
+
+    def search_tv_shows(self, query: str, page: int = 1) -> List[Dict]:
+        """按页搜索剧集。"""
+        result = self._make_request('/search/tv', {
+            'query': query,
+            'page': max(1, int(page or 1)),
+        })
         if result and result.get('results'):
             return result['results']
         return []

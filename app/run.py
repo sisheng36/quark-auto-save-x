@@ -7227,15 +7227,53 @@ def process_single_task_async(task, tmdb_service, cal_db):
                 details = tmdb_service.get_tv_show_details(tmdb_id) or {}
                 name = tmdb_service.get_chinese_title_with_fallback(tmdb_id, extracted.get('show_name', ''))
                 first_air = (details.get('first_air_date') or '')[:4]
+
+                # 从影视发现搜索结果直接创建的任务已经有准确的 TMDB ID，
+                # 但尚无节目名称和目标季。此处补全，避免默认错误地固定到第一季。
+                latest_season_number = updated_match.get('latest_season_number')
+                if not updated_match.get('matched_show_name') or not latest_season_number:
+                    latest_season_number = 1
+                    latest_air_date = None
+                    today_date = datetime.now().date()
+                    for season_info in details.get('seasons', []) or []:
+                        try:
+                            season_number = int(season_info.get('season_number') or 0)
+                            air_date = season_info.get('air_date') or ''
+                            if season_number <= 0 or not air_date:
+                                continue
+                            season_air_date = datetime.strptime(air_date, '%Y-%m-%d').date()
+                            if season_air_date <= today_date and (
+                                latest_air_date is None or season_air_date > latest_air_date
+                            ):
+                                latest_season_number = season_number
+                                latest_air_date = season_air_date
+                        except (TypeError, ValueError):
+                            continue
+
+                    updated_match.update({
+                        'matched_show_name': name,
+                        'matched_year': first_air,
+                        'tmdb_id': tmdb_id,
+                        'media_type': updated_match.get('media_type') or 'tv',
+                        'latest_season_number': latest_season_number,
+                        'latest_season_fetch_url': f'/tv/{tmdb_id}/season/{latest_season_number}',
+                    })
+                    cal['match'] = updated_match
+                    task['calendar_info'] = cal
+                    try:
+                        Config.write_json(CONFIG_PATH, config_data)
+                    except Exception as save_error:
+                        logging.warning(f"保存已选 TMDB 元数据失败: task={task.get('taskname', '')}, err={save_error}")
+
                 raw_status = (details.get('status') or '')
                 try:
-                    localized_status = tmdb_service.get_localized_show_status(int(tmdb_id), int(updated_match.get('latest_season_number') or 1), raw_status)
+                    localized_status = tmdb_service.get_localized_show_status(int(tmdb_id), int(latest_season_number or 1), raw_status)
                     status = localized_status
                 except Exception:
                     status = raw_status
                 # 使用海报语言设置获取海报路径
                 poster_path = tmdb_service.get_poster_path_with_language(int(tmdb_id)) if tmdb_service else (details.get('poster_path') or '')
-                latest_season_number = updated_match.get('latest_season_number') or 1
+                latest_season_number = latest_season_number or 1
                 logging.debug(f"process_single_task_async - 最终使用的季数: {latest_season_number}")
 
                 # 获取现有的绑定关系和内容类型，避免被覆盖
@@ -9955,6 +9993,127 @@ def purge_calendar_by_task():
         return jsonify({'success': ok})
     except Exception as e:
         return jsonify({'success': False, 'message': f'清理失败: {str(e)}'})
+# 影视发现 API 路由
+
+def _normalize_tmdb_search_item(item, media_type):
+    """将 TMDB 搜索结果转换为影视发现页使用的统一卡片结构。"""
+    try:
+        tmdb_id = int(item.get('id'))
+    except (TypeError, ValueError):
+        return None
+
+    if media_type == 'movie':
+        title = (item.get('title') or item.get('original_title') or '').strip()
+        date = item.get('release_date') or ''
+        label = '电影'
+    else:
+        title = (item.get('name') or item.get('original_name') or '').strip()
+        date = item.get('first_air_date') or ''
+        label = '剧集'
+
+    if not title:
+        return None
+
+    year = str(date)[:4] if date else ''
+    poster_path = item.get('poster_path') or ''
+    poster_url = f'https://image.tmdb.org/t/p/w500{poster_path}' if poster_path else ''
+    vote_average = item.get('vote_average')
+    rating = {'value': vote_average} if vote_average not in (None, '', 0, 0.0) else None
+
+    return {
+        # 电影和剧集的 TMDB ID 可能相同，卡片 key 需要带上媒体类型。
+        'id': f'tmdb-{media_type}-{tmdb_id}',
+        'tmdb_id': tmdb_id,
+        'media_type': media_type,
+        'content_type': 'movie' if media_type == 'movie' else 'tv',
+        'title': title,
+        'original_title': item.get('original_title') or item.get('original_name') or '',
+        'year': year,
+        'url': f'https://www.themoviedb.org/{media_type}/{tmdb_id}',
+        'pic': {'normal': poster_url},
+        'rating': rating,
+        'card_subtitle': f"{year or '未知年份'} / {label}",
+        'overview': item.get('overview') or '',
+        'source': 'tmdb',
+    }
+
+
+@app.route('/api/tmdb/search')
+def search_tmdb_discovery():
+    """搜索 TMDB 中的电影或剧集，供影视发现页直接创建任务。"""
+    if not is_login():
+        return jsonify({'success': False, 'message': '未登录'}), 401
+
+    query = str(request.args.get('query', '') or '').strip()
+    if not query:
+        return jsonify({'success': False, 'message': '请输入影视名称'}), 400
+    if len(query) > 120:
+        return jsonify({'success': False, 'message': '搜索关键词不能超过 120 个字符'}), 400
+
+    media_type = str(request.args.get('type', 'all') or 'all').strip().lower()
+    if media_type not in ('all', 'movie', 'tv'):
+        return jsonify({'success': False, 'message': '不支持的影视类型'}), 400
+
+    try:
+        limit = int(request.args.get('limit', 20))
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 50))
+
+    tmdb_api_key = (config_data.get('tmdb_api_key') or '').strip()
+    if not tmdb_api_key:
+        return jsonify({'success': False, 'message': '请先在系统配置中填写 TMDB API 密钥'}), 400
+
+    tmdb_service = TMDBService(tmdb_api_key, get_poster_language_setting())
+    page_count = max(1, (limit + 19) // 20)
+    results = []
+    seen = set()
+
+    for page in range(1, page_count + 1):
+        if media_type == 'movie':
+            raw_items = tmdb_service.search_movies(query, page)
+        elif media_type == 'tv':
+            raw_items = tmdb_service.search_tv_shows(query, page)
+        else:
+            raw_items = tmdb_service.search_multi(query, page)
+
+        for raw_item in raw_items:
+            item_media_type = media_type if media_type != 'all' else raw_item.get('media_type')
+            if item_media_type not in ('movie', 'tv'):
+                continue
+            normalized = _normalize_tmdb_search_item(raw_item, item_media_type)
+            if not normalized:
+                continue
+            key = (normalized['media_type'], normalized['tmdb_id'])
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(normalized)
+            if len(results) >= limit:
+                break
+        if len(results) >= limit:
+            break
+
+    tmdb_error = getattr(tmdb_service, 'last_error', None)
+    if not results and tmdb_error:
+        message = tmdb_error
+        status_code = 400 if 'API 密钥' in message else 502
+        return jsonify({
+            'success': False,
+            'message': message,
+            'data': {'items': []},
+        }), status_code
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'items': results,
+            'total': len(results),
+            'query': query,
+        }
+    })
+
+
 # 豆瓣API路由
 
 # 通用电影接口
