@@ -1432,46 +1432,19 @@
                          decoding="async"
                          loading="lazy"
                          :fetchpriority="index < 50 ? 'high' : 'auto'"
-                         @load="tasklistPosterLoaded[task.taskname] = true"
+                         @load="handleTasklistPosterLoaded(task.taskname)"
                          @error="handleTasklistImageError($event, task.taskname)">
 
-                    <!-- 按钮行容器：自动补位布局 -->
-                    <div class="discovery-actions-row" style="top: 8px;" v-if="tasklistPosterLoaded[task.taskname]">
-                      <!-- 运行此任务按钮（正常状态） -->
-                      <div v-if="!task.shareurl_ban" class="discovery-refresh-metadata tasklist-run-btn" @click.stop="runScriptNow(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="运行此任务">
-                        <i class="bi bi-caret-right"></i>
-                      </div>
-                      <!-- 资源失效警告按钮（失效状态） -->
-                      <div v-else class="discovery-warning-btn tasklist-warning-btn" :title="formatShareUrlBanMessage(task.shareurl_ban) || task.shareurl_ban">
-                        <i class="bi bi-exclamation-circle"></i>
-                      </div>
-                      <div class="discovery-edit-metadata tasklist-delete-btn" @click.stop="removeTask(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="删除此任务">
-                        <i class="bi bi-trash3"></i>
-                      </div>
+                    <!-- 编辑此任务按钮（右上角） -->
+                    <div class="discovery-actions-row tasklist-poster-edit" style="top: 8px;">
                       <div class="discovery-edit-metadata tasklist-edit-task-btn" @click.stop="openEditTaskModal(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="编辑此任务">
                         <i class="bi bi-pencil"></i>
                       </div>
                     </div>
-                    <div class="discovery-actions-row" style="top: 36px;" v-if="tasklistPosterLoaded[task.taskname]">
-                      <div class="discovery-refresh-metadata" v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).match_tmdb_id && getCalendarTaskByName(task.taskname).content_type !== 'movie'" @click="refreshSeasonMetadata(getCalendarTaskByName(task.taskname))" title="刷新元数据">
-                        <i class="bi bi-arrow-clockwise"></i>
-                      </div>
-                      <div class="discovery-edit-metadata tasklist-edit-metadata-btn" @click.stop="openEditMetadataModal(getCalendarTaskByName(task.taskname) || { task_name: task.taskname })" title="编辑元数据">
-                        <i class="bi bi-tag"></i>
-                      </div>
-                      <template v-for="key in formData.button_display_order">
-                        <div v-if="key==='refresh_plex' && formData.plugins && formData.plugins.plex && formData.plugins.plex.url && formData.plugins.plex.token && formData.plugins.plex.quark_root_path && formData.button_display.refresh_plex !== 'disabled'" class="discovery-edit-metadata tasklist-plex-btn" @click.stop="refreshPlexLibrary(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新Plex媒体库">
-                          <img src="./static/images/Plex.svg" class="plex-icon" style="filter: brightness(0) invert(1);">
-                        </div>
-                        <div v-else-if="key==='refresh_alist' && formData.plugins && formData.plugins.alist && formData.plugins.alist.url && formData.plugins.alist.token && formData.plugins.alist.storage_id && formData.button_display.refresh_alist !== 'disabled'" class="discovery-edit-metadata tasklist-alist-btn" @click.stop="refreshAlistDirectory(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新AList目录">
-                          <img src="https://cdn.jsdelivr.net/gh/alist-org/logo@main/logo.svg" class="alist-icon" style="filter: brightness(0) invert(1);">
-                        </div>
-                      </template>
-                    </div>
 
                     <!-- 转存进度徽标（复用评分样式） -->
                     <div class="discovery-rating"
-                         v-if="tasklistPosterLoaded[task.taskname] && getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).matched_show_name && getCalendarTaskByName(task.taskname).season_counts"
+                         v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).matched_show_name && getCalendarTaskByName(task.taskname).season_counts"
                          :class="getProgressBadgeClass(getCalendarTaskByName(task.taskname))"
                          :title="'已转存/已播出：' + getTaskTransferredCount(getCalendarTaskByName(task.taskname)) + '/' + getTaskAiredCount(getCalendarTaskByName(task.taskname))">
                       {{ getTransferProgress(getCalendarTaskByName(task.taskname)) }}%
@@ -1479,7 +1452,7 @@
                     <!-- 左上角任务编号徽标：按需求移除 -->
 
                     <!-- 海报悬停信息 -->
-                    <div class="discovery-poster-overlay" v-if="tasklistPosterLoaded[task.taskname]">
+                    <div class="discovery-poster-overlay">
                       <!-- 任务编号 -->
                       <div class="info-line">#{{ String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0') }}</div>
                       <!-- 匹配的剧名 -->
@@ -17208,6 +17181,15 @@
           // 图片加载失败时显示默认图片
           console.warn('海报加载失败:', event.target.src);
           event.target.src = '/static/images/no-poster.svg';
+        },
+        // 处理任务列表海报图片加载成功
+        // 注意：必须用 $set 而非直接赋值 obj[key]=true。
+        // tasklistPosterLoaded 初始为空对象，Vue 2 无法检测对象新增属性，
+        // 直接赋值不会触发重新渲染，导致依赖它的按钮行（含编辑元数据按钮）永远不显示。
+        handleTasklistPosterLoaded(taskName) {
+          if (taskName) {
+            this.$set(this.tasklistPosterLoaded, taskName, true);
+          }
         },
         // 处理任务列表海报图片加载错误
         handleTasklistImageError(event, taskName) {

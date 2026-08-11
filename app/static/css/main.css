@@ -2728,12 +2728,44 @@ html.theme-light .tasklist-dashboard-alert-ok {
   margin-top: 2px;
 }
 .discovery-actions-row {
+  position: absolute;
+  left: 8px;
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-bottom: 10px;
+}
+/* 任务列表海报视图：仅右上角铅笔（编辑此任务）按钮。
+   不加圆底，通过图标颜色与字重适配深浅主题，悬浮时加深。 */
+.tasklist-poster-edit {
+  right: 8px;
+  left: auto;
+}
+.tasklist-poster-edit .tasklist-edit-task-btn {
+  width: 30px;
+  height: 30px;
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tasklist-poster-edit .tasklist-edit-task-btn i {
+  font-size: 1.05rem;
+  line-height: 1;
+  font-weight: 700;
+  color: #facc15; /* 深色模式：黄色铅笔 */
+}
+.tasklist-poster-edit .tasklist-edit-task-btn:hover i {
+  color: #fde047; /* hover 更亮 */
+}
+html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn i {
+  color: var(--text-tertiary);
+}
+html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
+  color: var(--text-primary);
 }
 .discovery-btn {
   white-space: nowrap;
