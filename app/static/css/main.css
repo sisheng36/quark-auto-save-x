@@ -283,13 +283,13 @@ a:hover {
   flex-direction: column;
   gap: 8px;
   z-index: 1050;
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.055) 52%, rgba(165, 180, 252, 0.1));
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  backdrop-filter: blur(28px) saturate(165%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 16px;
   padding: 8px;
-  box-shadow: var(--glass-shadow);
+  box-shadow: 0 12px 32px rgba(4, 3, 18, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 .floating-action-btn {
   width: 40px;
@@ -442,6 +442,17 @@ a:hover {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.05);
 }
+.theme-toggle-item {
+  margin-top: 4px;
+}
+.glass-sidebar .theme-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
 
 /* 折叠状态 */
 .glass-sidebar.sidebar-collapsed {
@@ -475,12 +486,12 @@ a:hover {
 
 /* 玻璃内容面板 */
 .glass-tab {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035) 52%, rgba(165, 180, 252, 0.075));
+  -webkit-backdrop-filter: blur(28px) saturate(155%);
+  backdrop-filter: blur(28px) saturate(155%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--glass-radius);
-  box-shadow: var(--glass-shadow);
+  box-shadow: 0 16px 44px rgba(4, 3, 18, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.15);
   padding: 18px 20px 22px;
 }
 
@@ -1955,6 +1966,9 @@ body.login-page {
 .selectable-records tbody tr td:last-child {
   border-right: 1px solid var(--glass-border);
   border-radius: 0 14px 14px 0;
+}
+.selectable-records tbody tr td:only-child {
+  border-radius: 14px;
 }
 .selectable-records tbody tr:hover td {
   background: rgba(255, 255, 255, 0.07);
@@ -3809,8 +3823,390 @@ body.login-page {
     min-width: 460px;
   }
   #fileSelectModal[data-modal-type="preview"] .table,
-  #fileSelectModal[data-modal-type="preview-filemanager"] .table {
+#fileSelectModal[data-modal-type="preview-filemanager"] .table {
     width: 460px;
   }
 }
 
+/* ============================================================
+   Light theme
+   ============================================================ */
+html:not(.theme-light) {
+  color-scheme: dark;
+}
+html.theme-light {
+  color-scheme: light;
+  --bg-deep: #dce9f1;
+  --bg-grad-1: #d1e8ff;
+  --bg-grad-2: #cdf1e2;
+  --bg-grad-3: #f1deed;
+  --bg-grad-4: #d2e3fb;
+  --accent-2: #2563eb;
+  --accent-grad: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-bg-strong: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(71, 85, 105, 0.16);
+  --glass-border-strong: rgba(71, 85, 105, 0.26);
+  --glass-blur: blur(20px) saturate(115%);
+  --glass-shadow: 0 10px 32px rgba(15, 23, 42, 0.12);
+  --text-primary: #1f2937;
+  --text-secondary: #536174;
+  --text-tertiary: #748196;
+  --success-color: #047857;
+  --danger-color: #b91c1c;
+  --warning-color: #b45309;
+  --info-color: #0369a1;
+  --dark-text-color: #1f2937;
+  --light-text-color: #748196;
+  --button-gray-background-color: #e8eef5;
+  --border-color: #d8e0ea;
+  --focus-border-color: #2563eb;
+  --focus-border-color-rgb: 37, 99, 235;
+  --secondary-text-color: #5e6b7d;
+  --navbar-bg-color: rgba(255, 255, 255, 0.76);
+  --navbar-mobile-overlay: rgba(226, 232, 240, 0.72);
+  --surface-subtle: rgba(241, 245, 249, 0.9);
+  --surface-muted: rgba(226, 232, 240, 0.72);
+  --surface-hover: rgba(203, 213, 225, 0.48);
+  --surface-panel: rgba(255, 255, 255, 0.78);
+  --surface-input: rgba(255, 255, 255, 0.88);
+}
+
+html.theme-light body.qas-body::after,
+html.theme-light body.login-page::after {
+  background: none;
+}
+html.theme-light .aurora-orb {
+  opacity: 0.1;
+}
+html.theme-light a {
+  color: #1d4ed8;
+}
+html.theme-light a:hover {
+  color: #0f766e;
+}
+html.theme-light ::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.34);
+}
+html.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 0.52);
+}
+html.theme-light * {
+  scrollbar-color: rgba(71, 85, 105, 0.42) transparent;
+}
+
+html.theme-light .glass-sidebar {
+  background: rgba(255, 255, 255, 0.42);
+  border-color: rgba(255, 255, 255, 0.62);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
+  backdrop-filter: blur(28px) saturate(130%);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+html.theme-light .glass-tab {
+  background: rgba(255, 255, 255, 0.34);
+  border-color: rgba(255, 255, 255, 0.58);
+  -webkit-backdrop-filter: blur(28px) saturate(130%);
+  backdrop-filter: blur(28px) saturate(130%);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.68);
+}
+html.theme-light .floating-action-buttons {
+  background: rgba(255, 255, 255, 0.84);
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+html.theme-light .floating-action-btn:hover,
+html.theme-light .navbar-action-btn:hover,
+html.theme-light .navbar-toggler-square:hover {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.22);
+}
+html.theme-light .floating-action-btn:active,
+html.theme-light .navbar-action-btn:active {
+  color: #1e3a8a;
+  background: rgba(37, 99, 235, 0.18);
+}
+html.theme-light .glass-sidebar .nav-link:not(.active):hover,
+html.theme-light .glass-sidebar .bottom-links .nav-link:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+html.theme-light .glass-sidebar .theme-toggle:focus-visible {
+  outline: 2px solid var(--focus-border-color);
+  outline-offset: 2px;
+}
+
+html.theme-light .form-control,
+html.theme-light .login-field .form-control {
+  background: var(--surface-input);
+  border-color: var(--glass-border-strong);
+  color: var(--text-primary);
+}
+html.theme-light .form-control:focus {
+  background: #ffffff;
+  color: var(--text-primary);
+}
+html.theme-light .form-control:disabled,
+html.theme-light .form-control[readonly],
+html.theme-light input[type="color"] {
+  background: var(--surface-muted);
+}
+html.theme-light select.form-control option,
+html.theme-light .tasklist-filter-row .input-group select.form-control option {
+  background: #ffffff;
+  color: var(--text-primary);
+}
+html.theme-light input[type="date"]::-webkit-calendar-picker-indicator,
+html.theme-light input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+html.theme-light input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: none;
+}
+html.theme-light .input-group-text {
+  background: var(--surface-muted);
+  border-color: var(--glass-border-strong);
+  color: var(--text-secondary);
+}
+html.theme-light .tasklist-filter-row .input-group,
+html.theme-light .tasklist-sort-wrapper,
+html.theme-light .filter-select {
+  background: var(--surface-subtle);
+  border-color: var(--glass-border);
+}
+html.theme-light .tasklist-filter-row .input-group:focus-within,
+html.theme-light .filter-select:focus-within {
+  background: #ffffff;
+}
+html.theme-light .tasklist-filter-row .input-group .input-group-prepend .input-group-text,
+html.theme-light .tasklist-filter-row .input-group .input-group-append .btn,
+html.theme-light .tasklist-filter-row .input-group .input-group-append .input-group-text,
+html.theme-light .tasklist-filter-row .input-group .input-group-prepend .btn,
+html.theme-light .filter-select-label,
+html.theme-light .filter-select-clear {
+  border-color: rgba(71, 85, 105, 0.16);
+}
+
+html.theme-light .btn-cancel,
+html.theme-light .btn-secondary,
+html.theme-light .btn-outline-secondary {
+  background: var(--surface-muted);
+  border-color: var(--glass-border-strong);
+  color: var(--text-secondary);
+}
+html.theme-light .btn-cancel:hover,
+html.theme-light .btn-secondary:hover,
+html.theme-light .btn-outline-secondary:hover,
+html.theme-light .pagination .page-link:hover {
+  background: var(--surface-hover);
+  border-color: rgba(71, 85, 105, 0.3);
+  color: var(--text-primary);
+}
+html.theme-light .btn-outline-primary {
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.5);
+}
+html.theme-light .btn-outline-primary:hover {
+  color: #ffffff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+html.theme-light .table {
+  border-color: rgba(71, 85, 105, 0.16);
+}
+html.theme-light .table thead th {
+  background: var(--surface-muted);
+  border-bottom-color: var(--glass-border-strong);
+}
+html.theme-light .table td,
+html.theme-light .table th,
+html.theme-light .table-bordered th,
+html.theme-light .table-bordered td {
+  border-color: rgba(71, 85, 105, 0.14);
+}
+html.theme-light .table tbody tr:hover,
+html.theme-light .table-hover tbody tr:hover {
+  background: var(--surface-hover);
+}
+html.theme-light td[colspan],
+html.theme-light .expanded-text,
+html.theme-light .task-card-body,
+html.theme-light .calendar-selected-episodes,
+html.theme-light .glass-config-body {
+  background: var(--surface-subtle);
+  border-color: var(--glass-border);
+}
+html.theme-light .selectable-records thead th {
+  border-bottom-color: var(--glass-border);
+}
+html.theme-light .selectable-records tbody tr td {
+  background: var(--surface-panel);
+  border-color: var(--glass-border);
+}
+html.theme-light .selectable-records tbody tr:hover td,
+html.theme-light .task-expanded td {
+  background: var(--surface-hover) !important;
+}
+
+html.theme-light .task-card,
+html.theme-light .discovery-item,
+html.theme-light .calendar-poster-item,
+html.theme-light .display-setting-row,
+html.theme-light .glass-config-toggle {
+  background: var(--surface-panel);
+  border-color: var(--glass-border);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.07);
+}
+html.theme-light .task-card:hover,
+html.theme-light .discovery-item:hover,
+html.theme-light .calendar-poster-item:hover,
+html.theme-light .glass-config-toggle:hover {
+  background: #ffffff;
+  border-color: var(--glass-border-strong);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.11);
+}
+html.theme-light .calendar-month-header,
+html.theme-light .calendar-month-row .calendar-month-cell:nth-child(6),
+html.theme-light .calendar-month-row .calendar-month-cell:nth-child(7) {
+  background: var(--surface-subtle);
+}
+html.theme-light .calendar-month-header-cell,
+html.theme-light .calendar-month-row,
+html.theme-light .calendar-month-cell {
+  border-color: rgba(71, 85, 105, 0.14);
+}
+html.theme-light .calendar-month-cell:hover,
+html.theme-light .calendar-date-item:hover {
+  background: var(--surface-hover);
+}
+
+html.theme-light .dropdown-menu,
+html.theme-light .modal-content,
+html.theme-light .popover {
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.16);
+}
+html.theme-light .card-header,
+html.theme-light .card-footer,
+html.theme-light .popover-header,
+html.theme-light .badge-light,
+html.theme-light .badge-secondary,
+html.theme-light .breadcrumb,
+html.theme-light .pagination .page-link,
+html.theme-light .pagination .page-item.disabled .page-link,
+html.theme-light .progress {
+  background: var(--surface-muted);
+}
+html.theme-light .dropdown-item:hover,
+html.theme-light .dropdown-item:focus {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.1);
+}
+html.theme-light .nav-tabs .nav-link:hover,
+html.theme-light .config-tab:hover,
+html.theme-light .filter-select-clear:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+html.theme-light .nav-tabs .nav-link.active {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.1);
+}
+html.theme-light .alert-warning {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+html.theme-light .alert-danger {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+html.theme-light .alert-info {
+  color: #075985;
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}
+html.theme-light .alert-success {
+  color: #065f46;
+  background: #d1fae5;
+  border-color: #6ee7b7;
+}
+
+html.theme-light .glass-tab .row.title h2,
+html.theme-light .breadcrumb-item.active,
+html.theme-light .calendar-date-day,
+html.theme-light .calendarCountValue,
+html.theme-light .task-card-toggle:hover .task-card-title,
+html.theme-light .tasklist-sort-pill:hover,
+html.theme-light .tasklist-sort-pill.tasklist-sort-select:hover,
+html.theme-light .tasklist-sort-wrapper .filter-select-native:hover,
+html.theme-light .expand-button:hover,
+html.theme-light .move-record-btn:hover,
+html.theme-light .extract-record-btn:hover,
+html.theme-light .rename-record-btn:hover,
+html.theme-light .discovery-refresh-metadata:hover,
+html.theme-light .season-left:hover,
+html.theme-light .season-right:hover {
+  color: var(--text-primary);
+}
+html.theme-light .calendar-month-cell.today .calendar-month-date {
+  color: #1d4ed8;
+}
+html.theme-light .calendar-month-cell.today {
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.42);
+}
+html.theme-light .calendar-month-cell.selected {
+  background: rgba(37, 99, 235, 0.16);
+}
+html.theme-light .task-name-hover:hover,
+html.theme-light .history-select-all-btn,
+html.theme-light .matched-link,
+html.theme-light .tmdb-link,
+html.theme-light .crontab-link,
+html.theme-light .matched-result {
+  color: #1d4ed8;
+}
+
+html.theme-light .runlog-content,
+html.theme-light #logModal pre {
+  background: #f8fafc;
+  border-color: var(--glass-border-strong);
+  color: var(--text-primary);
+}
+html.theme-light .runlog-line {
+  color: var(--text-primary);
+}
+html.theme-light .runlog-line:hover {
+  background: var(--surface-muted);
+}
+html.theme-light .log-level-clickable,
+html.theme-light .runtime-log-taskname-clickable {
+  color: #1d4ed8;
+}
+html.theme-light .v-jsoneditor .jsoneditor-menu,
+html.theme-light .v-jsoneditor .jsoneditor-statusbar {
+  background: var(--surface-muted) !important;
+}
+html.theme-light .v-jsoneditor .jsoneditor-tree,
+html.theme-light .v-jsoneditor .jsoneditor-text-mode textarea {
+  background: #f8fafc !important;
+  color: var(--text-primary) !important;
+}
+html.theme-light .v-jsoneditor .jsoneditor-menu > button:hover {
+  background-color: var(--surface-hover) !important;
+  color: var(--text-primary) !important;
+}
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-expand-all,
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-collapse-all,
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-sort,
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-transform,
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-undo,
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-redo,
+html.theme-light .v-jsoneditor .jsoneditor-menu .jsoneditor-search,
+html.theme-light .v-jsoneditor .jsoneditor-tree .jsoneditor-button {
+  filter: none;
+}
+html.theme-light .login-title a,
+html.theme-light .login-title a:hover {
+  color: var(--text-primary);
+}

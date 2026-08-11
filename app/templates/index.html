@@ -6,9 +6,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>夸克自动转存</title>
   <!-- CSS -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('quarkAutoSave_theme') === 'light') {
+          document.documentElement.classList.add('theme-light');
+        }
+      } catch (e) {}
+    }());
+  </script>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="./static/css/main.css?v=36">
+  <link rel="stylesheet" href="./static/css/main.css?v=38">
   <!-- Bootstrap JS -->
   <script src="./static/js/jquery-3.5.1.slim.min.js"></script>
   <script src="./static/js/bootstrap.bundle.min.js"></script>
@@ -334,6 +343,15 @@
                   <i class="bi bi-github"></i>
                   <span class="nav-text"><span v-html="versionTips"></span></span>
                 </a>
+              </li>
+              <li class="nav-item theme-toggle-item">
+                <button type="button" class="nav-link theme-toggle" @click="toggleTheme"
+                        :title="isLightTheme ? '切换到深色主题' : '切换到浅色主题'"
+                        :aria-label="isLightTheme ? '切换到深色主题' : '切换到浅色主题'"
+                        :aria-pressed="isLightTheme.toString()">
+                  <i :class="isLightTheme ? 'bi bi-moon-stars' : 'bi bi-sun'"></i>
+                  <span class="nav-text">{{ isLightTheme ? '切换到深色主题' : '切换到浅色主题' }}</span>
+                </button>
               </li>
             </ul>
           </div>
@@ -3122,6 +3140,7 @@
         imageCacheBustById: {},       // { [tmdb_id:number]: number }
         imageCacheBustByShowName: {}, // { [show_name:string]: number }
         sidebarCollapsed: false,
+        isLightTheme: document.documentElement.classList.contains('theme-light'),
         showCloudSaverPassword: false,
         showWebuiPassword: false,
         pageWidthMode: 'wide', // 页面宽度模式：narrow, medium, wide
@@ -4932,6 +4951,16 @@
         this.stopRuntimeLogPolling();
       },
       methods: {
+        toggleTheme() {
+          this.isLightTheme = !this.isLightTheme;
+          this.applyTheme();
+        },
+        applyTheme() {
+          document.documentElement.classList.toggle('theme-light', this.isLightTheme);
+          try {
+            localStorage.setItem('quarkAutoSave_theme', this.isLightTheme ? 'light' : 'dark');
+          } catch (e) {}
+        },
         // ---- 排序辅助函数（calendar + tasklist 共用） ----
         _getNameKey(task) {
           const name = (task && (task.task_name || task.taskname) || '').toString();
@@ -18505,6 +18534,7 @@
         }
       },
       mounted() {
+        this.applyTheme();
         this.fetchData();
         this.checkNewVersion();
         this.fetchUserInfo(); // 获取用户信息
