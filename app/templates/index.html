@@ -1435,9 +1435,9 @@
                          @load="handleTasklistPosterLoaded(task.taskname)"
                          @error="handleTasklistImageError($event, task.taskname)">
 
-                    <!-- 编辑此任务按钮（右上角） -->
+                    <!-- 编辑元数据按钮（右上角） -->
                     <div class="discovery-actions-row tasklist-poster-edit" style="top: 8px;">
-                      <div class="discovery-edit-metadata tasklist-edit-task-btn" @click.stop="openEditTaskModal(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="编辑此任务">
+                      <div class="discovery-edit-metadata tasklist-edit-task-btn" @click.stop="openEditMetadataModal(getCalendarTaskByName(task.taskname) || { task_name: task.taskname })" title="编辑元数据">
                         <i class="bi bi-pencil"></i>
                       </div>
                     </div>
