@@ -1052,7 +1052,7 @@
                 <span class="tasklist-dashboard-subtitle">汇总全部任务，不受筛选与排序影响</span>
               </div>
               <div class="tasklist-dashboard-grid">
-                <div class="tasklist-dashboard-item" title="内容类型为「剧集」(tv) 的任务总数，不含动画/综艺/纪录片">
+                <div class="tasklist-dashboard-item" title="内容类型为「剧集/动画/综艺/纪录片」(tv/anime/variety/documentary) 的任务总数，不含电影">
                   <div class="tasklist-dashboard-icon tasklist-icon-tv"><i class="bi bi-tv"></i></div>
                   <div class="tasklist-dashboard-meta">
                     <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.tvCount }}</div>
@@ -1066,7 +1066,7 @@
                     <div class="tasklist-dashboard-label">电影</div>
                   </div>
                 </div>
-                <div class="tasklist-dashboard-item" title="剧集类型且转存进度未达 100% 的任务数（正在追更）">
+                <div class="tasklist-dashboard-item" title="剧集/动画/综艺/纪录片类型且转存进度未达 100% 的任务数（正在追更）">
                   <div class="tasklist-dashboard-icon tasklist-icon-broadcast"><i class="bi bi-broadcast"></i></div>
                   <div class="tasklist-dashboard-meta">
                     <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.ongoingTvCount }}</div>
@@ -4014,7 +4014,7 @@
               }
               if (contentType === 'movie') {
                 stats.movieCount += 1;
-              } else if (contentType === 'tv') {
+              } else if (['tv', 'anime', 'variety', 'documentary'].includes(contentType)) {
                 stats.tvCount += 1;
                 // 追更中：转存进度未达 100%（进度信息缺失时视为未追完）
                 const taskName = task.taskname || task.task_name || '';
