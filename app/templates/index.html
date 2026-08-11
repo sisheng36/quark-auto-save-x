@@ -1041,9 +1041,60 @@
             </div>
           </div>
 
-          <div v-if="activeTab === 'tasklist'" class="glass-tab">
-            <div style="height: 20px;"></div>
-            <div class="row tasklist-filter-row" style="margin-bottom: 8px;">
+          <template v-if="activeTab === 'tasklist'">
+            <!-- 任务列表：中控台大卡片（独立于任务列表面板之上，基于全部任务，不受名称/类型/状态筛选与排序影响） -->
+            <div class="tasklist-dashboard" aria-label="任务汇总">
+              <div class="tasklist-dashboard-header">
+                <div class="tasklist-dashboard-title">
+                  <i class="bi bi-clipboard-data"></i>
+                  <span>任务中控台</span>
+                </div>
+                <span class="tasklist-dashboard-subtitle">汇总全部任务，不受筛选与排序影响</span>
+              </div>
+              <div class="tasklist-dashboard-grid">
+                <div class="tasklist-dashboard-item" title="内容类型为「剧集」(tv) 的任务总数，不含动画/综艺/纪录片">
+                  <div class="tasklist-dashboard-icon tasklist-icon-tv"><i class="bi bi-tv"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.tvCount }}</div>
+                    <div class="tasklist-dashboard-label">剧集</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="内容类型为「电影」的任务总数">
+                  <div class="tasklist-dashboard-icon tasklist-icon-film"><i class="bi bi-film"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.movieCount }}</div>
+                    <div class="tasklist-dashboard-label">电影</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="剧集类型且转存进度未达 100% 的任务数（正在追更）">
+                  <div class="tasklist-dashboard-icon tasklist-icon-broadcast"><i class="bi bi-broadcast"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.ongoingTvCount }}</div>
+                    <div class="tasklist-dashboard-label">追更中</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="今日加入的任务数（按订阅起始时间统计，不区分类型）">
+                  <div class="tasklist-dashboard-icon tasklist-icon-today"><i class="bi bi-calendar-plus"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.todayCount }}</div>
+                    <div class="tasklist-dashboard-label">今日加入</div>
+                  </div>
+                </div>
+              </div>
+              <div class="tasklist-dashboard-alert" v-if="tasklistDashboardStats.failedCount > 0"
+                   :title="'分享链接已失效（shareurl_ban 非空）的任务数；临时网络错误不计入'">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <span>有 <b>{{ tasklistDashboardStats.failedCount }}</b> 个任务需要你处理：分享链接已失效，请检查或更新分享</span>
+              </div>
+              <div class="tasklist-dashboard-alert tasklist-dashboard-alert-ok" v-else
+                   title="分享链接均正常，暂无需要处理的任务">
+                <i class="bi bi-check-circle-fill"></i>
+                <span>暂无待处理任务，分享链接均正常</span>
+              </div>
+            </div>
+            <div class="glass-tab">
+              <div style="height: 20px;"></div>
+              <div class="row tasklist-filter-row" style="margin-bottom: 8px;">
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
               <filter-select v-model="taskNameFilter" label="名称筛选" placeholder="任务名称关键词" clearable type="input" ></filter-select>
               </div>
@@ -1487,6 +1538,7 @@
               </div>
             </div>
           </div>
+          </template>
 
           <div v-if="activeTab === 'history'" class="glass-tab">
             <div style="height: 20px;"></div>
@@ -3960,6 +4012,62 @@
             return this.tasklistVisibleTasks.length;
           } catch (e) {
             return 0;
+          }
+        },
+
+        // 任务列表：中控台汇总统计（基于全部任务，不受名称/类型/状态筛选与排序影响）
+        // 电影：内容类型为 movie；剧集：内容类型为 tv（不含动画/综艺/纪录片）
+        // 追更中：内容类型为 tv 且转存进度未达 100%（还没追完，正在追更）
+        // 今日加入：shareurl_subscribed_since 为今日（自然日，与订阅天数口径一致，不区分类型）
+        // 失败：shareurl_ban 非空（分享链接已失效），临时网络错误不计入
+        tasklistDashboardStats() {
+          try {
+            const stats = { movieCount: 0, tvCount: 0, ongoingTvCount: 0, todayCount: 0, failedCount: 0 };
+            const tasks = (this.formData && Array.isArray(this.formData.tasklist)) ? this.formData.tasklist : [];
+            const now = new Date();
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+            tasks.forEach(task => {
+              if (!task || typeof task !== 'object') return;
+              // 解析内容类型，与 tasklistFilterByType 保持同一优先级
+              let contentType = '';
+              if (task.content_type) {
+                contentType = task.content_type;
+              } else if (task.calendar_info && task.calendar_info.extracted && task.calendar_info.extracted.content_type) {
+                contentType = task.calendar_info.extracted.content_type;
+              } else {
+                const name = task.taskname || task.task_name || '';
+                const calTask = name ? this.getCalendarTaskByName(name) : null;
+                contentType = (calTask && calTask.content_type) || 'other';
+              }
+              if (contentType === 'movie') {
+                stats.movieCount += 1;
+              } else if (contentType === 'tv') {
+                stats.tvCount += 1;
+                // 追更中：转存进度未达 100%（进度信息缺失时视为未追完）
+                const taskName = task.taskname || task.task_name || '';
+                const progress = taskName ? this.getTaskProgress(taskName) : null;
+                if (progress === null || progress < 100) {
+                  stats.ongoingTvCount += 1;
+                }
+              }
+              // 今日加入：shareurl_subscribed_since 为今日（忽略时分秒，与订阅天数口径一致）
+              if (task.shareurl_subscribed_since) {
+                const datePart = String(task.shareurl_subscribed_since).trim().split(/\s+/)[0];
+                const parts = datePart.split('-').map(Number);
+                if (parts.length === 3 && parts.every(n => !Number.isNaN(n))) {
+                  if (new Date(parts[0], parts[1] - 1, parts[2]).getTime() === todayStart) {
+                    stats.todayCount += 1;
+                  }
+                }
+              }
+              // 失败：shareurl_ban 非空即视为分享链接已失效
+              if (task.shareurl_ban && String(task.shareurl_ban).trim() !== '') {
+                stats.failedCount += 1;
+              }
+            });
+            return stats;
+          } catch (e) {
+            return { movieCount: 0, tvCount: 0, ongoingTvCount: 0, todayCount: 0, failedCount: 0 };
           }
         },
 
