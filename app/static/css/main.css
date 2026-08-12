@@ -277,8 +277,9 @@ a:hover {
 .floating-action-buttons {
   position: fixed;
   right: 20px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: auto;
+  bottom: 20px;
+  transform: none;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -290,6 +291,43 @@ a:hover {
   border-radius: 16px;
   padding: 8px;
   box-shadow: 0 12px 32px rgba(4, 3, 18, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+/* 收起状态：仅显示触发器图标（操作项向上展开） */
+.floating-action-buttons .floating-action-item {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  margin-bottom: 0;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(12px) scale(0.8);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+  pointer-events: none;
+}
+.floating-action-buttons .floating-action-trigger {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.25s ease;
+}
+.floating-action-buttons:hover .floating-action-item {
+  position: static;
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+.floating-action-buttons:hover .floating-action-trigger {
+  transform: rotate(90deg);
 }
 .floating-action-btn {
   width: 40px;
@@ -327,10 +365,33 @@ a:hover {
     gap: 4px;
     border-radius: 14px;
   }
+  .floating-action-buttons .floating-action-item {
+    right: 6px;
+    bottom: 6px;
+  }
+  .floating-action-buttons .floating-action-trigger {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+  }
   .floating-action-btn {
     width: 36px;
     height: 36px;
     font-size: 1rem;
+  }
+}
+
+/* 触屏设备无 hover 状态：直接展开全部操作按钮（隐藏触发器） */
+@media (hover: none) {
+  .floating-action-buttons .floating-action-item {
+    position: static;
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    pointer-events: auto;
+  }
+  .floating-action-buttons .floating-action-trigger {
+    display: none;
   }
 }
 
@@ -1733,6 +1794,35 @@ body.login-page {
   background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
   box-shadow: 0 3px 10px rgba(245, 158, 11, 0.35);
 }
+/* 总览页扩展图标：动画/纪录片/综艺/待处理/大小/累计 */
+.tasklist-icon-anime {
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+  box-shadow: 0 3px 10px rgba(168, 85, 247, 0.35);
+}
+.tasklist-icon-documentary {
+  background: linear-gradient(135deg, #14b8a6 0%, #0ea5e9 100%);
+  box-shadow: 0 3px 10px rgba(20, 184, 166, 0.35);
+}
+.tasklist-icon-variety {
+  background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+  box-shadow: 0 3px 10px rgba(245, 158, 11, 0.35);
+}
+.tasklist-icon-failed {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 3px 10px rgba(239, 68, 68, 0.35);
+}
+.tasklist-icon-size {
+  background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+  box-shadow: 0 3px 10px rgba(6, 182, 212, 0.35);
+}
+.tasklist-icon-total {
+  background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+  box-shadow: 0 3px 10px rgba(139, 92, 246, 0.35);
+}
+.tasklist-icon-totalsize {
+  background: linear-gradient(135deg, #64748b 0%, #475569 100%);
+  box-shadow: 0 3px 10px rgba(100, 116, 139, 0.35);
+}
 .tasklist-dashboard-meta {
   min-width: 0;
 }
@@ -1822,6 +1912,206 @@ html.theme-light .tasklist-dashboard-alert-ok {
     height: 36px;
     font-size: 1.1rem;
     border-radius: 10px;
+  }
+}
+
+/* ============ 总览页：问候横幅 ============ */
+.overview-greeting {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 16px;
+  padding: 26px 24px 22px;
+  border-radius: var(--glass-radius);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.22), rgba(99, 102, 241, 0.1) 48%, rgba(6, 182, 212, 0.08));
+  -webkit-backdrop-filter: blur(28px) saturate(155%);
+  backdrop-filter: blur(28px) saturate(155%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 16px 44px rgba(4, 3, 18, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+.overview-greeting::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent-grad);
+  opacity: 0.85;
+}
+.overview-greeting::after {
+  content: '';
+  position: absolute;
+  top: -90px;
+  right: -60px;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.2), transparent 70%);
+  pointer-events: none;
+}
+.overview-greeting-main {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.overview-greeting-emoji {
+  font-size: 2.4rem;
+  line-height: 1;
+  filter: drop-shadow(0 4px 10px rgba(139, 92, 246, 0.35));
+}
+.overview-greeting-text {
+  font-size: 1.7rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+  text-shadow: 0 2px 12px rgba(139, 92, 246, 0.25);
+}
+.overview-greeting-date {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+html.theme-light .overview-greeting {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(6, 182, 212, 0.06));
+  border-color: var(--glass-border-strong);
+}
+
+/* ============ 总览页：区块卡片 ============ */
+.overview-section {
+  margin-bottom: 16px;
+}
+.overview-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.overview-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-primary);
+}
+.overview-section-title i {
+  font-size: 1.1rem;
+  color: var(--accent-2);
+}
+
+/* ============ 总览页：任务状态分布 ============ */
+.overview-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.overview-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.overview-status-label {
+  flex: 0 0 84px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.overview-status-dot {
+  font-size: 0.9rem;
+}
+.overview-dot-completed { color: #10b981; }
+.overview-dot-airing { color: #06b6d4; }
+.overview-dot-finale { color: #8b5cf6; }
+.overview-dot-ended { color: #64748b; }
+.overview-dot-unmatched { color: #f59e0b; }
+.overview-dot-ongoing { color: #ec4899; }
+.overview-status-bar-wrap {
+  flex: 1 1 auto;
+  height: 10px;
+  min-width: 60px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.overview-status-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+  transition: width 0.3s ease;
+}
+.overview-status-count {
+  flex: 0 0 34px;
+  text-align: right;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+html.theme-light .overview-status-bar-wrap {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+/* ============ 总览页：快捷入口 ============ */
+.overview-quick-links {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.overview-quick-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.035));
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.overview-quick-link i {
+  font-size: 1.1rem;
+  color: var(--accent-2);
+}
+.overview-quick-link:hover {
+  color: #fff;
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(139, 92, 246, 0.35);
+  transform: translateY(-2px);
+}
+html.theme-light .overview-quick-link {
+  background: #fff;
+  border-color: var(--glass-border-strong);
+}
+html.theme-light .overview-quick-link:hover {
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.08);
+}
+@media (max-width: 575.98px) {
+  .overview-greeting {
+    padding: 20px 16px 16px;
+  }
+  .overview-greeting-text {
+    font-size: 1.35rem;
+  }
+  .overview-quick-links {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 

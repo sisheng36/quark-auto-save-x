@@ -269,19 +269,22 @@
       <span class="aurora-orb aurora-orb-3"></span>
     </div>
 
-    <!-- 悬浮操作按钮 -->
+    <!-- 悬浮操作按钮：收起为单个图标，鼠标悬浮展开全部操作 -->
     <div class="floating-action-buttons">
-      <button type="button" class="floating-action-btn" title="保存（CTRL+S）" @click="saveConfig()">
+      <button type="button" class="floating-action-btn floating-action-item" title="保存（CTRL+S）" @click="saveConfig()">
         <i class="bi bi-check2"></i>
       </button>
-      <button type="button" class="floating-action-btn" title="运行全部任务（CTRL+R）" @click="runScriptNow()">
+      <button type="button" class="floating-action-btn floating-action-item" title="运行全部任务（CTRL+R）" @click="runScriptNow()">
         <i class="bi bi-caret-right"></i>
       </button>
-      <button type="button" class="floating-action-btn" title="单击回到顶部/双击回到底部" @click="scrollToX(0)" @dblclick="scrollToX()">
+      <button type="button" class="floating-action-btn floating-action-item" title="单击回到顶部/双击回到底部" @click="scrollToX(0)" @dblclick="scrollToX()">
         <i class="bi bi-chevron-expand"></i>
       </button>
-      <button type="button" class="floating-action-btn" :title="'页面宽度：' + (pageWidthMode === 'narrow' ? '窄' : pageWidthMode === 'medium' ? '中' : '宽')" @click="togglePageWidth()">
+      <button type="button" class="floating-action-btn floating-action-item" :title="'页面宽度：' + (pageWidthMode === 'narrow' ? '窄' : pageWidthMode === 'medium' ? '中' : '宽')" @click="togglePageWidth()">
         <i class="bi bi-arrows"></i>
+      </button>
+      <button type="button" class="floating-action-btn floating-action-trigger" title="鼠标悬浮展开操作按钮">
+        <i class="bi bi-three-dots-vertical"></i>
       </button>
     </div>
 
@@ -290,18 +293,13 @@
         <div class="sidebar-sticky">
           <ul class="nav flex-column">
             <li class="nav-item">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'overview'}" @click="changeTab('overview')">
+                <i class="bi bi-speedometer2"></i> <span class="nav-text">总览</span>
+              </a>
+            </li>
+            <li class="nav-item">
               <a class="nav-link" href="#" :class="{active: activeTab === 'tasklist'}" @click="changeTab('tasklist')">
                 <i class="bi bi-list-ul"></i> <span class="nav-text">任务列表</span>
-              </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'history'}" @click="changeTab('history')">
-                <i class="bi bi-clock-history"></i> <span class="nav-text">转存记录</span>
-              </a>
-            </li>
-            <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'filemanager'}" @click="changeTab('filemanager')">
-                <i class="bi bi-archive"></i> <span class="nav-text">文件整理</span>
               </a>
             </li>
             <li class="nav-item">
@@ -312,6 +310,16 @@
             <li class="nav-item">
               <a class="nav-link" href="#" :class="{active: activeTab === 'calendar'}" @click="changeTab('calendar')">
                 <i class="bi bi-calendar3-week"></i> <span class="nav-text">追剧日历</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'history'}" @click="changeTab('history')">
+                <i class="bi bi-clock-history"></i> <span class="nav-text">转存记录</span>
+              </a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'filemanager'}" @click="changeTab('filemanager')">
+                <i class="bi bi-archive"></i> <span class="nav-text">文件整理</span>
               </a>
             </li>
             <li class="nav-item">
@@ -1041,50 +1049,87 @@
             </div>
           </div>
 
-          <template v-if="activeTab === 'tasklist'">
-            <!-- 任务列表：中控台大卡片（独立于任务列表面板之上，基于全部任务，不受名称/类型/状态筛选与排序影响） -->
-            <div class="tasklist-dashboard" aria-label="任务汇总">
+          <template v-if="activeTab === 'overview'">
+            <!-- 总览页：问候横幅（按时段变化） -->
+            <div class="overview-greeting" aria-label="问候语">
+              <div class="overview-greeting-main">
+                <span class="overview-greeting-emoji">{{ overviewGreeting.emoji }}</span>
+                <span class="overview-greeting-text">{{ overviewGreeting.text }}<span v-if="formData.webui && formData.webui.username">，{{ formData.webui.username }}</span></span>
+              </div>
+              <div class="overview-greeting-date">{{ overviewGreeting.dateText }}</div>
+            </div>
+
+            <!-- 总览页：任务总览（类型拆分统计） -->
+            <div class="tasklist-dashboard" aria-label="任务总览">
               <div class="tasklist-dashboard-header">
                 <div class="tasklist-dashboard-title">
                   <i class="bi bi-clipboard-data"></i>
-                  <span>任务中控台</span>
+                  <span>任务总览</span>
                 </div>
                 <span class="tasklist-dashboard-subtitle">汇总全部任务，不受筛选与排序影响</span>
               </div>
               <div class="tasklist-dashboard-grid">
-                <div class="tasklist-dashboard-item" title="内容类型为「剧集/动画/综艺/纪录片」(tv/anime/variety/documentary) 的任务总数，不含电影">
+                <div class="tasklist-dashboard-item" title="内容类型为「剧集」的任务总数">
                   <div class="tasklist-dashboard-icon tasklist-icon-tv"><i class="bi bi-tv"></i></div>
                   <div class="tasklist-dashboard-meta">
-                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.tvCount }}</div>
+                    <div class="tasklist-dashboard-number">{{ overviewStats.tvCount }}</div>
                     <div class="tasklist-dashboard-label">剧集</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="内容类型为「动画」的任务总数">
+                  <div class="tasklist-dashboard-icon tasklist-icon-anime"><i class="bi bi-magic"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ overviewStats.animeCount }}</div>
+                    <div class="tasklist-dashboard-label">动画</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="内容类型为「纪录片」的任务总数">
+                  <div class="tasklist-dashboard-icon tasklist-icon-documentary"><i class="bi bi-camera-reels"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ overviewStats.documentaryCount }}</div>
+                    <div class="tasklist-dashboard-label">纪录片</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="内容类型为「综艺」的任务总数">
+                  <div class="tasklist-dashboard-icon tasklist-icon-variety"><i class="bi bi-mic"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ overviewStats.varietyCount }}</div>
+                    <div class="tasklist-dashboard-label">综艺</div>
                   </div>
                 </div>
                 <div class="tasklist-dashboard-item" title="内容类型为「电影」的任务总数">
                   <div class="tasklist-dashboard-icon tasklist-icon-film"><i class="bi bi-film"></i></div>
                   <div class="tasklist-dashboard-meta">
-                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.movieCount }}</div>
+                    <div class="tasklist-dashboard-number">{{ overviewStats.movieCount }}</div>
                     <div class="tasklist-dashboard-label">电影</div>
                   </div>
                 </div>
                 <div class="tasklist-dashboard-item" title="剧集/动画/综艺/纪录片类型且转存进度未达 100% 的任务数（正在追更）">
                   <div class="tasklist-dashboard-icon tasklist-icon-broadcast"><i class="bi bi-broadcast"></i></div>
                   <div class="tasklist-dashboard-meta">
-                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.ongoingTvCount }}</div>
+                    <div class="tasklist-dashboard-number">{{ overviewStats.ongoingCount }}</div>
                     <div class="tasklist-dashboard-label">追更中</div>
                   </div>
                 </div>
                 <div class="tasklist-dashboard-item" title="今日加入的任务数（按订阅起始时间统计，不区分类型）">
                   <div class="tasklist-dashboard-icon tasklist-icon-today"><i class="bi bi-calendar-plus"></i></div>
                   <div class="tasklist-dashboard-meta">
-                    <div class="tasklist-dashboard-number">{{ tasklistDashboardStats.todayCount }}</div>
+                    <div class="tasklist-dashboard-number">{{ overviewStats.todayCount }}</div>
                     <div class="tasklist-dashboard-label">今日加入</div>
                   </div>
                 </div>
+                <div class="tasklist-dashboard-item" title="分享链接已失效（shareurl_ban 非空）的任务数；临时网络错误不计入">
+                  <div class="tasklist-dashboard-icon tasklist-icon-failed"><i class="bi bi-exclamation-triangle"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ overviewStats.failedCount }}</div>
+                    <div class="tasklist-dashboard-label">待处理</div>
+                  </div>
+                </div>
               </div>
-              <div class="tasklist-dashboard-alert" v-if="tasklistDashboardStats.failedCount > 0"
-                   :title="'分享链接已失效（shareurl_ban 非空）的任务数；临时网络错误不计入'">
+              <div class="tasklist-dashboard-alert" v-if="overviewStats.failedCount > 0"
+                   title="分享链接已失效（shareurl_ban 非空）的任务数；临时网络错误不计入">
                 <i class="bi bi-exclamation-triangle-fill"></i>
-                <span>有 <b>{{ tasklistDashboardStats.failedCount }}</b> 个任务需要你处理：分享链接已失效，请检查或更新分享</span>
+                <span>有 <b>{{ overviewStats.failedCount }}</b> 个任务需要你处理：分享链接已失效，请检查或更新分享</span>
               </div>
               <div class="tasklist-dashboard-alert tasklist-dashboard-alert-ok" v-else
                    title="分享链接均正常，暂无需要处理的任务">
@@ -1092,6 +1137,108 @@
                 <span>暂无待处理任务，分享链接均正常</span>
               </div>
             </div>
+
+            <!-- 总览页：任务状态分布 -->
+            <div class="glass-tab overview-section">
+              <div class="overview-section-header">
+                <div class="overview-section-title"><i class="bi bi-pie-chart"></i> 任务状态分布</div>
+                <span class="tasklist-dashboard-subtitle">按任务状态归类，口径与状态筛选一致</span>
+              </div>
+              <div class="overview-status-list">
+                <div class="overview-status-row" title="已完成：终态状态且转存进度 100%">
+                  <div class="overview-status-label"><i class="bi bi-check-circle-fill overview-status-dot overview-dot-completed"></i> 已完成</div>
+                  <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusCompleted') }"></div></div>
+                  <div class="overview-status-count">{{ overviewStats.statusCompleted }}</div>
+                </div>
+                <div class="overview-status-row" title="播出中：任务状态为播出中">
+                  <div class="overview-status-label"><i class="bi bi-broadcast-pin overview-status-dot overview-dot-airing"></i> 播出中</div>
+                  <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusAiring') }"></div></div>
+                  <div class="overview-status-count">{{ overviewStats.statusAiring }}</div>
+                </div>
+                <div class="overview-status-row" title="本季终：任务状态为本季终">
+                  <div class="overview-status-label"><i class="bi bi-flag-fill overview-status-dot overview-dot-finale"></i> 本季终</div>
+                  <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusFinale') }"></div></div>
+                  <div class="overview-status-count">{{ overviewStats.statusFinale }}</div>
+                </div>
+                <div class="overview-status-row" title="已完结：任务状态为已完结">
+                  <div class="overview-status-label"><i class="bi bi-flag overview-status-dot overview-dot-ended"></i> 已完结</div>
+                  <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusEnded') }"></div></div>
+                  <div class="overview-status-count">{{ overviewStats.statusEnded }}</div>
+                </div>
+                <div class="overview-status-row" title="未匹配：尚未匹配到 TMDB 元数据">
+                  <div class="overview-status-label"><i class="bi bi-question-circle-fill overview-status-dot overview-dot-unmatched"></i> 未匹配</div>
+                  <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusUnmatched') }"></div></div>
+                  <div class="overview-status-count">{{ overviewStats.statusUnmatched }}</div>
+                </div>
+                <div class="overview-status-row" title="追更中：非终态且已匹配、进度未达 100%">
+                  <div class="overview-status-label"><i class="bi bi-hourglass-split overview-status-dot overview-dot-ongoing"></i> 追更中</div>
+                  <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusOngoing') }"></div></div>
+                  <div class="overview-status-count">{{ overviewStats.statusOngoing }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 总览页：今日转存动态 -->
+            <div class="glass-tab overview-section">
+              <div class="overview-section-header">
+                <div class="overview-section-title"><i class="bi bi-cloud-arrow-down"></i> 今日转存动态</div>
+                <span class="tasklist-dashboard-subtitle">基于转存记录统计，排除重命名记录</span>
+              </div>
+              <div class="tasklist-dashboard-grid">
+                <div class="tasklist-dashboard-item" title="今日转存的文件数量">
+                  <div class="tasklist-dashboard-icon tasklist-icon-today"><i class="bi bi-file-earmark-arrow-down"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ overviewTransferStats.today_count }}</div>
+                    <div class="tasklist-dashboard-label">今日转存</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="今日转存的文件总大小">
+                  <div class="tasklist-dashboard-icon tasklist-icon-size"><i class="bi bi-hdd-stack"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ formatFileSize(overviewTransferStats.today_size) }}</div>
+                    <div class="tasklist-dashboard-label">今日大小</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="累计转存的文件数量">
+                  <div class="tasklist-dashboard-icon tasklist-icon-total"><i class="bi bi-database"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ overviewTransferStats.total_count }}</div>
+                    <div class="tasklist-dashboard-label">累计转存</div>
+                  </div>
+                </div>
+                <div class="tasklist-dashboard-item" title="累计转存的文件总大小">
+                  <div class="tasklist-dashboard-icon tasklist-icon-totalsize"><i class="bi bi-hdd"></i></div>
+                  <div class="tasklist-dashboard-meta">
+                    <div class="tasklist-dashboard-number">{{ formatFileSize(overviewTransferStats.total_size) }}</div>
+                    <div class="tasklist-dashboard-label">累计大小</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 总览页：快捷入口 -->
+            <div class="glass-tab overview-section">
+              <div class="overview-section-header">
+                <div class="overview-section-title"><i class="bi bi-signpost-split"></i> 快捷入口</div>
+              </div>
+              <div class="overview-quick-links">
+                <button type="button" class="overview-quick-link" @click="changeTab('tasklist')">
+                  <i class="bi bi-list-ul"></i><span>任务列表</span>
+                </button>
+                <button type="button" class="overview-quick-link" @click="changeTab('discovery')">
+                  <i class="bi bi-film"></i><span>影视发现</span>
+                </button>
+                <button type="button" class="overview-quick-link" @click="changeTab('calendar')">
+                  <i class="bi bi-calendar3-week"></i><span>追剧日历</span>
+                </button>
+                <button type="button" class="overview-quick-link" @click="changeTab('history')">
+                  <i class="bi bi-clock-history"></i><span>转存记录</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <template v-if="activeTab === 'tasklist'">
             <div class="glass-tab">
               <div style="height: 20px;"></div>
               <div class="row tasklist-filter-row" style="margin-bottom: 8px;">
@@ -3376,8 +3523,13 @@
           // 新增：当前浏览的资源索引，用于连续浏览功能
           currentResourceIndex: -1
         },
-        activeTab: 'config',
+        activeTab: 'overview',
         configModified: false,
+        // 总览页：按时段变化的问候语（含当前时段 key，用于定时器检测变化）
+        overviewGreeting: { text: '', emoji: '', dateText: '', period: '' },
+        // 总览页：转存记录统计（今日转存数/大小、累计记录数/大小）
+        overviewTransferStats: { today_count: 0, today_size: 0, total_count: 0, total_size: 0 },
+        _overviewGreetingTimer: null,
         // 标志：当由后端推送或编辑元数据保存触发的程序性更新时，暂时抑制未保存提示
         suppressConfigModifiedOnce: false,
         fileSelect: {
@@ -3988,14 +4140,20 @@
           }
         },
 
-        // 任务列表：中控台汇总统计（基于全部任务，不受名称/类型/状态筛选与排序影响）
-        // 电影：内容类型为 movie；剧集：内容类型为 tv（不含动画/综艺/纪录片）
-        // 追更中：内容类型为 tv 且转存进度未达 100%（还没追完，正在追更）
+        // 总览页：任务汇总统计（基于全部任务，不受筛选与排序影响）
+        // 类型拆分：剧集(tv)/动画(anime)/纪录片(documentary)/综艺(variety)/电影(movie)/其他(other)
+        // 追更中：四类剧集且转存进度未达 100%（还没追完，正在追更）
         // 今日加入：shareurl_subscribed_since 为今日（自然日，与订阅天数口径一致，不区分类型）
-        // 失败：shareurl_ban 非空（分享链接已失效），临时网络错误不计入
-        tasklistDashboardStats() {
+        // 待处理：shareurl_ban 非空（分享链接已失效），临时网络错误不计入
+        // 状态分布：已完成/播出中/本季终/已完结/未匹配/追更中（互斥归类，口径与状态筛选一致）
+        overviewStats() {
           try {
-            const stats = { movieCount: 0, tvCount: 0, ongoingTvCount: 0, todayCount: 0, failedCount: 0 };
+            const stats = {
+              tvCount: 0, animeCount: 0, documentaryCount: 0, varietyCount: 0,
+              movieCount: 0, otherCount: 0, ongoingCount: 0, todayCount: 0, failedCount: 0,
+              statusCompleted: 0, statusAiring: 0, statusFinale: 0, statusEnded: 0,
+              statusUnmatched: 0, statusOngoing: 0
+            };
             const tasks = (this.formData && Array.isArray(this.formData.tasklist)) ? this.formData.tasklist : [];
             const now = new Date();
             const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -4014,14 +4172,23 @@
               }
               if (contentType === 'movie') {
                 stats.movieCount += 1;
-              } else if (['tv', 'anime', 'variety', 'documentary'].includes(contentType)) {
+              } else if (contentType === 'tv') {
                 stats.tvCount += 1;
-                // 追更中：转存进度未达 100%（进度信息缺失时视为未追完）
-                const taskName = task.taskname || task.task_name || '';
-                const progress = taskName ? this.getTaskProgress(taskName) : null;
-                if (progress === null || progress < 100) {
-                  stats.ongoingTvCount += 1;
-                }
+              } else if (contentType === 'anime') {
+                stats.animeCount += 1;
+              } else if (contentType === 'documentary') {
+                stats.documentaryCount += 1;
+              } else if (contentType === 'variety') {
+                stats.varietyCount += 1;
+              } else {
+                stats.otherCount += 1;
+              }
+              // 追更中：四类剧集且转存进度未达 100%（进度信息缺失时视为未追完）
+              const isSeries = ['tv', 'anime', 'variety', 'documentary'].includes(contentType);
+              const taskName = task.taskname || task.task_name || '';
+              const progress = taskName ? this.getTaskProgress(taskName) : null;
+              if (isSeries && (progress === null || progress < 100)) {
+                stats.ongoingCount += 1;
               }
               // 今日加入：shareurl_subscribed_since 为今日（忽略时分秒，与订阅天数口径一致）
               if (task.shareurl_subscribed_since) {
@@ -4033,14 +4200,37 @@
                   }
                 }
               }
-              // 失败：shareurl_ban 非空即视为分享链接已失效
+              // 待处理：shareurl_ban 非空即视为分享链接已失效
               if (task.shareurl_ban && String(task.shareurl_ban).trim() !== '') {
                 stats.failedCount += 1;
+              }
+              // 状态分布（互斥归类，优先级与 filterTaskByStatus 一致）
+              const status = this.getTasklistFullStatus(task);
+              const normalizedProgress = (progress === null || progress === undefined) ? null : Number(progress);
+              const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress);
+              const isMatched = this.isTaskMatchedWithMetadata(task);
+              if (isCompleted) {
+                stats.statusCompleted += 1;
+              } else if (status === '播出中') {
+                stats.statusAiring += 1;
+              } else if (status === '本季终') {
+                stats.statusFinale += 1;
+              } else if (status === '已完结') {
+                stats.statusEnded += 1;
+              } else if (!isMatched) {
+                stats.statusUnmatched += 1;
+              } else {
+                stats.statusOngoing += 1;
               }
             });
             return stats;
           } catch (e) {
-            return { movieCount: 0, tvCount: 0, ongoingTvCount: 0, todayCount: 0, failedCount: 0 };
+            return {
+              tvCount: 0, animeCount: 0, documentaryCount: 0, varietyCount: 0,
+              movieCount: 0, otherCount: 0, ongoingCount: 0, todayCount: 0, failedCount: 0,
+              statusCompleted: 0, statusAiring: 0, statusFinale: 0, statusEnded: 0,
+              statusUnmatched: 0, statusOngoing: 0
+            };
           }
         },
 
@@ -4779,6 +4969,12 @@
         this.fetchUserInfo(); // 获取用户信息
         this.fetchAccountsDetail(); // 获取账号详细信息
 
+        // 总览页：初始化问候语并启动时段检测定时器（每分钟检查一次）
+        this.updateOverviewGreeting();
+        this._overviewGreetingTimer = setInterval(() => {
+          this.updateOverviewGreeting();
+        }, 60000);
+
         // 应用级别：在挂载时确保全局 SSE 建立一次
         try { this.ensureGlobalSSE(); } catch (e) {}
 
@@ -5015,6 +5211,10 @@
       }
       },
       beforeDestroy() {
+        if (this._overviewGreetingTimer) {
+          clearInterval(this._overviewGreetingTimer);
+          this._overviewGreetingTimer = null;
+        }
         window.removeEventListener('beforeunload', this.handleBeforeUnload);
         if (this._onCalendarResize) {
           window.removeEventListener('resize', this._onCalendarResize);
@@ -9366,12 +9566,67 @@
           
           return encodeURIComponent(cleanedName);
         },
+        // 总览页：状态分布条宽度百分比（0 时给最小宽度 2% 以便显示）
+        overviewStatusPercent(key) {
+          try {
+            const stats = this.overviewStats;
+            const total = stats.statusCompleted + stats.statusAiring + stats.statusFinale +
+                          stats.statusEnded + stats.statusUnmatched + stats.statusOngoing;
+            if (!total) return '0%';
+            const value = stats[key] || 0;
+            if (value === 0) return '2%';
+            return Math.round((value / total) * 100) + '%';
+          } catch (e) { return '0%'; }
+        },
+        // 总览页：按时段生成问候语（时段变化时才更新，避免每分重渲染）
+        updateOverviewGreeting() {
+          try {
+            const now = new Date();
+            const h = now.getHours();
+            let period = '', text = '', emoji = '';
+            if (h >= 0 && h < 5) {
+              period = 'late_night'; text = '夜深了，注意休息'; emoji = '🌛';
+            } else if (h >= 5 && h < 9) {
+              period = 'morning'; text = '早上好'; emoji = '🌅';
+            } else if (h >= 9 && h < 12) {
+              period = 'morning_late'; text = '上午好'; emoji = '☀️';
+            } else if (h >= 12 && h < 14) {
+              period = 'noon'; text = '中午好'; emoji = '🍚';
+            } else if (h >= 14 && h < 18) {
+              period = 'afternoon'; text = '下午好'; emoji = '🌤️';
+            } else {
+              period = 'evening'; text = '晚上好'; emoji = '🌙';
+            }
+            if (this.overviewGreeting.period === period) {
+              return; // 时段未变化，保持现状
+            }
+            const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
+            const dateText = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${weekDays[now.getDay()]}`;
+            this.overviewGreeting = { text, emoji, dateText, period };
+          } catch (e) {}
+        },
+        // 总览页：加载转存记录统计
+        loadOverviewTransferStats() {
+          axios.get('/overview_transfer_stats').then(response => {
+            if (response.data && response.data.success) {
+              this.overviewTransferStats = response.data.data || this.overviewTransferStats;
+            }
+          }).catch(error => {
+            console.error('加载总览转存统计失败:', error);
+          });
+        },
         changeTab(tab) {
           this.activeTab = tab;
           // 在本地存储中保存当前标签页状态
           localStorage.setItem('quarkAutoSave_activeTab', tab);
           if (window.innerWidth <= 768) {
             $('#sidebarMenu').collapse('toggle')
+          }
+
+          // 切换到总览页：刷新问候语与转存统计
+          if (tab === 'overview') {
+            this.updateOverviewGreeting();
+            this.loadOverviewTransferStats();
           }
 
           // 当切换到任务列表标签时刷新任务最新信息和元数据

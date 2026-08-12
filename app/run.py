@@ -5187,6 +5187,48 @@ def init():
     Config.write_json(CONFIG_PATH, config_data)
 
 
+# 总览页：转存记录统计（今日转存数/大小、累计记录数/大小）
+@app.route("/overview_transfer_stats")
+def get_overview_transfer_stats():
+    if not is_login():
+        return jsonify({"success": False, "message": "未登录"})
+    db = RecordDB()
+    try:
+        # 今日 0 点毫秒时间戳
+        now = datetime.now()
+        today_start = int(datetime(now.year, now.month, now.day).timestamp() * 1000)
+        cursor = db.conn.cursor()
+        # 累计统计（排除 rename/undo_rename，与转存记录页口径一致）
+        cursor.execute(
+            "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM transfer_records "
+            "WHERE task_name NOT IN ('rename', 'undo_rename')"
+        )
+        total_count, total_size = cursor.fetchone()
+        # 今日统计
+        cursor.execute(
+            "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM transfer_records "
+            "WHERE transfer_time >= ? AND task_name NOT IN ('rename', 'undo_rename')",
+            (today_start,)
+        )
+        today_count, today_size = cursor.fetchone()
+        return jsonify({
+            "success": True,
+            "data": {
+                "today_count": today_count or 0,
+                "today_size": today_size or 0,
+                "total_count": total_count or 0,
+                "total_size": total_size or 0,
+            }
+        })
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"统计失败: {exc}"})
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 # 获取历史转存记录
 @app.route("/history_records")
 def get_history_records():
