@@ -2041,7 +2041,6 @@ html.theme-light .overview-greeting {
 .overview-dot-finale { color: #8b5cf6; }
 .overview-dot-ended { color: #64748b; }
 .overview-dot-unmatched { color: #f59e0b; }
-.overview-dot-ongoing { color: #ec4899; }
 .overview-status-bar-wrap {
   flex: 1 1 auto;
   height: 10px;
