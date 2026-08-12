@@ -1145,8 +1145,8 @@
                 <span class="tasklist-dashboard-subtitle">按任务状态归类，口径与状态筛选一致</span>
               </div>
               <div class="overview-status-list">
-                <div class="overview-status-row" title="已完成：终态状态且转存进度 100%">
-                  <div class="overview-status-label"><i class="bi bi-check-circle-fill overview-status-dot overview-dot-completed"></i> 已完成</div>
+                <div class="overview-status-row" title="已上映：终态状态（已上映等）且转存进度 100%，主要为电影">
+                  <div class="overview-status-label"><i class="bi bi-check-circle-fill overview-status-dot overview-dot-completed"></i> 已上映</div>
                   <div class="overview-status-bar-wrap"><div class="overview-status-bar" :style="{ width: overviewStatusPercent('statusCompleted') }"></div></div>
                   <div class="overview-status-count">{{ overviewStats.statusCompleted }}</div>
                 </div>
@@ -4140,7 +4140,7 @@
         // 追更中：四类剧集且转存进度未达 100%（还没追完，正在追更）
         // 今日加入：shareurl_subscribed_since 为今日（自然日，与订阅天数口径一致，不区分类型）
         // 待处理：shareurl_ban 非空（分享链接已失效），临时网络错误不计入
-        // 状态分布：已完成/播出中/本季终/已完结/未匹配/追更中（互斥归类，口径与状态筛选一致）
+        // 状态分布：已上映/播出中/本季终/已完结/未匹配（互斥归类，具体状态优先）
         overviewStats() {
           try {
             const stats = {
@@ -4199,7 +4199,7 @@
               if (task.shareurl_ban && String(task.shareurl_ban).trim() !== '') {
                 stats.failedCount += 1;
               }
-              // 状态分布（互斥归类：具体状态优先，避免本季终/已完结被"已完成"截胡）
+              // 状态分布（互斥归类：具体状态优先，避免本季终/已完结被"已上映"截胡）
               const status = this.getTasklistFullStatus(task);
               const normalizedProgress = (progress === null || progress === undefined) ? null : Number(progress);
               const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress);
