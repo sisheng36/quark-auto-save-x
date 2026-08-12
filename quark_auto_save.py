@@ -11,6 +11,9 @@ import sys
 import json
 import time
 import random
+import glob
+import tempfile
+import threading
 import logging
 import requests
 import importlib
@@ -1447,6 +1450,9 @@ def build_sequence_regex_pattern(sequence_pattern):
 
 
 class Config:
+    # 同一进程内配置读写互斥锁（跨进程竞争由原子写入兜底）
+    _lock = threading.Lock()
+
     # 下载配置
     def download_file(url, save_path):
         response = requests.get(url)
@@ -1457,16 +1463,40 @@ class Config:
         else:
             return False
 
-    # 读取 JSON 文件内容
+    # 读取 JSON 文件内容（读失败时回退到最近的每日备份，避免页面 500）
     def read_json(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data
+        try:
+            with Config._lock:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            # 主文件损坏/被并发写截断，按日期回退到最近的每日备份
+            pattern = config_path + "-20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+            for backup_path in sorted(glob.glob(pattern), reverse=True):
+                try:
+                    with open(backup_path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    continue
+            raise
 
-    # 将数据写入 JSON 文件
+    # 将数据写入 JSON 文件（原子写入：写同目录临时文件后整体替换，杜绝半截/空文件）
     def write_json(config_path, data):
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, sort_keys=False, indent=2)
+        with Config._lock:
+            fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(config_path)),
+                                            prefix=".quark_cfg_", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, sort_keys=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, config_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
     # 读取CK
     def get_cookies(cookie_val):
