@@ -1174,8 +1174,8 @@
             </div>
             <!-- 任务列表：列表视图 -->
             <template v-if="tasklist.viewMode === 'list'">
-            <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task task-card mb-3" :class="{'expanded': !!taskExpandState[index]}" v-show="shouldShowTasklist">
-              <template v-if="(taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
+            <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task task-card mb-3" :class="{'expanded': !!taskExpandState[index]}" v-show="shouldShowTasklist && (taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
+              <template>
                 <div class="task-card-header">
                   <div class="task-card-toggle" data-toggle="collapse" :data-target="'#collapse_'+index" aria-expanded="false" :aria-controls="'collapse_'+index" @click="toggleTaskExpand(index)" :title="getTaskShareSubscriptionHoverText(task)">
                     <i class="bi bi-caret-right-fill"></i>
