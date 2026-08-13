@@ -1865,6 +1865,17 @@ export default {
           }
         },
         // ---- 排序辅助函数（calendar + tasklist 共用） ----
+        // 是否为移动端/触屏设备（窄屏且无 hover 能力）
+        isMobileDevice() {
+          if (typeof window === 'undefined' || window.innerWidth > 768) {
+            return false;
+          }
+          try {
+            return window.matchMedia('(hover: none)').matches;
+          } catch (e) {
+            return typeof window.ontouchstart !== 'undefined';
+          }
+        },
         // 是否为「选择保存到的文件夹」模态框
         isSavepathSelectModal() {
           if (!this.fileSelect.selectDir || this.fileSelect.previewRegex || this.fileSelect.selectShare || this.fileSelect.moveMode) {
