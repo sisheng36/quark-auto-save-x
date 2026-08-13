@@ -12,24 +12,12 @@
         if (localStorage.getItem('quarkAutoSave_theme') === 'light') {
           document.documentElement.classList.add('theme-light');
         }
-        // 性能模式：用户显式开启，或首次访问的低配设备/系统"减少动态效果"自动开启。
-        // 在首屏渲染前加入 html.perf-mode，可让 CSS 从一开始就跳过模糊与动画。
-        var perf = localStorage.getItem('quarkAutoSave_perfMode');
-        var weakDevice = (navigator.deviceMemory && navigator.deviceMemory <= 2) ||
-          (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
-        var reducedMotion = false;
-        try {
-          reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        } catch (e) {}
-        if (perf === 'on' || (perf === null && (weakDevice || reducedMotion))) {
-          document.documentElement.classList.add('perf-mode');
-        }
       } catch (e) {}
     }());
   </script>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=1">
-  <link rel="stylesheet" href="./static/css/main.css?v=40">
+  <link rel="stylesheet" href="./static/css/main.css?v=41">
   <!-- 前端运行时配置（由后端注入，供延迟加载的应用脚本使用） -->
   <script>
     window.__QAS_CONFIG__ = {
@@ -153,15 +141,6 @@
                         :aria-pressed="isLightTheme.toString()">
                   <i :class="isLightTheme ? 'bi bi-moon-stars' : 'bi bi-sun'"></i>
                   <span class="nav-text">{{ isLightTheme ? '切换到深色主题' : '切换到浅色主题' }}</span>
-                </button>
-              </li>
-              <li class="nav-item perf-mode-toggle-item">
-                <button type="button" class="nav-link perf-mode-toggle" @click="togglePerfMode"
-                        :title="perfMode ? '已开启性能模式：关闭磨砂模糊与动画，降低设备负载' : '开启性能模式：关闭磨砂模糊与动画，降低设备负载'"
-                        :aria-label="perfMode ? '关闭性能模式' : '开启性能模式'"
-                        :aria-pressed="perfMode.toString()">
-                  <i :class="perfMode ? 'bi bi-lightning-charge-fill' : 'bi bi-lightning-charge'"></i>
-                  <span class="nav-text">{{ perfMode ? '性能模式：开' : '性能模式：关' }}</span>
                 </button>
               </li>
             </ul>

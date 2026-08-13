@@ -4858,20 +4858,6 @@ html:not(.theme-light) .glass-config-toggle { background: rgba(255, 255, 255, 0.
 html:not(.theme-light) .config-tab { background: rgba(255, 255, 255, 0.08); }
 html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
 
-/* 性能模式：关闭全部模糊、过渡与动画，适配低端设备（html.perf-mode 由前端开关控制） */
-html.perf-mode,
-html.perf-mode *,
-html.perf-mode *::before,
-html.perf-mode *::after {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-  transition: none !important;
-  animation: none !important;
-}
-html.perf-mode {
-  scroll-behavior: auto !important;
-}
-
 /* 原生内容虚拟化：浏览器自动跳过视口外元素的布局与绘制，
    对长列表（任务卡、海报网格、运行日志）降低内存与重绘开销。 */
 .task-card,

@@ -227,7 +227,6 @@ export default {
         imageCacheBustByShowName: {}, // { [show_name:string]: number }
         sidebarCollapsed: false,
         isLightTheme: document.documentElement.classList.contains('theme-light'),
-        perfMode: document.documentElement.classList.contains('perf-mode'),
         // 拼音库是否已后台加载完成：加载完成后相关排序会自动重算
         pinyinReady: false,
         showCloudSaverPassword: false,
@@ -493,8 +492,6 @@ export default {
         // 跳转页码输入框宽度（随内容自适应，最小 32px）
         historyJumpInputWidth: '32px',
         fileManagerJumpInputWidth: '32px',
-        totalPages: 1,
-        displayedPages: [],
         allTaskNames: [],
         toastMessage: "",
         selectedRecords: [],
@@ -1887,13 +1884,6 @@ export default {
           document.documentElement.classList.toggle('theme-light', this.isLightTheme);
           try {
             localStorage.setItem('quarkAutoSave_theme', this.isLightTheme ? 'light' : 'dark');
-          } catch (e) {}
-        },
-        togglePerfMode() {
-          this.perfMode = !this.perfMode;
-          document.documentElement.classList.toggle('perf-mode', this.perfMode);
-          try {
-            localStorage.setItem('quarkAutoSave_perfMode', this.perfMode ? 'on' : 'off');
           } catch (e) {}
         },
         // 后台按需加载拼音库：不阻塞首屏，加载完成后清空拼音缓存并触发重排
@@ -9858,10 +9848,6 @@ export default {
             if (response.data.success) {
               this.history = response.data.data;
 
-              // 确保页码信息正确反映在UI上
-              if (this.history.pagination) {
-                this.totalPages = parseInt(this.history.pagination.total_pages);
-              }
             } else {
               console.error('Error:', response.data.message);
             }
@@ -9935,7 +9921,6 @@ export default {
             page_size: resolvedPageSize
           };
           this.history.hasLoaded = true;
-          this.totalPages = 1;
           this.historyParams.page = 1;
           this.gotoPage = 1;
           this.selectedRecords = [];
@@ -9978,9 +9963,6 @@ export default {
               if (response.data.success) {
                 this.history = response.data.data;
                 // 确保总页数更新
-                if (this.history.pagination) {
-                  this.totalPages = parseInt(this.history.pagination.total_pages);
-                }
               } else {
                 console.error('排序失败:', response.data.message);
               }
@@ -10024,9 +10006,6 @@ export default {
                 this.history = response.data.data;
                 
                 // 确保页码信息正确反映在UI上
-                if (this.history.pagination) {
-                  this.totalPages = parseInt(this.history.pagination.total_pages);
-                }
               } else {
                 console.error('Error:', response.data.message);
               }
@@ -10068,9 +10047,6 @@ export default {
                 this.history = response.data.data;
                 
                 // 确保页码信息正确反映在UI上
-                if (this.history.pagination) {
-                  this.totalPages = parseInt(this.history.pagination.total_pages);
-                }
               } else {
                 console.error('Error:', response.data.message);
               }
