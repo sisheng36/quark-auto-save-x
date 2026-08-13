@@ -290,6 +290,8 @@
         sidebarCollapsed: false,
         isLightTheme: document.documentElement.classList.contains('theme-light'),
         perfMode: document.documentElement.classList.contains('perf-mode'),
+        // 拼音库是否已后台加载完成：加载完成后相关排序会自动重算
+        pinyinReady: false,
         showCloudSaverPassword: false,
         showWebuiPassword: false,
         pageWidthMode: 'wide', // 页面宽度模式：narrow, medium, wide
@@ -915,6 +917,7 @@
         },
         // 管理视图：按任务名（拼音）排序并应用顶部筛选
         managementTasksFiltered() {
+          void this.pinyinReady; // 依赖拼音库加载状态，就绪后自动重排
           if (!this.calendar.tasks || this.calendar.tasks.length === 0) return [];
           let list = this.calendar.tasks.slice();
           // 顶部筛选：类型
@@ -1921,6 +1924,29 @@
             localStorage.setItem('quarkAutoSave_perfMode', this.perfMode ? 'on' : 'off');
           } catch (e) {}
         },
+        // 后台按需加载拼音库：不阻塞首屏，加载完成后清空拼音缓存并触发重排
+        ensurePinyinPro() {
+          try {
+            if (typeof pinyinPro !== 'undefined' || this._pinyinLoadPromise) {
+              return this._pinyinLoadPromise || Promise.resolve(typeof pinyinPro !== 'undefined' ? pinyinPro : null);
+            }
+            this._pinyinLoadPromise = new Promise((resolve) => {
+              const s = document.createElement('script');
+              s.src = './static/js/pinyin-pro.min.js?v=1';
+              s.async = true;
+              s.onload = () => {
+                _pinyinCache.clear();
+                this.pinyinReady = true;
+                resolve(typeof pinyinPro !== 'undefined' ? pinyinPro : null);
+              };
+              s.onerror = () => resolve(null);
+              document.head.appendChild(s);
+            });
+            return this._pinyinLoadPromise;
+          } catch (e) {
+            return Promise.resolve(null);
+          }
+        },
         // ---- 排序辅助函数（calendar + tasklist 共用） ----
         _getNameKey(task) {
           const name = (task && (task.task_name || task.taskname) || '').toString();
@@ -2245,6 +2271,7 @@
         // 获取排序后的任务列表（不修改原始数据，避免触发 configModified）
         getSortedTasklist() {
           try {
+            void this.pinyinReady; // 依赖拼音库加载状态，就绪后自动重排
             const { by, order } = this.tasklistSort || { by: 'index', order: 'asc' };
             const factor = order === 'desc' ? -1 : 1;
             // Schwartzian 变换：先一次性预计算排序键，避免比较器内反复转拼音/查进度。
@@ -3068,33 +3095,13 @@
         getPluginDisplayName(pluginName) {
           return this.pluginDisplayAliases[pluginName] || pluginName;
         },
-        // 设置移动端任务列表展开/收起状态监听
-        setupMobileTaskListToggle() {
-          // 监听所有collapse事件
-          $(document).on('show.bs.collapse', '[id^="collapse_"]', (e) => {
-            const collapseId = e.target.id;
-            const taskIndex = collapseId.replace('collapse_', '');
-            const taskElement = $(e.target).closest('.task');
-            if (taskElement.length) {
-              taskElement.addClass('task-expanded');
-            }
-          });
-
-          $(document).on('hide.bs.collapse', '[id^="collapse_"]', (e) => {
-            const collapseId = e.target.id;
-            const taskIndex = collapseId.replace('collapse_', '');
-            const taskElement = $(e.target).closest('.task');
-            if (taskElement.length) {
-              taskElement.removeClass('task-expanded');
-            }
-          });
-        },
         // 获取文件图标类名
         getFileIconClass(fileName, isDir = false) {
           return getFileIconClass(fileName, isDir);
         },
         // 拼音排序辅助函数
         sortTaskNamesByPinyin(taskNames) {
+          void this.pinyinReady; // 依赖拼音库加载状态，就绪后自动重排
           return taskNames.sort((a, b) => {
             const aKey = toPinyin(a);
             const bKey = toPinyin(b);
@@ -3594,6 +3601,7 @@
         
         // 根据日期获取剧集
         getEpisodesByDate(date) {
+          void this.pinyinReady; // 依赖拼音库加载状态，就绪后自动重排
           // 从已加载的剧集中筛选指定日期的剧集
           if (!this.calendar.episodes || this.calendar.episodes.length === 0) {
             return [];
@@ -6789,7 +6797,6 @@
             const sortedIndex = this.sortedTasklist.findIndex(task => task.__isNewlyAdded);
             if (sortedIndex !== -1) {
               // 展开新任务的编辑模块
-              $(`#collapse_${sortedIndex}`).collapse('show');
               this.$set(this.taskExpandState, sortedIndex, true);
               // 滚动到新任务位置
               this.scrollToX();
@@ -15491,6 +15498,16 @@
         this.fetchData();
         this.checkNewVersion();
         this.fetchUserInfo(); // 获取用户信息
+
+        // 首屏渲染后再后台加载拼音库，避免 316KB 脚本阻塞交互；库就绪后排序自动重算
+        if (typeof pinyinPro === 'undefined') {
+          const startPinyinLoad = () => { this.ensurePinyinPro(); };
+          if (window.requestIdleCallback) {
+            window.requestIdleCallback(startPinyinLoad, { timeout: 2000 });
+          } else {
+            setTimeout(startPinyinLoad, 300);
+          }
+        }
         
         // 添加模态框关闭事件监听
         $('#fileSelectModal').on('hidden.bs.modal', () => {

@@ -4871,3 +4871,22 @@ html.perf-mode *::after {
 html.perf-mode {
   scroll-behavior: auto !important;
 }
+
+/* 原生内容虚拟化：浏览器自动跳过视口外元素的布局与绘制，
+   对长列表（任务卡、海报网格、运行日志）降低内存与重绘开销。 */
+.task-card,
+.discovery-item,
+.calendar-poster-item,
+.runlog-content .runlog-line {
+  content-visibility: auto;
+}
+.task-card {
+  contain-intrinsic-size: auto 72px; /* 折叠态卡片估算高度，避免滚动条跳动 */
+}
+.discovery-item,
+.calendar-poster-item {
+  contain-intrinsic-size: auto 320px;
+}
+.runlog-content .runlog-line {
+  contain-intrinsic-size: auto 1.4em;
+}

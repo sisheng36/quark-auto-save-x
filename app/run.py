@@ -2357,6 +2357,10 @@ def favicon():
 @app.after_request
 def add_static_cache_headers(response):
     try:
+        # 开发模式（版本号为 dev）保留 Flask 默认的 no-cache，方便调试时即时生效；
+        # 正式版本通过版本号穿透缓存。
+        if app.config.get("APP_VERSION") == "dev":
+            return response
         if request.method == "GET" and request.path.startswith("/static/"):
             # 覆盖 Werkzeug 对静态文件的默认 no-cache：JS/CSS/字体通过带版本号
             # 的 URL 引用，可长期缓存；图片等未版本化资源仅短期缓存。
