@@ -6302,7 +6302,7 @@ export default {
         fetchData() {
           axios.get('/data')
             .then(response => {
-              config_data = response.data.data
+              const config_data = response.data.data
               // cookie兼容
               if (typeof config_data.cookie === 'string')
                 config_data.cookie = [config_data.cookie];
@@ -6334,7 +6334,7 @@ export default {
 
               // 获取所有任务父目录
               this.formData.tasklist.forEach(item => {
-                parentDir = this.getParentDirectory(item.savepath)
+                const parentDir = this.getParentDirectory(item.savepath)
                 if (!this.taskDirs.includes(parentDir))
                   this.taskDirs.push(parentDir);
               });
@@ -8484,9 +8484,9 @@ export default {
           }
         },
         async runScriptNow(task_index = null) {
-          body = {};
+          let body = {};
           if (task_index != null) {
-            task = { ...this.formData.tasklist[task_index] };
+            const task = { ...this.formData.tasklist[task_index] };
             delete task.runweek;
             delete task.enddate;
             body = {
@@ -8583,7 +8583,7 @@ export default {
           });
         },
         getAvailablePlugins(plugins) {
-          availablePlugins = {};
+          const availablePlugins = {};
           const pluginsFlagsArray = this.plugin_flags.split(',');
           for (const pluginName in plugins) {
             if (!pluginsFlagsArray.includes(`-${pluginName}`)) {
@@ -15248,9 +15248,9 @@ export default {
         },
         async runScriptNowWithCallback(task_index, callback) {
           // 运行任务的包装函数，支持完成回调
-          body = {};
+          let body = {};
           if (task_index != null) {
-            task = { ...this.formData.tasklist[task_index] };
+            const task = { ...this.formData.tasklist[task_index] };
             delete task.runweek;
             delete task.enddate;
             body = {

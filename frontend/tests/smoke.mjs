@@ -58,7 +58,8 @@ window.sortFileByName = (f) => [String((f && f.file_name) || f || '')];
 
 // 4) 执行构建产物（单 chunk 无 import，可直接 eval）
 try {
-  window.eval(bundle);
+  // 显式严格模式：与浏览器 ES 模块语义一致，能暴露“隐式全局变量赋值”类错误
+  window.eval('"use strict";\n' + bundle);
 } catch (e) {
   console.error('bundle 执行失败:', e);
   process.exit(1);

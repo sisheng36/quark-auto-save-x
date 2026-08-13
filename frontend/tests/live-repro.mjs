@@ -58,7 +58,7 @@ window.pinyinPro = { pinyin: (s) => String(s || '') };
 window.sortFileByName = (f) => [String((f && f.file_name) || f || '')];
 
 try {
-  window.eval(bundle);
+  window.eval('"use strict";\n' + bundle);
 } catch (e) {
   console.error('bundle 执行失败:', e);
   process.exit(1);
