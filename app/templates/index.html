@@ -1099,7 +1099,6 @@
             <!-- 任务列表：列表视图 -->
             <template v-if="tasklist.viewMode === 'list'">
             <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task task-card mb-3" :class="{'expanded': !!taskExpandState[index]}" v-show="shouldShowTasklist && (taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
-              <template>
                 <div class="task-card-header">
                   <div class="task-card-toggle" :aria-expanded="!!taskExpandState[index]" :aria-controls="'collapse_'+index" @click="toggleTaskExpand(index)" :title="getTaskShareSubscriptionHoverText(task)">
                     <i class="bi bi-caret-right-fill"></i>
@@ -1336,15 +1335,12 @@
                   </div>
                 </div>
               </template>
-            </div>
-            </template>
             <!-- 任务列表：海报视图 -->
             <div v-else class="tasklist-poster-mode">
               <!-- 复用管理视图的海报网格样式与自适应布局 -->
               <div class="discovery-grid">
+                <template v-for="(task, index) in sortedTasklist" :key="'poster-'+(task.taskname || index)">
                 <div class="discovery-item"
-                     v-for="(task, index) in sortedTasklist"
-                     :key="'poster-'+(task.taskname || index)"
                      v-if="(taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
                   <div class="discovery-poster"
                        :title="getTaskShareSubscriptionHoverText(task)"
@@ -1424,6 +1420,7 @@
                     </div>
                   </div>
                 </div>
+                </template>
               </div>
             </div>
 

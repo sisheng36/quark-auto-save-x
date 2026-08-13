@@ -6510,7 +6510,7 @@ export default {
           }
         },
         addPush() {
-          key = prompt("增加的键名", "");
+          let key = prompt("增加的键名", "");
           if (key != "" && key != null)
             this.formData.push_config[key] = "";
         },
@@ -6609,7 +6609,7 @@ export default {
           this.smart_param.focusContextKey = nextFocusContextKey;
           this.smart_param.index = index
           this.smart_param.origin_savepath = task.savepath
-          regex = new RegExp(`/${task.taskname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(/|$)`)
+          const regex = new RegExp(`/${task.taskname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(/|$)`)
           if (task.savepath.includes('TASKNAME')) {
             this.smart_param.savepath = task.savepath;
           } else if (task.savepath.match(regex)) {
@@ -7912,7 +7912,7 @@ export default {
           // 从分享中提取任务名
           axios.get('/get_share_detail', { params: { shareurl: task.shareurl } })
             .then(response => {
-              share_detail = response.data.data
+              const share_detail = response.data.data
               if (!response.data.success) {
                 if (share_detail.error.includes("提取码")) {
                   const passcode = prompt("检查失败[" + share_detail.error + "]，请输入提取码：");
@@ -8349,7 +8349,7 @@ export default {
           }
         },
         getParentDirectory(path) {
-          parentDir = path.substring(0, path.lastIndexOf('/'))
+          let parentDir = path.substring(0, path.lastIndexOf('/'))
           if (parentDir == "")
             parentDir = "/"
           return parentDir;
@@ -9286,7 +9286,7 @@ export default {
             this.showFileManagerNamingPreview(fid);
             return;
           }
-          path = { fid: fid, name: name }
+          const path = { fid: fid, name: name }
           if (this.fileSelect.selectShare) {
             this.fileSelect.shareurl = this.getShareurl(this.fileSelect.shareurl, path);
             // 使用重试机制调用getShareDetail
