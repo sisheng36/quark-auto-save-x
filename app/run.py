@@ -13,6 +13,7 @@ from flask import (
     send_from_directory,
     stream_with_context,
 )
+from werkzeug.wsgi import FileWrapper
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -31,6 +32,7 @@ import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
 import base64
+import gzip
 import sys
 import os
 import re
@@ -2368,6 +2370,53 @@ def add_static_cache_headers(response):
                 response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
             else:
                 response.headers["Cache-Control"] = "public, max-age=86400"
+    except Exception:
+        pass
+    return response
+
+
+# gzip 压缩：直接运行（开发环境/容器）时无反向代理，压缩大文本响应
+# 可显著降低 JS/CSS/HTML/JSON 的传输体积与首屏时间。
+@app.after_request
+def compress_text_response(response):
+    try:
+        if request.method == "HEAD":
+            return response
+        if response.status_code != 200:
+            return response
+        # Range 请求与流式响应不压缩
+        if getattr(request, "range", None):
+            return response
+        content_type = (response.content_type or "").split(";")[0].strip().lower()
+        if "text/event-stream" in content_type:
+            return response
+        compressible = content_type.startswith("text/") or content_type in (
+            "application/javascript",
+            "application/json",
+            "application/xml",
+            "image/svg+xml",
+        )
+        if not compressible:
+            return response
+        if response.direct_passthrough:
+            if not isinstance(response.response, FileWrapper):
+                # 仅压缩本地文件响应；SSE/远程代理等流式响应保持直通，避免整段缓冲
+                return response
+            # 文件响应（send_file）处于直通模式，先冻结为序列以便读取压缩
+            response.make_sequence()
+        body = response.get_data()
+        if not body or len(body) < 1024:
+            return response
+        if "gzip" not in request.headers.get("Accept-Encoding", ""):
+            return response
+        compressed = gzip.compress(body, compresslevel=6)
+        if len(compressed) >= len(body):
+            return response  # 压缩无收益时保持原样
+        response.set_data(compressed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(compressed))
+        vary = response.headers.get("Vary")
+        response.headers["Vary"] = (vary + ", Accept-Encoding") if vary else "Accept-Encoding"
     except Exception:
         pass
     return response
