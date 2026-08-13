@@ -4799,3 +4799,80 @@ html.theme-light .login-title a,
 html.theme-light .login-title a:hover {
   color: var(--text-primary);
 }
+
+/* ============================================================
+   性能优化：重复元素禁用 backdrop-filter 模糊
+   模糊层需要持续 GPU 合成，任务卡/表格行/配置行等大量元素上的
+   模糊是滚动卡顿的主要来源。磨砂玻璃仅保留固定导航、侧边栏与
+   浮层（模态框/下拉菜单/Tooltip/Popover/Toast）。
+   失去模糊后，深色主题下适当提高背景不透明度以保持可读性。
+   ============================================================ */
+.glass-tab,
+.card,
+.tasklist-dashboard,
+.tasklist-dashboard-item,
+.overview-greeting,
+.overview-quick-link,
+.task-card,
+.task-card-body,
+.runlog-content,
+.file-manager-rule-bar,
+.discovery-item,
+.discovery-rating,
+.calendar-poster-item,
+.calendar-transferred-badge-aired,
+#logModal pre,
+.glass-config-toggle,
+.config-tab,
+.glass-config-body,
+.display-setting-row,
+html.theme-light .glass-tab,
+html.theme-light .tasklist-dashboard,
+html.theme-light .tasklist-dashboard-item,
+html.theme-light .overview-quick-link,
+html.theme-light .task-card,
+html.theme-light .task-card-body,
+html.theme-light .calendar-selected-episodes,
+html.theme-light .runlog-content,
+html.theme-light .discovery-item,
+html.theme-light .calendar-poster-item,
+html.theme-light .glass-config-toggle,
+html.theme-light .glass-config-body,
+html.theme-light .display-setting-row,
+html.theme-light #logModal pre {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 深色主题补偿：去掉模糊后提高背景不透明度 */
+html:not(.theme-light) .glass-tab {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.06) 52%, rgba(165, 180, 252, 0.10));
+}
+html:not(.theme-light) .task-card { background: rgba(255, 255, 255, 0.09); }
+html:not(.theme-light) .task-card:hover { background: rgba(255, 255, 255, 0.12); }
+html:not(.theme-light) .task-card.expanded { background: rgba(255, 255, 255, 0.12); }
+html:not(.theme-light) .task-card-body { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .discovery-item { background: rgba(255, 255, 255, 0.09); }
+html:not(.theme-light) .calendar-poster-item { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .glass-config-toggle { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .config-tab { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
+
+/* 原生内容虚拟化：浏览器自动跳过视口外元素的布局与绘制，
+   对长列表（任务卡、海报网格、运行日志）降低内存与重绘开销。 */
+.task-card,
+.discovery-item,
+.calendar-poster-item,
+.runlog-content .runlog-line {
+  content-visibility: auto;
+}
+.task-card {
+  contain-intrinsic-size: auto 72px; /* 折叠态卡片估算高度，避免滚动条跳动 */
+}
+.discovery-item,
+.calendar-poster-item {
+  contain-intrinsic-size: auto 320px;
+}
+.runlog-content .runlog-line {
+  contain-intrinsic-size: auto 1.4em;
+}

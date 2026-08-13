@@ -197,6 +197,24 @@ services:
 
 部署完成后，可通过 `http://yourhost:5005` 访问 WebUI，默认用户名/密码：`admin`。首次登录后请立即修改默认密码！
 
+### 前端开发（可选）
+
+前端使用 Vue 3 + Vite 构建，产物已提交到 `app/static/dist`，普通部署无需额外操作。仅当修改
+`frontend/src` 下的源码时才需要重新构建：
+
+```bash
+cd frontend
+npm install
+npm run build          # 产物输出到 app/static/dist
+```
+
+本地开发热更新：
+
+```bash
+cd frontend && npm run dev      # 启动 Vite 开发服务器（5173）
+FRONTEND_DEV=1 python3 app/run.py   # Flask 将加载 Vite 开发服务器
+```
+
 ## 使用指南
 
 ### 1. 配置夸克账号

@@ -13,6 +13,7 @@ from flask import (
     send_from_directory,
     stream_with_context,
 )
+from werkzeug.wsgi import FileWrapper
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -31,6 +32,7 @@ import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
 import base64
+import gzip
 import sys
 import os
 import re
@@ -2351,6 +2353,86 @@ def favicon():
         mimetype="image/vnd.microsoft.icon",
     )
 
+
+# 静态资源强缓存：所有 /static/* 均通过带版本号的 URL 引用，
+# 内容变更时由模板中的 ?v= 参数负责穿透缓存。
+@app.after_request
+def add_static_cache_headers(response):
+    try:
+        # 开发模式（版本号为 dev）保留 Flask 默认的 no-cache，方便调试时即时生效；
+        # 正式版本通过版本号穿透缓存。
+        if app.config.get("APP_VERSION") == "dev":
+            return response
+        if request.method == "GET" and request.path.startswith("/static/"):
+            # 覆盖 Werkzeug 对静态文件的默认 no-cache：JS/CSS/字体通过带版本号
+            # 的 URL 引用，可长期缓存；图片等未版本化资源仅短期缓存。
+            if request.path.endswith((".css", ".js", ".woff", ".woff2", ".ttf")):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=86400"
+    except Exception:
+        pass
+    return response
+
+
+# HTML 页面始终重新校验：避免浏览器缓存旧模板（其中可能引用已删除的脚本）导致白屏
+@app.after_request
+def add_html_no_cache_headers(response):
+    try:
+        if (response.content_type or "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+    except Exception:
+        pass
+    return response
+
+
+# gzip 压缩：直接运行（开发环境/容器）时无反向代理，压缩大文本响应
+# 可显著降低 JS/CSS/HTML/JSON 的传输体积与首屏时间。
+@app.after_request
+def compress_text_response(response):
+    try:
+        if request.method == "HEAD":
+            return response
+        if response.status_code != 200:
+            return response
+        # Range 请求与流式响应不压缩
+        if getattr(request, "range", None):
+            return response
+        content_type = (response.content_type or "").split(";")[0].strip().lower()
+        if "text/event-stream" in content_type:
+            return response
+        compressible = content_type.startswith("text/") or content_type in (
+            "application/javascript",
+            "application/json",
+            "application/xml",
+            "image/svg+xml",
+        )
+        if not compressible:
+            return response
+        if response.direct_passthrough:
+            if not isinstance(response.response, FileWrapper):
+                # 仅压缩本地文件响应；SSE/远程代理等流式响应保持直通，避免整段缓冲
+                return response
+            # 文件响应（send_file）处于直通模式，先冻结为序列以便读取压缩
+            response.make_sequence()
+        body = response.get_data()
+        if not body or len(body) < 1024:
+            return response
+        if "gzip" not in request.headers.get("Accept-Encoding", ""):
+            return response
+        compressed = gzip.compress(body, compresslevel=6)
+        if len(compressed) >= len(body):
+            return response  # 压缩无收益时保持原样
+        response.set_data(compressed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(compressed))
+        vary = response.headers.get("Vary")
+        response.headers["Vary"] = (vary + ", Accept-Encoding") if vary else "Accept-Encoding"
+    except Exception:
+        pass
+    return response
+
+
 # 将 /cache/images/* 映射到宿主缓存目录，供前端访问
 @app.route('/cache/images/<path:filename>')
 def serve_cache_images(filename):
@@ -2470,12 +2552,45 @@ def logout():
 
 
 # 管理页面
+def _frontend_scripts():
+    """生成前端模块脚本标签。
+
+    - FRONTEND_DEV=1 时使用 Vite 开发服务器（HMR）。
+    - 生产环境读取 Vite 构建清单，引用带哈希的产物（长缓存）。
+    """
+    if os.environ.get("FRONTEND_DEV", "").lower() in ("1", "true", "yes"):
+        return (
+            '<script type="module" src="http://localhost:5173/@vite/client"></script>\n'
+            '  <script type="module" src="http://localhost:5173/src/main.js"></script>'
+        )
+    try:
+        manifest_path = os.path.join(
+            app.root_path, "static", "dist", ".vite", "manifest.json"
+        )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.loads(f.read())
+        entry = manifest.get("index.html") or {}
+        js_file = entry.get("file") or ""
+        if not js_file:
+            raise ValueError("manifest 缺少入口文件")
+        return (
+            f'<script type="module" crossorigin src="/static/dist/{js_file}"></script>'
+        )
+    except Exception:
+        return (
+            "<!-- 前端尚未构建：请进入 frontend/ 执行 npm install && npm run build -->"
+        )
+
+
 @app.route("/")
 def index():
     if not is_login():
         return redirect(url_for("login"))
     return render_template(
-        "index.html", version=app.config["APP_VERSION"], plugin_flags=PLUGIN_FLAGS
+        "index.html",
+        version=app.config["APP_VERSION"],
+        plugin_flags=PLUGIN_FLAGS,
+        frontend_scripts=_frontend_scripts(),
     )
 
 
