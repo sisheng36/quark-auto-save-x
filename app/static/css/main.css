@@ -4799,3 +4799,75 @@ html.theme-light .login-title a,
 html.theme-light .login-title a:hover {
   color: var(--text-primary);
 }
+
+/* ============================================================
+   性能优化：重复元素禁用 backdrop-filter 模糊
+   模糊层需要持续 GPU 合成，任务卡/表格行/配置行等大量元素上的
+   模糊是滚动卡顿的主要来源。磨砂玻璃仅保留固定导航、侧边栏与
+   浮层（模态框/下拉菜单/Tooltip/Popover/Toast）。
+   失去模糊后，深色主题下适当提高背景不透明度以保持可读性。
+   ============================================================ */
+.glass-tab,
+.card,
+.tasklist-dashboard,
+.tasklist-dashboard-item,
+.overview-greeting,
+.overview-quick-link,
+.task-card,
+.task-card-body,
+.runlog-content,
+.file-manager-rule-bar,
+.discovery-item,
+.discovery-rating,
+.calendar-poster-item,
+.calendar-transferred-badge-aired,
+#logModal pre,
+.glass-config-toggle,
+.config-tab,
+.glass-config-body,
+.display-setting-row,
+html.theme-light .glass-tab,
+html.theme-light .tasklist-dashboard,
+html.theme-light .tasklist-dashboard-item,
+html.theme-light .overview-quick-link,
+html.theme-light .task-card,
+html.theme-light .task-card-body,
+html.theme-light .calendar-selected-episodes,
+html.theme-light .runlog-content,
+html.theme-light .discovery-item,
+html.theme-light .calendar-poster-item,
+html.theme-light .glass-config-toggle,
+html.theme-light .glass-config-body,
+html.theme-light .display-setting-row,
+html.theme-light #logModal pre {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 深色主题补偿：去掉模糊后提高背景不透明度 */
+html:not(.theme-light) .glass-tab {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.06) 52%, rgba(165, 180, 252, 0.10));
+}
+html:not(.theme-light) .task-card { background: rgba(255, 255, 255, 0.09); }
+html:not(.theme-light) .task-card:hover { background: rgba(255, 255, 255, 0.12); }
+html:not(.theme-light) .task-card.expanded { background: rgba(255, 255, 255, 0.12); }
+html:not(.theme-light) .task-card-body { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .discovery-item { background: rgba(255, 255, 255, 0.09); }
+html:not(.theme-light) .calendar-poster-item { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .glass-config-toggle { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .config-tab { background: rgba(255, 255, 255, 0.08); }
+html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
+
+/* 性能模式：关闭全部模糊、过渡与动画，适配低端设备（html.perf-mode 由前端开关控制） */
+html.perf-mode,
+html.perf-mode *,
+html.perf-mode *::before,
+html.perf-mode *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+html.perf-mode {
+  scroll-behavior: auto !important;
+}

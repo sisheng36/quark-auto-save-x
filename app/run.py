@@ -2351,6 +2351,24 @@ def favicon():
         mimetype="image/vnd.microsoft.icon",
     )
 
+
+# 静态资源强缓存：所有 /static/* 均通过带版本号的 URL 引用，
+# 内容变更时由模板中的 ?v= 参数负责穿透缓存。
+@app.after_request
+def add_static_cache_headers(response):
+    try:
+        if request.method == "GET" and request.path.startswith("/static/"):
+            # 覆盖 Werkzeug 对静态文件的默认 no-cache：JS/CSS/字体通过带版本号
+            # 的 URL 引用，可长期缓存；图片等未版本化资源仅短期缓存。
+            if request.path.endswith((".css", ".js", ".woff", ".woff2", ".ttf")):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "public, max-age=86400"
+    except Exception:
+        pass
+    return response
+
+
 # 将 /cache/images/* 映射到宿主缓存目录，供前端访问
 @app.route('/cache/images/<path:filename>')
 def serve_cache_images(filename):
