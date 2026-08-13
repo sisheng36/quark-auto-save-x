@@ -1449,6 +1449,35 @@ def build_sequence_regex_pattern(sequence_pattern):
     return regex_pattern
 
 
+# 电影目录关键词（与 app/utils/task_extractor.determine_content_type 保持一致）
+_MOVIE_PATH_KEYWORDS = ("电影", "影片", "movie", "film")
+
+
+def is_movie_task(task):
+    """判断任务是否为电影。
+
+    电影只有 1 个媒体文件，转存完成后即结束，不需要追更，
+    因此后续运行无需再检测分享链接是否有效。
+    兼容曾被错误标记为 other 的旧任务：content_type 缺失时按保存路径关键词兜底。
+    """
+    try:
+        task = task or {}
+        cal = task.get("calendar_info") or {}
+        extracted = cal.get("extracted") or {}
+        match = cal.get("match") or {}
+        if match.get("media_type") == "movie":
+            return True
+        content_type = task.get("content_type") or extracted.get("content_type")
+        if content_type == "movie":
+            return True
+        if content_type in (None, "", "other"):
+            path_lower = (task.get("savepath") or "").lower()
+            return any(keyword in path_lower for keyword in _MOVIE_PATH_KEYWORDS)
+    except Exception:
+        pass
+    return False
+
+
 class Config:
     # 同一进程内配置读写互斥锁（跨进程竞争由原子写入兜底）
     _lock = threading.Lock()
@@ -3088,6 +3117,29 @@ class Quark:
             return count > 0
         except Exception as e:
             print(f"检查文件记录时出错: {e}")
+            return False
+
+    def has_transfer_records(self, task):
+        """判断任务是否已有转存记录。
+
+        电影只有 1 个媒体文件，一旦有转存记录即代表转存完成，
+        后续无需再检测分享链接有效性（不追更）。
+        """
+        task_name = task.get("taskname") or task.get("task_name") or ""
+        if not task_name:
+            return False
+        try:
+            db = RecordDB()
+            cursor = db.conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM transfer_records WHERE task_name = ?",
+                (task_name,),
+            )
+            count = cursor.fetchone()[0] or 0
+            db.close()
+            return count > 0
+        except Exception as e:
+            print(f"检查转存记录时出错: {e}")
             return False
 
     def do_save_task(self, task):
@@ -5643,7 +5695,13 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                 pass  # 明确禁用，不覆盖
             elif not task_mode or task_mode not in Quark.VALID_EXTRACT_MODES:
                 task["auto_extract_archive"] = task_settings.get("auto_extract_archive", "disabled")
-            
+
+            # 电影只有 1 个媒体文件，转存完成后即结束（不追更），
+            # 后续运行无需再检测分享链接是否有效，直接跳过保存与重命名。
+            if is_movie_task(task) and account.has_transfer_records(task):
+                print(f"⏭️ 《{task['taskname']}》电影已转存完成，无需追更，跳过链接有效性检测")
+                continue
+
             # 执行保存任务
             is_new_tree = account.do_save_task(task)
             
