@@ -601,13 +601,8 @@
             </div>
 
             <div class="form-group">
-              <div class="input-group">
-                <div class="input-group-prepend">
-                  <span class="input-group-text">自动解压压缩包</span>
-                </div>
-                <filter-select v-model="formData.task_settings.auto_extract_archive" label="自动解压压缩包" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压"
-                             :options="[{value:'keep_structure_keep_archive',text:'保持原目录结构，保留压缩包'},{value:'flat_files_keep_archive',text:'扁平化提取文件，保留压缩包'},{value:'keep_structure_delete_archive',text:'保持原目录结构，删除压缩包'},{value:'flat_files_delete_archive',text:'扁平化提取文件，删除压缩包'},{value:'disabled',text:'禁用'}]"></filter-select>
-              </div>
+              <filter-select v-model="formData.task_settings.auto_extract_archive" label="自动解压压缩包" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压"
+                           :options="[{value:'keep_structure_keep_archive',text:'保持原目录结构，保留压缩包'},{value:'flat_files_keep_archive',text:'扁平化提取文件，保留压缩包'},{value:'keep_structure_delete_archive',text:'保持原目录结构，删除压缩包'},{value:'flat_files_delete_archive',text:'扁平化提取文件，删除压缩包'},{value:'disabled',text:'禁用'}]"></filter-select>
             </div>
             </div>
 
@@ -627,36 +622,21 @@
             <!-- 可拖拽显示设置（统一在一个容器中渲染，保持原样式，仅可拖动排序） -->
             <div class="row mb-2 display-setting-row" id="display-setting-draggable">
               <div class="col-lg-4 col-md-6 mb-2 draggable-item" v-for="key in formData.button_display_order" :key="key" draggable="true" @dragstart="onDisplayDragStart($event, key)" @dragend="onDisplayDragEnd($event)" @dragover.prevent="onDisplayDragOver($event)" @drop="onDisplayDrop($event, key)">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text" :title="getDisplayHelp(key)">{{ getDisplayLabel(key) }}</span>
-                  </div>
-                  <filter-select v-model="formData.button_display[key]" :label="getDisplayLabel(key)" :title="getDisplayHelp(key)"
-                    :options="key==='run_task' || key==='delete_task'
-                      ? [{value:'always',text:'始终显示'},{value:'hover',text:'悬停显示'}]
-                      : [{value:'always',text:'始终显示'},{value:'hover',text:'悬停显示'},{value:'disabled',text:'禁用'}]"></filter-select>
-                </div>
+                <filter-select v-model="formData.button_display[key]" :label="getDisplayLabel(key)" :title="getDisplayHelp(key)"
+                  :options="key==='run_task' || key==='delete_task'
+                    ? [{value:'always',text:'始终显示'},{value:'hover',text:'悬停显示'}]
+                    : [{value:'always',text:'始终显示'},{value:'hover',text:'悬停显示'},{value:'disabled',text:'禁用'}]"></filter-select>
               </div>
               
               <!-- 海报语言设置（不支持拖拽，但样式与其他设置一致） -->
               <div class="col-lg-4 col-md-6 mb-2">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text" title="任务列表与追剧日历的海报语言优先级，选择中文将优先使用zh-CN海报，选择原始语言将优先使用原始语言海报">海报语言</span>
-                  </div>
-                  <filter-select v-model="formData.poster_language" label="海报语言" title="任务列表与追剧日历的海报语言优先级，选择中文将优先使用zh-CN海报，选择原始语言将优先使用原始语言海报"
-                             :options="[{value:'zh-CN',text:'中文'},{value:'original',text:'原始语言'}]"></filter-select>
-                </div>
+                <filter-select v-model="formData.poster_language" label="海报语言" title="任务列表与追剧日历的海报语言优先级，选择中文将优先使用zh-CN海报，选择原始语言将优先使用原始语言海报"
+                           :options="[{value:'zh-CN',text:'中文'},{value:'original',text:'原始语言'}]"></filter-select>
               </div>
               <!-- 追剧日历时区设置 -->
               <div class="col-lg-4 col-md-6 mb-2">
-                <div class="input-group">
-                  <div class="input-group-prepend">
-                    <span class="input-group-text" title="追剧日历中剧集播出日期的显示时区：选择原始时区时，按节目原始发行地的播出日期显示；选择本地时区时，按节目在本地（北京时间）的实际播出日期显示">追剧日历时区</span>
-                  </div>
-                  <filter-select v-model="formData.calendar_timezone_mode" label="追剧日历时区" title="原始时区：节目原始发行地时区，播出日期与TMDB一致；本地时区：东八时区（北京时间），跨时区换算后播出日期可能发生变化（最多相差1天）"
-                             :options="[{value:'original',text:'原始时区'},{value:'local',text:'本地时区'}]"></filter-select>
-                </div>
+                <filter-select v-model="formData.calendar_timezone_mode" label="追剧日历时区" title="原始时区：节目原始发行地时区，播出日期与TMDB一致；本地时区：东八时区（北京时间），跨时区换算后播出日期可能发生变化（最多相差1天）"
+                           :options="[{value:'original',text:'原始时区'},{value:'local',text:'本地时区'}]"></filter-select>
               </div>
             </div>
             </div>
