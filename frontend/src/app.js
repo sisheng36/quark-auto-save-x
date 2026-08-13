@@ -48,21 +48,21 @@
         const list = item.list;
         const record = list && list[item.index];
         if (!record) continue;
-        if (!record._isOverflowing) item.ctx.$set(record, '_isOverflowing', {});
+        if (!record._isOverflowing) record._isOverflowing = {};
         // 值未变化时不写入，避免每次渲染都触发无意义的响应式更新
         if (record._isOverflowing[item.field] !== isOverflowing) {
-          item.ctx.$set(record._isOverflowing, item.field, isOverflowing);
+          record._isOverflowing[item.field] = isOverflowing;
         }
       } catch (e) {}
     }
   }
   function createOverflowDirective(getListFn) {
-    function checkOverflow(el, binding, vnode) {
+    function checkOverflow(el, binding) {
       if (!binding.value) return;
       const indexAndField = binding.value.split('|');
       const index = parseInt(indexAndField[0]);
       const field = indexAndField[1];
-      const list = getListFn(vnode.context);
+      const list = getListFn(binding.instance);
       // 同一元素同一字段在本次批量内只入队一次
       let fields = _overflowSeen.get(el);
       if (!fields) {
@@ -71,7 +71,7 @@
       }
       if (fields.has(field)) return;
       fields.add(field);
-      _overflowCheckQueue.push({ el, index, field, list, ctx: vnode.context });
+      _overflowCheckQueue.push({ el, index, field, list });
       if (!_overflowCheckScheduled) {
         _overflowCheckScheduled = true;
         if (typeof requestAnimationFrame === 'function') {
@@ -82,13 +82,17 @@
       }
     }
     return {
-      inserted: checkOverflow,
-      update: checkOverflow
+      mounted: checkOverflow,
+      updated: checkOverflow
     };
   }
 
-  // 添加检测文本溢出的自定义指令
-  Vue.directive('check-overflow', createOverflowDirective(ctx => ctx.filteredHistoryRecords));
+  // 在应用实例上注册自定义指令（Vue 3 不再支持全局 Vue.directive）
+  export function setupApp(app) {
+    app.directive('check-overflow', createOverflowDirective(ctx => ctx.filteredHistoryRecords));
+    app.directive('check-file-overflow', createOverflowDirective(ctx => ctx.fileManager.fileList));
+    app.directive('check-modal-overflow', createOverflowDirective(ctx => ctx.fileSelect.fileList));
+  }
 
   // 文件扩展名 -> 图标映射表（O(1) 查找，替代重复的 Array.includes）
   const _FILE_ICON_MAP = new Map([
@@ -148,12 +152,6 @@
     if (lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tar.bz2')) return true;
     return _ARCHIVE_EXTS.has(lowerName.split('.').pop());
   }
-
-  // 添加检测文件整理页面文件名溢出的自定义指令
-  Vue.directive('check-file-overflow', createOverflowDirective(ctx => ctx.fileManager.fileList));
-
-  // 添加检测模态框表格文本溢出的自定义指令
-  Vue.directive('check-modal-overflow', createOverflowDirective(ctx => ctx.fileSelect.fileList));
 
   // 添加中文数字转阿拉伯数字的函数
   function chineseToArabic(chinese) {
@@ -215,71 +213,9 @@
     return result;
   }
   
-  // ============ 统一筛选下拉组件 FilterSelect ============
-  // 单层玻璃胶囊：标签与当前值同行垂直居中，自定义箭头，无原生 select 外观
-  // type: 'select'（默认）| 'input'（文本输入模式，无下拉箭头）
-  Vue.component('filter-select', {
-    props: {
-      value: { default: '' },
-      label: { type: String, default: '' },
-      options: { type: Array, default: () => [] },  // [{value, text}] 或 ['a','b']
-      placeholder: { type: String, default: '' },
-      clearable: { type: Boolean, default: false },
-      title: { type: String, default: '' },
-      type: { type: String, default: 'select' }
-    },
-    computed: {
-      hasValue() {
-        return this.value !== '' && this.value !== null && this.value !== undefined;
-      }
-    },
-    methods: {
-      clearValue() {
-        this.$emit('input', '');
-      },
-      // 原生 select 的值总是字符串，这里按 options 还原原始类型（布尔/数字），并透传 change 事件
-      onChange($event) {
-        const raw = $event.target.value;
-        let matched = raw;
-        const found = this.options.find(o => {
-          const v = o && o.value !== undefined ? o.value : o;
-          return String(v) === raw;
-        });
-        if (found !== undefined) {
-          matched = found && found.value !== undefined ? found.value : found;
-        }
-        this.$emit('input', matched);
-        this.$emit('change', matched);
-      },
-      // 文本输入模式：透传 change 事件
-      onInput($event) {
-        this.$emit('input', $event.target.value);
-        this.$emit('change', $event.target.value);
-      }
-    },
-    template: `
-      <div class="filter-select" :title="title">
-        <span class="filter-select-label" v-if="label">{{ label }}</span>
-        <div class="filter-select-field">
-          <select v-if="type !== 'input'" class="filter-select-native" :value="value" @change="onChange">
-            <option v-if="placeholder" value="">{{ placeholder }}</option>
-            <option v-for="opt in options" :key="opt && opt.value !== undefined ? opt.value : opt"
-                    :value="opt && opt.value !== undefined ? opt.value : opt"
-                    v-html="opt && opt.text !== undefined ? opt.text : opt"></option>
-          </select>
-          <input v-else type="text" class="filter-select-native filter-select-input"
-                 :value="value" @input="onInput" :placeholder="placeholder">
-          <i v-if="type !== 'input'" class="bi bi-chevron-down filter-select-arrow"></i>
-        </div>
-        <button type="button" class="filter-select-clear" v-if="clearable && hasValue" @click="clearValue" title="清除筛选">
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </div>
-    `
-  });
-    var app = new Vue({
-      el: '#app',
-      data: {
+export default {
+      data() {
+        return {
         version: (window.__QAS_CONFIG__ && window.__QAS_CONFIG__.version) || "",
         versionTips: "",
         plugin_flags: (window.__QAS_CONFIG__ && window.__QAS_CONFIG__.plugin_flags) || "",
@@ -884,7 +820,7 @@
             shareurl_ban: null
           }
         }
-      },
+      }},
       computed: {
         episodePatternsText: {
           get() {
@@ -1642,16 +1578,6 @@
           return this.discovery.subCategories[this.discovery.selectedMainCategory] || [];
         }
       },
-      filters: {
-        size: function (value) {
-          if (!value) return "";
-          const unitArr = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
-          const srcsize = parseFloat(value);
-          const index = srcsize ? Math.floor(Math.log(srcsize) / Math.log(1024)) : 0;
-          const size = (srcsize / Math.pow(1024, index)).toFixed(1).replace(/\.?0+$/, "");
-          return size + " " + unitArr[index];
-        }
-      },
       watch: {
         formData: {
           handler(newVal, oldVal) {
@@ -2191,7 +2117,7 @@
         },
         // 任务卡片展开/收起状态（配合 Bootstrap collapse，仅用于样式类）
         toggleTaskExpand(index) {
-          this.$set(this.taskExpandState, index, !this.taskExpandState[index]);
+          this.taskExpandState[index] = !this.taskExpandState[index];
         },
         // 系统配置：全部展开/收起
         toggleAllConfigSections() {
@@ -4355,7 +4281,7 @@
               try {
                 const initVal = String(this.editMetadata.form.season_number || '1');
                 const px = this.measureSeasonInputWidth(initVal);
-                this.$set(this.editMetadata.display, 'seasonInputWidth', px + 'px');
+                this.editMetadata.display['seasonInputWidth'] = px + 'px';
               } catch (e) {}
             });
             // 若已匹配但没有季数信息，则从后端获取最新季数用于展示
@@ -4368,7 +4294,7 @@
                     if (res.data && res.data.success && res.data.data) {
                       const sn = res.data.data.latest_season_number;
                       if (sn) {
-                        this.$set(this.editMetadata.display, 'matched_season_number', sn);
+                        this.editMetadata.display['matched_season_number'] = sn;
                       }
                     }
                   })
@@ -4480,10 +4406,10 @@
                   }
                 } catch (e) {}
 
-                if (eid) { this.$set(this.imageCacheBustById, eid, nowTick); }
-                if (taskName) { this.$set(this.imageCacheBustByShowName, taskName, nowTick); }
-                if (showName) { this.$set(this.imageCacheBustByShowName, showName, nowTick); }
-                if (normalizedMatched) { this.$set(this.imageCacheBustByShowName, normalizedMatched, nowTick); }
+                if (eid) { this.imageCacheBustById[eid] = nowTick; }
+                if (taskName) { this.imageCacheBustByShowName[taskName] = nowTick; }
+                if (showName) { this.imageCacheBustByShowName[showName] = nowTick; }
+                if (normalizedMatched) { this.imageCacheBustByShowName[normalizedMatched] = nowTick; }
                 if (!eid && !taskName && !showName && !normalizedMatched) { this.imageCacheBustTick = nowTick; }
               } catch (e) { this.imageCacheBustTick = Date.now(); }
               // 并行刷新：优先尽快更新任务列表的类型按钮与映射
@@ -4560,7 +4486,7 @@
                       }
                       if (tmdbId) {
                         // 更新缓存，确保后续筛选使用最新的类型
-                        this.$set(this.calendar.contentTypeByTmdbId, String(tmdbId), newContentType);
+                        this.calendar.contentTypeByTmdbId[String(tmdbId)] = newContentType;
                       }
                     }
                   } catch (e) { /* 忽略缓存热更新异常 */ }
@@ -4587,10 +4513,10 @@
                     }
                   } catch (e) {}
 
-                  if (eid) { this.$set(this.imageCacheBustById, eid, nowTick); }
-                  if (taskName) { this.$set(this.imageCacheBustByShowName, taskName, nowTick); }
-                  if (showName) { this.$set(this.imageCacheBustByShowName, showName, nowTick); }
-                  if (normalizedMatched) { this.$set(this.imageCacheBustByShowName, normalizedMatched, nowTick); }
+                  if (eid) { this.imageCacheBustById[eid] = nowTick; }
+                  if (taskName) { this.imageCacheBustByShowName[taskName] = nowTick; }
+                  if (showName) { this.imageCacheBustByShowName[showName] = nowTick; }
+                  if (normalizedMatched) { this.imageCacheBustByShowName[normalizedMatched] = nowTick; }
                   if (!eid && !taskName && !showName && !normalizedMatched) { this.imageCacheBustTick = nowTick; }
                 } catch (e) { this.imageCacheBustTick = Date.now(); }
                 // 刷新链路结束后，确保未保存标记为false
@@ -4612,7 +4538,7 @@
             if (!el) return;
             const px = this.measureNumericInputWidth(el, el.value);
             if (this.editMetadata && this.editMetadata.display) {
-              this.$set(this.editMetadata.display, 'seasonInputWidth', px + 'px');
+              this.editMetadata.display['seasonInputWidth'] = px + 'px';
             } else {
               el.style.width = px + 'px';
             }
@@ -4778,7 +4704,7 @@
                         const eid = parseInt(idStr, 10);
                         if (!isNaN(eid)) {
                           const nowTick = Date.now();
-                          this.$set(this.imageCacheBustById, eid, nowTick);
+                          this.imageCacheBustById[eid] = nowTick;
                         }
                       }
                     } catch (e) {}
@@ -5755,12 +5681,12 @@
         // 设置任务级插件配置的值（自动初始化缺失的配置对象）
         setTaskPluginValue(task, pluginName, key, value) {
           if (!task.addition) {
-            this.$set(task, 'addition', {});
+            task['addition'] = {};
           }
           if (!task.addition[pluginName]) {
-            this.$set(task.addition, pluginName, { ...this.getPluginTaskConfig(pluginName) });
+            task.addition[pluginName] = { ...this.getPluginTaskConfig(pluginName) };
           }
-          this.$set(task.addition[pluginName], key, value);
+          task.addition[pluginName][key] = value;
         },
 
         // 插件配置模式改变时的处理
@@ -6093,8 +6019,8 @@
                 const newFolder = response.data.data;
 
                 // 设置编辑状态
-                this.$set(newFolder, '_editing', true);
-                this.$set(newFolder, '_editingName', newFolder.file_name);
+                newFolder['_editing'] = true;
+                newFolder['_editingName'] = newFolder.file_name;
 
                 // 将新文件夹添加到列表开头（文件夹通常显示在前面）
                 this.fileManager.fileList.unshift(newFolder);
@@ -6147,11 +6073,11 @@
                     // 使用格式化函数处理其他错误信息
                     const formattedError = this.formatShareUrlBanMessage(share_detail.error);
                     if (formattedError) {
-                      this.$set(task, "shareurl_ban", formattedError);
+                      task["shareurl_ban"] = formattedError;
                     }
                   } else if (share_detail.list !== undefined && share_detail.list.length === 0) {
                     // 检查文件列表是否为空，确保列表存在且为空
-                    this.$set(task, "shareurl_ban", "该分享已被删除，无法访问");
+                    task["shareurl_ban"] = "该分享已被删除，无法访问";
                   }
                 })
                 .catch(error => {
@@ -6756,12 +6682,12 @@
         addPush() {
           key = prompt("增加的键名", "");
           if (key != "" && key != null)
-            this.$set(this.formData.push_config, key, "");
+            this.formData.push_config[key] = "";
         },
         removePush(key) {
           if (Object.keys(this.formData.push_config).length <= 1) return;
           if (confirm("确定要删除吗？"))
-            this.$delete(this.formData.push_config, key);
+            delete this.formData.push_config[key];
         },
         addTask() {
           if (!this.formData.tasklist) 
@@ -6819,7 +6745,7 @@
             const sortedIndex = this.sortedTasklist.findIndex(task => task.__isNewlyAdded);
             if (sortedIndex !== -1) {
               // 展开新任务的编辑模块
-              this.$set(this.taskExpandState, sortedIndex, true);
+              this.taskExpandState[sortedIndex] = true;
               // 滚动到新任务位置
               this.scrollToX();
               // 移除临时标识
@@ -8183,7 +8109,7 @@
             }
             return;
           }
-          this.$set(task, "shareurl_ban", undefined);
+          task["shareurl_ban"] = undefined;
           // 从URL中提取任务名
           try {
             const matches = decodeURIComponent(task.shareurl).match(/\/(\w{32})-([^\/]+)$/);
@@ -8223,16 +8149,16 @@
                 // 使用格式化函数处理其他错误信息
                 const formattedError = this.formatShareUrlBanMessage(share_detail.error);
                 if (formattedError) {
-                  this.$set(task, "shareurl_ban", formattedError);
+                  task["shareurl_ban"] = formattedError;
                 }
               } else {
                 // 检查文件列表是否为空
                 if (share_detail.list !== undefined && share_detail.list.length === 0) {
-                  this.$set(task, "shareurl_ban", "该分享已被删除，无法访问");
+                  task["shareurl_ban"] = "该分享已被删除，无法访问";
                 } else {
                   task.taskname = task.taskname == "" ? share_detail.share.title : task.taskname;
                   task.savepath = task.savepath.replace(/TASKNAME/g, share_detail.share.title);
-                  this.$set(task, "shareurl_ban", undefined);
+                  task["shareurl_ban"] = undefined;
                 }
                 if (this.createTask.isEditMode && task === this.createTask.taskData) {
                   const authorName = this.extractShareAuthorName(share_detail);
@@ -8266,7 +8192,7 @@
         clearRuntimeLogFilter(field) {
           if (!this.runtimeLogFilters) return;
           if (Object.prototype.hasOwnProperty.call(this.runtimeLogFilters, field)) {
-            this.$set(this.runtimeLogFilters, field, '');
+            this.runtimeLogFilters[field] = '';
           }
         },
         // 运行日志：日志级别点击筛选
@@ -8278,10 +8204,10 @@
           
           // 如果当前已经筛选了该级别，则取消筛选
           if (this.runtimeLogFilters.level === level) {
-            this.$set(this.runtimeLogFilters, 'level', '');
+            this.runtimeLogFilters['level'] = '';
           } else {
             // 设置级别筛选值
-            this.$set(this.runtimeLogFilters, 'level', level);
+            this.runtimeLogFilters['level'] = level;
           }
         },
         // 运行日志：统一获取日志原始文本
@@ -8377,18 +8303,18 @@
         toggleRuntimeLogKeywordFilter(keyword) {
           const current = (this.runtimeLogFilters.keyword || '').trim();
           if (current === keyword) {
-            this.$set(this.runtimeLogFilters, 'keyword', '');
+            this.runtimeLogFilters['keyword'] = '';
           } else {
-            this.$set(this.runtimeLogFilters, 'keyword', keyword);
+            this.runtimeLogFilters['keyword'] = keyword;
           }
         },
         // 运行日志：基于任务名称的任务筛选开关（与任务下拉保持一致）
         toggleRuntimeLogTaskFilter(taskName) {
           const current = (this.runtimeLogFilters.task || '').trim();
           if (current === taskName) {
-            this.$set(this.runtimeLogFilters, 'task', '');
+            this.runtimeLogFilters['task'] = '';
           } else {
-            this.$set(this.runtimeLogFilters, 'task', taskName);
+            this.runtimeLogFilters['task'] = taskName;
           }
         },
         parseTaskBlocks(logs) {
@@ -8678,7 +8604,7 @@
           if (this.formData.tasklist && this.formData.tasklist.length > 0) {
             this.formData.tasklist.forEach(task => {
               if (!task.hasOwnProperty('execution_mode')) {
-                this.$set(task, 'execution_mode', this.formData.execution_mode);
+                task['execution_mode'] = this.formData.execution_mode;
               } else {
                 task.execution_mode = this.formData.execution_mode;
               }
@@ -9113,7 +9039,7 @@
         },
         addMagicRegex() {
           const newKey = `$MAGIC_${Object.keys(this.formData.magic_regex).length + 1}`;
-          this.$set(this.formData.magic_regex, newKey, { pattern: '', replace: '' });
+          this.formData.magic_regex[newKey] = { pattern: '', replace: '' };
         },
         updateMagicRegexKey(oldKey, newKey) {
           if (oldKey !== newKey) {
@@ -9121,14 +9047,14 @@
               alert(`魔法名 [${newKey}] 已存在，请使用其他名称`);
               return;
             }
-            this.$set(this.formData.magic_regex, newKey, this.formData.magic_regex[oldKey]);
-            this.$delete(this.formData.magic_regex, oldKey);
+            this.formData.magic_regex[newKey] = this.formData.magic_regex[oldKey];
+            delete this.formData.magic_regex[oldKey];
           }
         },
         removeMagicRegex(key) {
           if (Object.keys(this.formData.magic_regex).length <= 1) return;
           if (confirm(`确定要删除魔法匹配规则 [${key}] 吗？`)) {
-            this.$delete(this.formData.magic_regex, key);
+            delete this.formData.magic_regex[key];
           }
         },
         deleteFileForSelect(fid, fname, isDir, deleteRecords = false) {
@@ -9633,7 +9559,7 @@
               this.createTask.taskData.shareurl_ban = undefined;
               // 如果是分享文件夹且文件列表为空，则设置shareurl_ban
               if (!this.fileSelect.fileList || this.fileSelect.fileList.length === 0) {
-                this.$set(this.createTask.taskData, "shareurl_ban", "该分享已被删除，无法访问");
+                this.createTask.taskData["shareurl_ban"] = "该分享已被删除，无法访问";
               }
               // 只有在用户点击"转存当前文件夹"时才更新分享链接
               // 使用用户最终访问的分享链接地址（包含用户导航后的路径）
@@ -9647,7 +9573,7 @@
               this.formData.tasklist[this.fileSelect.index].shareurl_ban = undefined;
               // 如果是分享文件夹且文件列表为空，则设置shareurl_ban
               if (!this.fileSelect.fileList || this.fileSelect.fileList.length === 0) {
-                this.$set(this.formData.tasklist[this.fileSelect.index], "shareurl_ban", "该分享已被删除，无法访问");
+                this.formData.tasklist[this.fileSelect.index]["shareurl_ban"] = "该分享已被删除，无法访问";
               }
               // 只有在用户点击"转存当前文件夹"时才更新分享链接
               // 使用用户最终访问的分享链接地址（包含用户导航后的路径）
@@ -9795,9 +9721,9 @@
           // 检查index是否有效
           if (this.fileSelect.index === -1) {
             // 创建任务模态框的情况
-            Vue.set(this.createTask.taskData, 'startfid', fid);
+            this.createTask.taskData['startfid'] = fid;
           } else if (this.fileSelect.index !== null && this.fileSelect.index >= 0 && this.formData.tasklist[this.fileSelect.index]) {
-            Vue.set(this.formData.tasklist[this.fileSelect.index], 'startfid', fid);
+            this.formData.tasklist[this.fileSelect.index]['startfid'] = fid;
           }
           $('#fileSelectModal').modal('hide')
         },
@@ -10593,7 +10519,7 @@
           const record = this.filteredHistoryRecords[index];
           // 初始化_expandedFields属性（如果不存在）
           if (!record._expandedFields) {
-            this.$set(record, '_expandedFields', []);
+            record['_expandedFields'] = [];
           }
           
           // 检查字段是否已经展开
@@ -10621,13 +10547,13 @@
           this.$nextTick(() => {
             // 确保_isOverflowing属性存在
             if (!record._isOverflowing) {
-              this.$set(record, '_isOverflowing', {});
+              record['_isOverflowing'] = {};
             }
             
             // 在收起状态下，通过设置为true确保展开按钮依然可见
             allFields.forEach(fieldName => {
               if (!isExpanding) {
-                this.$set(record._isOverflowing, fieldName, true);
+                record._isOverflowing[fieldName] = true;
               }
             });
           });
@@ -11016,7 +10942,7 @@
           const file = this.fileSelect.fileList[index];
           // 初始化_expandedFields属性（如果不存在）
           if (!file._expandedFields) {
-            this.$set(file, '_expandedFields', []);
+            file['_expandedFields'] = [];
           }
           
           // 检查字段是否已经展开
@@ -11044,13 +10970,13 @@
           this.$nextTick(() => {
             // 确保_isOverflowing属性存在
             if (!file._isOverflowing) {
-              this.$set(file, '_isOverflowing', {});
+              file['_isOverflowing'] = {};
             }
             
             // 在收起状态下，通过设置为true确保展开按钮依然可见
             allFields.forEach(fieldName => {
               if (!isExpanding) {
-                this.$set(file._isOverflowing, fieldName, true);
+                file._isOverflowing[fieldName] = true;
               }
             });
             
@@ -12542,6 +12468,15 @@
           }
           return `${size.toFixed(2)} ${units[unitIndex]}`;
         },
+        // 原 Vue 2 size 过滤器（Vue 3 移除 filters，转为方法）
+        formatSize(value) {
+          if (!value) return "";
+          const unitArr = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+          const srcsize = parseFloat(value);
+          const index = srcsize ? Math.floor(Math.log(srcsize) / Math.log(1024)) : 0;
+          const size = (srcsize / Math.pow(1024, index)).toFixed(1).replace(/\.?0+$/, "");
+          return size + " " + unitArr[index];
+        },
         formatDate(date) {
           // 将时间戳转换为年-月-日 时:分:秒格式
           const d = new Date(date);
@@ -12743,18 +12678,18 @@
         },
         toggleExpandFilename(file) {
           // 切换展开状态
-          this.$set(file, '_expanded', !file._expanded);
+          file['_expanded'] = !file._expanded;
           
           // 在下一个DOM更新周期中强制重新检测溢出状态
           this.$nextTick(() => {
             // 确保_isOverflowing属性存在
             if (!file._isOverflowing) {
-              this.$set(file, '_isOverflowing', {});
+              file['_isOverflowing'] = {};
             }
             
             // 在收起状态下，通过设置为true确保展开按钮依然可见
             if (!file._expanded) {
-              this.$set(file._isOverflowing, 'file_name', true);
+              file._isOverflowing['file_name'] = true;
             }
           });
           
@@ -13000,8 +12935,8 @@
             return;
           }
           // 设置编辑状态
-          this.$set(file, '_editing', true);
-          this.$set(file, '_editingName', file.file_name);
+          file['_editing'] = true;
+          file['_editingName'] = file.file_name;
 
           // 下一个tick后聚焦输入框并全选文本
           this.$nextTick(() => {
@@ -13266,8 +13201,8 @@
         },
         // 取消重命名
         cancelRenameFile(file) {
-          this.$set(file, '_editing', false);
-          this.$set(file, '_editingName', '');
+          file['_editing'] = false;
+          file['_editingName'] = '';
         },
         // 处理文件行点击事件
         handleFileRowClick(file, event) {
@@ -14099,7 +14034,7 @@
         // 直接赋值不会触发重新渲染，导致依赖它的按钮行（含编辑元数据按钮）永远不显示。
         handleTasklistPosterLoaded(taskName) {
           if (taskName) {
-            this.$set(this.tasklistPosterLoaded, taskName, true);
+            this.tasklistPosterLoaded[taskName] = true;
           }
         },
         // 处理任务列表海报图片加载错误
@@ -14118,7 +14053,7 @@
           
           // 标记为已加载，确保UI能正常显示（即使图片加载失败）
           if (taskName) {
-            this.$set(this.tasklistPosterLoaded, taskName, true);
+            this.tasklistPosterLoaded[taskName] = true;
           }
           
           // 仅在调试模式下输出警告
@@ -14393,7 +14328,7 @@
               media_type: mediaType
             };
           }
-          this.$set(this.createTask.taskData, 'calendar_info', calendarInfo);
+          this.createTask.taskData['calendar_info'] = calendarInfo;
         },
         smartFillTaskData(item, movieData) {
           // 智能填充任务数据
@@ -15036,7 +14971,7 @@
 
           // 更新任务列表中的任务
           if (editIdx !== null && this.formData.tasklist && this.formData.tasklist[editIdx]) {
-            this.$set(this.formData.tasklist, editIdx, updatedTask);
+            this.formData.tasklist[editIdx] = updatedTask;
           }
 
           // 保存配置（不显示配置更新消息）
@@ -15115,7 +15050,7 @@
 
           // 更新任务列表中的任务
           if (editIdx !== null && this.formData.tasklist && this.formData.tasklist[editIdx]) {
-            this.$set(this.formData.tasklist, editIdx, updatedTask);
+            this.formData.tasklist[editIdx] = updatedTask;
           }
 
           // 保存配置
@@ -15743,7 +15678,7 @@
           this.updateJumpPageInputWidth('fileManager', this.fileManager.gotoPage);
         });
       },
-      beforeDestroy() {
+      beforeUnmount() {
         window.removeEventListener('beforeunload', this.handleBeforeUnload);
         // 移除点击事件监听器
         document.removeEventListener('click', this.handleOutsideClick);
@@ -15758,4 +15693,4 @@
         // 停止任务列表后台监听
         this.stopTasklistAutoWatch();
       }
-    });
+    };

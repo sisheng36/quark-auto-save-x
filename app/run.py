@@ -2541,12 +2541,45 @@ def logout():
 
 
 # 管理页面
+def _frontend_scripts():
+    """生成前端模块脚本标签。
+
+    - FRONTEND_DEV=1 时使用 Vite 开发服务器（HMR）。
+    - 生产环境读取 Vite 构建清单，引用带哈希的产物（长缓存）。
+    """
+    if os.environ.get("FRONTEND_DEV", "").lower() in ("1", "true", "yes"):
+        return (
+            '<script type="module" src="http://localhost:5173/@vite/client"></script>\n'
+            '  <script type="module" src="http://localhost:5173/src/main.js"></script>'
+        )
+    try:
+        manifest_path = os.path.join(
+            app.root_path, "static", "dist", ".vite", "manifest.json"
+        )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.loads(f.read())
+        entry = manifest.get("index.html") or {}
+        js_file = entry.get("file") or ""
+        if not js_file:
+            raise ValueError("manifest 缺少入口文件")
+        return (
+            f'<script type="module" crossorigin src="/static/dist/{js_file}"></script>'
+        )
+    except Exception:
+        return (
+            "<!-- 前端尚未构建：请进入 frontend/ 执行 npm install && npm run build -->"
+        )
+
+
 @app.route("/")
 def index():
     if not is_login():
         return redirect(url_for("login"))
     return render_template(
-        "index.html", version=app.config["APP_VERSION"], plugin_flags=PLUGIN_FLAGS
+        "index.html",
+        version=app.config["APP_VERSION"],
+        plugin_flags=PLUGIN_FLAGS,
+        frontend_scripts=_frontend_scripts(),
     )
 
 

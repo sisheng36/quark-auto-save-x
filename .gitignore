@@ -7,3 +7,6 @@ __pycache__
 .zcode
 .backup_frontend
 .DS_Store
+
+# 前端构建工具链（构建产物 app/static/dist 需要提交，保证开箱即用）
+frontend/node_modules

@@ -40,10 +40,10 @@
   <!-- 依赖脚本全部延迟加载，保持执行顺序，避免阻塞首屏渲染 -->
   <script defer src="./static/js/jquery-3.5.1.slim.min.js?v=1"></script>
   <script defer src="./static/js/bootstrap.bundle.min.js?v=1"></script>
-  <script defer src="./static/js/vue@2.js?v=1"></script>
   <script defer src="./static/js/axios.min.js?v=1"></script>
   <script defer src="./static/js/sort_file_by_name.js?v=1"></script>
-  <script defer src="./static/js/qas.app.js?v=[[ version ]]"></script>
+  <!-- Vue 3 应用（Vite 构建产物或开发服务器注入） -->
+  [[ frontend_scripts | safe ]]
 </head>
 
 <body class="qas-body">
@@ -1125,7 +1125,7 @@
                   <div class="task-card-toggle" :aria-expanded="!!taskExpandState[index]" :aria-controls="'collapse_'+index" @click="toggleTaskExpand(index)" :title="getTaskShareSubscriptionHoverText(task)">
                     <i class="bi bi-caret-right-fill"></i>
                     <span class="task-card-title">#<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span></span>
-                    <template v-for="key in formData.button_display_order">
+                    <template v-for="key in formData.button_display_order" :key="'header-' + key">
                       <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && taskLatestFiles[task.taskname]"
                             class="task-latest-file"
                             :class="{'hover-only': formData.button_display.latest_transfer_file === 'hover'}">
@@ -1159,7 +1159,7 @@
                     </span>
                   </div>
                   <div class="task-buttons">
-                    <template v-for="key in formData.button_display_order">
+                    <template v-for="key in formData.button_display_order" :key="'btns-' + key">
                       <button v-if="key==='refresh_plex' && formData.plugins && formData.plugins.plex && formData.plugins.plex.url && formData.plugins.plex.token && formData.plugins.plex.quark_root_path && formData.button_display.refresh_plex !== 'disabled'" type="button" class="btn btn-outline-plex" :class="{'hover-only': formData.button_display.refresh_plex === 'hover'}" @click="refreshPlexLibrary(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新Plex媒体库"><img src="./static/images/Plex.svg" class="plex-icon"></button>
                       <button v-else-if="key==='refresh_alist' && formData.plugins && formData.plugins.alist && formData.plugins.alist.url && formData.plugins.alist.token && formData.plugins.alist.storage_id && formData.button_display.refresh_alist !== 'disabled'" type="button" class="btn btn-outline-alist" :class="{'hover-only': formData.button_display.refresh_alist === 'hover'}" @click="refreshAlistDirectory(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新AList目录"><img src="https://cdn.jsdelivr.net/gh/alist-org/logo@main/logo.svg" class="alist-icon"></button>
                       <template v-else-if="key==='run_task'">
@@ -2604,7 +2604,7 @@
                     </td>
                     <template v-if="!fileSelect.previewRegex">
                       <td class="col-size" v-if="file.dir" style="vertical-align: top;">{{ file.include_items }} 项</td>
-                      <td class="col-size" v-else style="vertical-align: top;">{{file.size | size}}</td>
+                      <td class="col-size" v-else style="vertical-align: top;">{{ formatSize(file.size) }}</td>
                       <td class="col-date" style="vertical-align: top;">{{ formatDate(file.updated_at) }}</td>
                       <td class="col-action file-select-action-cell" v-if="!fileSelect.selectShare && !fileSelect.moveMode" style="vertical-align: top;">
                         <span class="file-select-action-links" :class="{'file-select-action-links-hidden': isSavepathSelectModal() && !showFileSelectDeleteLinks(file)}">
