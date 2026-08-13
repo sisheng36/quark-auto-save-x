@@ -26,6 +26,8 @@
     }
     return key;
   }
+  // 运行日志行 HTML 缓存：同一行对象只在内容或移动端状态变化时重新生成
+  const _runtimeLogHtmlCache = new WeakMap();
 
   // 溢出检测指令工厂：根据 getListFn 获取目标列表，避免三个指令大量重复代码。
   // 检测统一推迟到下一帧批量执行：scrollWidth/clientWidth 属于强制同步布局，
@@ -1447,6 +1449,44 @@
           } catch (e) {}
           return map;
         },
+        // 剧集索引：tmdbId|季号|集号 -> episode。
+        // calendar.episodes 只在刷新时整体替换，因此该计算属性可按引用缓存，
+        // 供播出时间排序/日历渲染 O(1) 查找，替代逐次 .find 线性扫描。
+        episodeIndex() {
+          const map = {};
+          try {
+            const eps = this.calendar && Array.isArray(this.calendar.episodes) ? this.calendar.episodes : [];
+            for (let i = 0; i < eps.length; i++) {
+              const ep = eps[i];
+              if (!ep) continue;
+              const tid = Number(ep.tmdb_id);
+              const sn = Number(ep.season_number);
+              const en = parseInt(ep.episode_number, 10); // 与原查找逻辑一致（取整）
+              if (!Number.isNaN(tid) && !Number.isNaN(sn) && !Number.isNaN(en)) {
+                map[tid + '|' + sn + '|' + en] = ep;
+              }
+            }
+          } catch (e) {}
+          return map;
+        },
+        // tmdbId -> 日历任务索引，供剧集反向匹配任务时 O(1) 查找
+        taskIndexByTmdbId() {
+          const map = {};
+          try {
+            const tasks = this.calendar && Array.isArray(this.calendar.tasks) ? this.calendar.tasks : [];
+            for (let i = 0; i < tasks.length; i++) {
+              const t = tasks[i];
+              if (!t) continue;
+              const cal = t.calendar_info || {};
+              const match = cal.match || {};
+              const tmdb = match.tmdb_id || cal.tmdb_id || t.match_tmdb_id || t.tmdb_id;
+              if (tmdb != null && tmdb !== '' && !map[String(tmdb)]) {
+                map[String(tmdb)] = t;
+              }
+            }
+          } catch (e) {}
+          return map;
+        },
         
         
         filteredHistoryRecords() {
@@ -1519,12 +1559,18 @@
                 }
               });
               
+              // 每行所属任务块索引（一次线性扫描构建，替代逐行 findIndex 的 O(n²)）
+              const lineBlockIndex = new Array(logs.length).fill(-1);
+              taskBlocks.forEach((block, index) => {
+                for (let i = block.startIndex; i <= block.endIndex; i++) {
+                  lineBlockIndex[i] = index;
+                }
+              });
+
               // 筛选出所有匹配任务块的日志行
               const filteredLogs = [];
               logs.forEach((log, logIndex) => {
-                const blockIndex = taskBlocks.findIndex(block => 
-                  logIndex >= block.startIndex && logIndex <= block.endIndex
-                );
+                const blockIndex = lineBlockIndex[logIndex];
                 if (blockIndex !== -1 && matchedBlockIndices.has(blockIndex)) {
                   filteredLogs.push(log);
                 }
@@ -2692,15 +2738,8 @@
               return { date: '', time: airTime };
             }
 
-            const nextEp = this.calendar.episodes.find(ep => {
-              if (!ep) return false;
-              if (!ep.tmdb_id || Number(ep.tmdb_id) !== Number(tmdbId)) return false;
-              if (ep.season_number == null || Number(ep.season_number) !== Number(seasonNumber)) return false;
-              if (ep.episode_number == null) return false;
-              const n = parseInt(ep.episode_number);
-              if (Number.isNaN(n)) return false;
-              return n === nextEpNumber;
-            });
+            // 通过预构建索引 O(1) 查找下一集
+            const nextEp = this.episodeIndex[Number(tmdbId) + '|' + Number(seasonNumber) + '|' + nextEpNumber] || null;
             if (!nextEp) {
               return { date: '', time: airTime };
             }
@@ -2779,14 +2818,9 @@
             
             if (!tmdbId || !seasonNumber) return null;
             
-            // 在 calendar.episodes 中查找对应的集
-            if (!this.calendar.episodes || !Array.isArray(this.calendar.episodes)) return null;
-            
-            const nextEpisode = this.calendar.episodes.find(ep => {
-              return ep.tmdb_id === parseInt(tmdbId) &&
-                     ep.season_number === parseInt(seasonNumber) &&
-                     ep.episode_number === nextEpNumber;
-            });
+            // 通过预构建索引 O(1) 查找对应的下一集
+            if (!this.calendar || !Array.isArray(this.calendar.episodes)) return null;
+            const nextEpisode = this.episodeIndex[parseInt(tmdbId) + '|' + parseInt(seasonNumber) + '|' + nextEpNumber] || null;
             
             if (!nextEpisode) return null;
             
@@ -3444,12 +3478,7 @@
                   
                   // 从任务列表中按 tmdb_id 查找（批量建立，避免重复）
                   if (this.calendar.tasks && Array.isArray(this.calendar.tasks)) {
-                    const matchedTask = this.calendar.tasks.find(t => {
-                      const cal = (t.calendar_info || {});
-                      const match = (cal.match || {});
-                      const tTmdb = match.tmdb_id || cal.tmdb_id;
-                      return tTmdb && String(tTmdb) === tmdbId;
-                    });
+                    const matchedTask = this.taskIndexByTmdbId[String(tmdbId)];
                     if (matchedTask) {
                       this.calendar.contentTypeByTmdbId[tmdbId] = matchedTask.content_type || 'other';
                       processedTmdbIds.add(tmdbId);
@@ -3784,21 +3813,14 @@
             const taskInfo = episode.task_info || {};
             const taskNameFromInfo = (taskInfo.task_name || taskInfo.taskname || '').trim();
             if (taskNameFromInfo) {
-              const exactByName = this.calendar.tasks.find(t => 
-                (t.task_name || t.taskname || '').trim() === taskNameFromInfo
-              );
+              const exactByName = this.getCalendarTaskByName(taskNameFromInfo);
               if (exactByName) return exactByName;
             }
             
             // 2. 其次根据 tmdb_id 与任务中的 calendar_info.match.tmdb_id 进行匹配
             const tmdbId = episode.tmdb_id;
             if (tmdbId) {
-              const byTmdb = this.calendar.tasks.find(t => {
-                const cal = (t.calendar_info || {});
-                const match = (cal.match || {});
-                const tTmdb = match.tmdb_id || cal.tmdb_id;
-                return tTmdb && String(tTmdb) === String(tmdbId);
-              });
+              const byTmdb = this.taskIndexByTmdbId[String(tmdbId)];
               if (byTmdb) return byTmdb;
             }
             
@@ -8278,6 +8300,16 @@
         },
         // 运行日志：将日志文本转换为带可点击区域的 HTML
         getRuntimeLogDisplayHtml(log) {
+          // 缓存：同一行对象内容不变时复用生成结果，避免长日志每次渲染重复转义
+          if (!log || typeof log !== 'object') return '';
+          const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+          const hit = _runtimeLogHtmlCache.get(log);
+          if (hit && hit.mobile === isMobile) return hit.html;
+          const html = this._computeRuntimeLogDisplayHtml(log, isMobile);
+          _runtimeLogHtmlCache.set(log, { mobile: isMobile, html });
+          return html;
+        },
+        _computeRuntimeLogDisplayHtml(log, isMobile) {
           // 使用 v-html 时，先对原始文本进行转义，再插入自定义的可点击 span
           const text = this.getRuntimeLogText(log) || '';
           const escapeHtml = (str) => {
@@ -8314,7 +8346,7 @@
 
           // 3. 移动端与 filteredRuntimeLogs 一致为倒序（最新在上）；目录树 └ 角在视觉上像向上收口，
           //    换成 ┌（向下开口）更贴近从上往下阅读的「向下延续」感，且与桌面/文件 log 语义仍对应末枝
-          if (typeof window !== 'undefined' && window.innerWidth <= 768) {
+          if (isMobile) {
             html = html.split('└──').join('┌──');
           }
 
