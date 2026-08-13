@@ -2375,6 +2375,17 @@ def add_static_cache_headers(response):
     return response
 
 
+# HTML 页面始终重新校验：避免浏览器缓存旧模板（其中可能引用已删除的脚本）导致白屏
+@app.after_request
+def add_html_no_cache_headers(response):
+    try:
+        if (response.content_type or "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+    except Exception:
+        pass
+    return response
+
+
 # gzip 压缩：直接运行（开发环境/容器）时无反向代理，压缩大文本响应
 # 可显著降低 JS/CSS/HTML/JSON 的传输体积与首屏时间。
 @app.after_request
