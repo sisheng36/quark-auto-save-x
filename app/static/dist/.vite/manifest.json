@@ -1,8 +1,8 @@
 {
-  "index.html": {
-    "file": "assets/index-ma1gx-bD.js",
-    "name": "index",
-    "src": "index.html",
+  "src/main.js": {
+    "file": "assets/main-Dmn6dWxX.js",
+    "name": "main",
+    "src": "src/main.js",
     "isEntry": true
   }
 }

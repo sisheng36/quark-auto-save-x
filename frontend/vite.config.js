@@ -11,7 +11,7 @@ export default defineConfig({
     manifest: true,
     assetsDir: 'assets',
     rollupOptions: {
-      input: 'index.html'
+      input: 'src/main.js'
     }
   },
   define: {

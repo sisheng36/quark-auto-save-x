@@ -2380,7 +2380,8 @@ def add_static_cache_headers(response):
 def add_html_no_cache_headers(response):
     try:
         if (response.content_type or "").startswith("text/html"):
-            response.headers["Cache-Control"] = "no-cache"
+            # no-store：彻底禁止浏览器与中间代理缓存旧版 HTML
+            response.headers["Cache-Control"] = "no-store"
     except Exception:
         pass
     return response
@@ -2569,8 +2570,9 @@ def _frontend_scripts():
         )
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.loads(f.read())
-        entry = manifest.get("index.html") or {}
-        js_file = entry.get("file") or ""
+        # 兼容 HTML 入口与纯 JS 入口：取 manifest 中标记为 isEntry 的产物
+        entry = next((v for v in manifest.values() if isinstance(v, dict) and v.get("isEntry")), None)
+        js_file = (entry or {}).get("file") or ""
         if not js_file:
             raise ValueError("manifest 缺少入口文件")
         return (
