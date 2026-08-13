@@ -1350,26 +1350,6 @@ export default {
         },
 
         // 管理视图：将过滤后的任务按当前海报列数进行分栏，复用相同布局
-        managementColumns() {
-          const tasks = this.managementTasksFiltered;
-          if (!tasks || tasks.length === 0) return [];
-          // 依赖布局tick以在窗口变化时强制重新计算
-          void this.calendar.layoutTick;
-          // 与周视图一致的列数推导逻辑
-          const availableWidth = this.getCalendarAvailableWidth ? this.getCalendarAvailableWidth() : 1200;
-          const minColumnWidth = 140;
-          const columnGap = 20;
-          // 列数计算与周视图一致，加入 eps 避免边界像素/滚动条导致的多列
-          const eps = 0.1;
-          // 桌面端也允许最少 2 列，避免在某些宽度下被强制多出一列
-          const columns = Math.max(2, Math.floor((availableWidth + columnGap - eps) / (minColumnWidth + columnGap)));
-          const cols = Array.from({ length: columns }, () => []);
-          // 简单逐列分配，保证与日历海报列宽/间距一致
-          tasks.forEach((t, idx) => {
-            cols[idx % columns].push(t);
-          });
-          return cols;
-        },
         // 基于已加载的日历剧集构建：show_name -> poster_local_path 映射
         posterByShowName() {
           const map = {};
@@ -1544,31 +1524,6 @@ export default {
           
           // 后备方案
           return 1;
-        },
-        displayedPages() {
-          // 显示有限数量的页码，最多显示5个页码
-          const pageCount = this.totalPages;
-          const currentPage = this.historyParams.page;
-          
-          if (pageCount <= 5) {
-            // 页数少于等于5，显示所有页码
-            return Array.from({ length: pageCount }, (_, i) => i + 1);
-          } else {
-            // 页数多于5，显示当前页附近的页码
-            const pages = [];
-            let startPage = Math.max(currentPage - 2, 1);
-            let endPage = Math.min(startPage + 4, pageCount);
-            
-            if (endPage - startPage < 4) {
-              startPage = Math.max(endPage - 4, 1);
-            }
-            
-            for (let i = startPage; i <= endPage; i++) {
-              pages.push(i);
-            }
-            
-            return pages;
-          }
         },
         // 影视发现计算属性
         currentSubCategories() {
@@ -1910,40 +1865,6 @@ export default {
           }
         },
         // ---- 排序辅助函数（calendar + tasklist 共用） ----
-        _getNameKey(task) {
-          const name = (task && (task.task_name || task.taskname) || '').toString();
-          return toPinyin(name);
-        },
-        _parseDateKey(raw) {
-          if (!raw) return null;
-          const s = String(raw).trim();
-          let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-          if (m) return parseInt(m[1] + m[2] + m[3], 10);
-          m = s.match(/(\d{1,2})[-/](\d{1,2})/);
-          if (m) {
-            return parseInt('9999' + m[1].padStart(2, '0') + m[2].padStart(2, '0'), 10);
-          }
-          return null;
-        },
-        _parseTimeMinutes(raw) {
-          if (!raw) return null;
-          const s = String(raw).trim();
-          const m = s.match(/([0-2]?\d):([0-5]\d)/);
-          if (!m) return null;
-          const h = parseInt(m[1], 10), min = parseInt(m[2], 10);
-          if (isNaN(h) || isNaN(min)) return null;
-          return Math.max(0, Math.min(23, h)) * 60 + Math.max(0, Math.min(59, min));
-        },        // 是否为触摸移动端（窄屏且主输入无法悬停，排除窄屏桌面鼠标窗口）
-        isMobileDevice() {
-          if (typeof window === 'undefined' || window.innerWidth > 768) {
-            return false;
-          }
-          try {
-            return window.matchMedia('(hover: none)').matches;
-          } catch (e) {
-            return typeof window.ontouchstart !== 'undefined';
-          }
-        },
         // 是否为「选择保存到的文件夹」模态框
         isSavepathSelectModal() {
           if (!this.fileSelect.selectDir || this.fileSelect.previewRegex || this.fileSelect.selectShare || this.fileSelect.moveMode) {
@@ -2008,13 +1929,6 @@ export default {
           }
         },
         // 计算来源徽标 class：多来源时使用 multi-source，单来源使用小写来源名
-        getSourceBadgeClass(source) {
-          try {
-            if (!source) return '';
-            if (typeof source === 'string' && source.indexOf('·') !== -1) return 'multi-source';
-            return String(source).toLowerCase();
-          } catch (e) { return ''; }
-        },
         // 启动任务列表轮询兜底（仅在未运行时启动）
         startTasklistPollingFallback() {
           try {
@@ -2172,14 +2086,6 @@ export default {
           } catch (e) { return { poster_local_path: '' }; }
         },
         // 任务列表排序：获取显示名称
-        getTasklistSortDisplayName(key) {
-          if (key === 'name') return '任务名称';
-          if (key === 'progress') return '任务进度';
-          if (key === 'update_time') return '更新时间';
-          if (key === 'airtime') return '播出时间';
-          if (key === 'subscribe_duration') return '订阅时长';
-          return '任务编号';
-        },
         // 任务列表排序：保存到localStorage
         saveTasklistSort() {
           try {
@@ -2697,16 +2603,6 @@ export default {
           } catch (e) {
             // 任意异常都回退为原有的时间展示，保证不影响原功能
             return this.getTaskAirTimeDisplay(taskNameOrTask);
-          }
-        },
-        seasonInputComputedWidth() {
-          try {
-            const val = String(this.editMetadata && this.editMetadata.form ? (this.editMetadata.form.season_number ?? '') : '');
-            const len = val.length || 1;
-            const px = Math.max(31, len * 9 + 12);
-            return px + 'px';
-          } catch (e) {
-            return '31px';
           }
         },
         // 获取管理视图卡片展示用：实时“已转存集数”（优先使用进度映射，其次回退到任务自带的 season_counts）
@@ -3932,23 +3828,7 @@ export default {
         },
         
         // 缓存管理方法
-        setCachedData(key, data) {
-          try {
-            localStorage.setItem(`quark_calendar_${key}`, JSON.stringify(data));
-          } catch (error) {
-            console.warn('缓存数据失败:', error);
-          }
-        },
         
-        getCachedData(key) {
-          try {
-            const data = localStorage.getItem(`quark_calendar_${key}`);
-            return data ? JSON.parse(data) : null;
-          } catch (error) {
-            console.warn('读取缓存数据失败:', error);
-            return null;
-          }
-        },
         
         
         
@@ -4809,15 +4689,6 @@ export default {
         },
         
         // 清除筛选器
-        clearCalendarFilter(filterType) {
-          if (filterType === 'nameFilter') {
-            this.calendar.nameFilter = '';
-          } else if (filterType === 'taskFilter') {
-            this.calendar.taskFilter = '';
-          } else if (filterType === 'statusFilter') {
-            this.calendar.statusFilter = '';
-          }
-        },
         
         // 更新内容类型列表（用于热更新）
         updateContentTypes(rawTypes) {
@@ -5811,24 +5682,6 @@ export default {
         },
 
         // 迁移旧的localStorage数据到新格式（为每个账号单独存储目录）
-        migrateFileManagerFolderData() {
-          const oldFolderKey = 'quarkAutoSave_fileManagerLastFolder';
-          const oldFolderValue = localStorage.getItem(oldFolderKey);
-
-          if (oldFolderValue) {
-            // 如果存在旧数据，将其迁移到当前选中账号的新格式
-            const currentAccountIndex = this.fileManager.selectedAccountIndex;
-            const newFolderKey = `quarkAutoSave_fileManagerLastFolder_${currentAccountIndex}`;
-
-            // 只有当新格式的数据不存在时才进行迁移
-            if (!localStorage.getItem(newFolderKey)) {
-              localStorage.setItem(newFolderKey, oldFolderValue);
-            }
-
-            // 删除旧的数据
-            localStorage.removeItem(oldFolderKey);
-          }
-        },
 
         onAccountChange() {
           // 保存选中的账号索引到localStorage
@@ -6076,19 +5929,6 @@ export default {
                 });
             }
           });
-        },
-        toggleSidebar() {
-          this.sidebarCollapsed = !this.sidebarCollapsed;
-          // 保存侧边栏状态到本地存储
-          localStorage.setItem('quarkAutoSave_sidebarCollapsed', this.sidebarCollapsed);
-          
-          // 如果当前在追剧日历页面且为海报模式，重新计算列数
-          if (this.activeTab === 'calendar' && this.calendar.viewMode === 'poster') {
-            // 延迟一点时间，等待DOM更新完成
-            this.$nextTick(() => {
-              this.updateWeekDates();
-            });
-          }
         },
         cleanTaskNameForSearch(taskName) {
           if (!taskName) return '';
@@ -6779,42 +6619,6 @@ export default {
           }
         },
         // Sxx季数信息和格式同步工具函数
-        syncSeasonNumberAndFormat(sourceValue, targetValue) {
-          if (!sourceValue || !targetValue) return targetValue;
-
-          // 从源字符串中提取Sxx格式的季数和前缀格式
-          const sourceMatch = sourceValue.match(/(.*?)([\s\.\-_]+)S(\d+)/i);
-          if (!sourceMatch) return targetValue; // 源字符串没有Sxx，不同步
-
-          const sourcePrefix = sourceMatch[1];
-          const sourceSeparator = sourceMatch[2];
-          const sourceSeasonNumber = sourceMatch[3];
-
-          // 检查目标字符串是否包含Sxx格式
-          const targetMatch = targetValue.match(/(.*?)([\s\.\-_]+)S(\d+)(.*)/i);
-          if (!targetMatch) return targetValue; // 目标字符串没有Sxx，不同步
-
-          const targetPrefix = targetMatch[1];
-          const targetSeparator = targetMatch[2];
-          const targetSeasonNumber = targetMatch[3];
-          const targetSuffix = targetMatch[4]; // 保留后缀部分（如E[]、E{}等）
-
-          // 检查前缀是否相似（去除空格后比较）
-          const sourceCleanPrefix = sourcePrefix.replace(/\s+/g, '').toLowerCase();
-          const targetCleanPrefix = targetPrefix.replace(/\s+/g, '').toLowerCase();
-
-          // 如果前缀相似，则同步格式和季数
-          if (sourceCleanPrefix === targetCleanPrefix ||
-              sourceCleanPrefix.includes(targetCleanPrefix) ||
-              targetCleanPrefix.includes(sourceCleanPrefix)) {
-
-            // 同步格式：使用源的前缀+分隔符+季数+目标的后缀
-            return sourcePrefix + sourceSeparator + 'S' + sourceSeasonNumber.padStart(2, '0') + targetSuffix;
-          } else {
-            // 前缀不相似，只同步季数，保持原格式
-            return targetValue.replace(/S\d+/i, 'S' + sourceSeasonNumber.padStart(2, '0'));
-          }
-        },
 
         // 保存路径变化时的处理函数
         onSavepathChange(index, task) {
@@ -8033,11 +7837,6 @@ export default {
           }
           return author;
         },
-        resetFileSelectShareAuthorState() {
-          this.fileSelect.shareAuthor = '';
-          this.fileSelectShareAuthorResourceId = null;
-          this.fileSelectShareAuthorReqId = (this.fileSelectShareAuthorReqId || 0) + 1;
-        },
         refreshFileSelectShareAuthor(shareurl, resourceId) {
           if (!this.fileSelect.selectShare) return;
           const url = (shareurl || this.fileSelect.shareurl || '').trim();
@@ -8175,15 +7974,6 @@ export default {
               // 网络请求失败，忽略错误，不设置 shareurl_ban
               console.log('修改分享链接时网络请求失败，忽略此错误:', error);
             });
-        },
-        clearData(target) {
-          this[target] = "";
-        },
-        clearRuntimeLogFilter(field) {
-          if (!this.runtimeLogFilters) return;
-          if (Object.prototype.hasOwnProperty.call(this.runtimeLogFilters, field)) {
-            this.runtimeLogFilters[field] = '';
-          }
         },
         // 运行日志：日志级别点击筛选
         filterByLogLevel(level, event) {
@@ -9780,14 +9570,8 @@ export default {
           this.$forceUpdate();
         },
         // 增加剧集识别模式
-        addEpisodePattern() {
-          // 此方法保留但不再使用
-        },
         
         // 移除剧集识别模式
-        removeEpisodePattern(index) {
-          // 此方法保留但不再使用
-        },
         loadHistoryRecords() {
           if (this.isHistoryPageSizeAuto()) {
             this.historyParams.page_size = this.calculateAutoPageSize('history');
@@ -12672,37 +12456,6 @@ export default {
           // 确保视图更新
           this.$forceUpdate();
         },
-        renameFile(file) {
-          // 单个文件重命名
-          const newName = prompt('请输入新的文件名：', file.file_name);
-          if (newName && newName !== file.file_name) {
-            axios.post('/batch_rename', {
-              files: [{
-                file_id: file.fid,
-                new_name: newName
-              }],
-              // 添加账号索引参数，使用文件整理页面选中的账号
-              account_index: this.fileManager.selectedAccountIndex
-            })
-              .then(response => {
-                if (response.data.success) {
-                  this.showToast('重命名成功');
-                  // 刷新文件列表以确保缓存同步
-                  this.refreshCurrentFolderCache();
-                  // 如果命名预览模态框是打开的，也要刷新它
-                  if ($('#fileSelectModal').hasClass('show')) {
-                    this.showFileManagerNamingPreview(this.fileSelect.previewFolderId || this.fileManager.currentFolder);
-                  }
-                } else {
-                  alert(response.data.message || '重命名失败');
-                }
-              })
-              .catch(error => {
-                console.error('重命名文件失败:', error);
-                alert('重命名文件失败');
-              });
-          }
-        },
         previewAndRename() {
           // 显示文件整理页面的命名预览模态框
           this.showFileManagerNamingPreview();
@@ -13221,36 +12974,6 @@ export default {
             return;
           }
           this.selectFileForManager(event, file);
-        },
-        loadFileList(folderId) {
-          this.fileManager.currentFolder = folderId || 'root';
-
-          const params = {
-            folder_id: folderId || 'root',
-            sort_by: this.fileManager.sortBy,
-            order: this.fileManager.sortOrder,
-            page_size: this.fileManager.pageSize,
-            page: this.fileManager.currentPage,
-            account_index: this.fileManager.selectedAccountIndex
-          };
-
-          axios.get('/file_list', { params })
-            .then(response => {
-              if (response.data.success) {
-                this.fileManager.fileList = response.data.data.list;
-                this.fileManager.total = response.data.data.total;
-                this.fileManager.totalPages = Math.ceil(response.data.data.total / this.fileManager.pageSize);
-                this.fileManager.paths = response.data.data.paths || [];
-                this.fileManager.gotoPage = this.fileManager.currentPage;
-              } else {
-                alert(response.data.message || '获取文件列表失败');
-              }
-              this.fileManager.hasLoaded = true;
-            })
-            .catch(error => {
-              console.error('获取文件列表失败:', error);
-              this.fileManager.hasLoaded = true;
-            });
         },
         sortFiles(field) {
           if (this.fileManager.sortBy === field) {
@@ -13846,35 +13569,6 @@ export default {
           }
         },
 
-        getMovieGenre(item) {
-          // 从card_subtitle中提取类型信息
-          // 格式: 年份 / 地区 / 类型 / 导演 / 主演
-          if (item.card_subtitle) {
-            const parts = item.card_subtitle.split(' / ');
-            if (parts.length >= 3) {
-              const genreText = parts[2]; // 第三部分是类型
-              if (genreText && genreText.trim()) {
-                // 将空格分隔的类型转换为斜杠分隔，并为斜杠添加特殊样式
-                return genreText.replace(/\s+/g, ' <span class="genre-slash">/</span> ');
-              }
-            }
-          }
-          return '未知';
-        },
-        getMovieGenreText(item) {
-          // 获取纯文本版本的类型信息，用于title属性
-          if (item.card_subtitle) {
-            const parts = item.card_subtitle.split(' / ');
-            if (parts.length >= 3) {
-              const genreText = parts[2]; // 第三部分是类型
-              if (genreText && genreText.trim()) {
-                // 将空格分隔的类型转换为斜杠分隔
-                return genreText.replace(/\s+/g, ' / ');
-              }
-            }
-          }
-          return '未知';
-        },
         getMovieDetails(item) {
           // 处理card_subtitle信息用于海报悬停显示
           // 格式: 年份 / 地区 / 类型 / 导演 / 主演
@@ -14168,52 +13862,6 @@ export default {
           }
         },
         // 打开编辑任务模态框
-        openEditTaskModal(taskIndex) {
-          try {
-            if (taskIndex === null || taskIndex === undefined || !this.formData.tasklist || !this.formData.tasklist[taskIndex]) {
-              this.showToast('任务不存在');
-              return;
-            }
-            
-            const task = this.formData.tasklist[taskIndex];
-            // 分享订阅字段由服务启动 / 加载配置时自动迁移补全，此处仅读取展示
-            // 设置编辑模式
-            this.createTask.isEditMode = true;
-            this.createTask.editTaskIndex = taskIndex;
-            this.createTask.movieData = null;
-            this.createTask.error = null;
-            // 先用配置中的昵称占位，避免链接失效时接口失败只能显示「未知」
-            this.createTask.shareAuthor = (task.share_author_name || '').trim();
-            this.editTaskShareAuthorResourceId = null;
-            
-            // 复制任务数据到编辑表单
-            this.createTask.taskData = { ...task };
-            
-            // 确保所有必要字段都有默认值
-            this.createTask.taskData.runweek = task.runweek || [1, 2, 3, 4, 5, 6, 7];
-            this.createTask.taskData.addition = task.addition || {};
-            this.createTask.taskData.ignore_extension = task.ignore_extension || false;
-            this.createTask.taskData.use_sequence_naming = task.use_sequence_naming || false;
-            this.createTask.taskData.use_episode_naming = task.use_episode_naming || false;
-            // 确保execution_mode有默认值
-            if (!this.createTask.taskData.execution_mode) {
-              this.createTask.taskData.execution_mode = this.formData.execution_mode || 'manual';
-            }
-            // 确保自动解压设置：空值显示为继承全局
-            if (this.createTask.taskData.auto_extract_archive === undefined || this.createTask.taskData.auto_extract_archive === null) {
-              this.createTask.taskData.auto_extract_archive = "";
-            }
-            
-            // 打开模态框
-            $('#createTaskModal').modal('show');
-            this.$nextTick(() => {
-              this.maybeRefreshEditTaskShareAuthor(this.createTask.taskData.shareurl);
-            });
-          } catch (error) {
-            console.error('打开编辑任务模态框时出错:', error);
-            this.showToast('打开编辑任务失败');
-          }
-        },
         // 更新任务列表的元数据（用于热更新TMDB匹配信息）
         // 优化：增加超时时间和错误处理
         async updateTasklistMetadata(delay = 0) {
@@ -14498,31 +14146,6 @@ export default {
 
           // 如果用户设置了非空且与默认值不同的值，则认为是自定义设置
           return userValue && userValue !== defaultValue;
-        },
-        isUsingCustomTaskSettings(taskSettings) {
-          // 检查是否使用了自定义任务设置（非默认模板）
-          // 注意：电视命名规则总是生效，不参与自定义判断
-          const defaultSettings = {
-            movie_save_path: "电影目录前缀/片名 (年份)",
-            tv_save_path: "剧集目录前缀/剧名 (年份)/剧名 - S季数",
-            anime_save_path: "动画目录前缀/剧名 (年份)/剧名 - S季数",
-            variety_save_path: "综艺目录前缀/剧名 (年份)/剧名 - S季数",
-            documentary_save_path: "纪录片目录前缀/剧名 (年份)/剧名 - S季数"
-            // tv_naming_rule 不参与判断，总是生效
-          };
-
-          // 检查每个设置是否与默认值不同且不为空
-          for (const key in defaultSettings) {
-            const userValue = taskSettings[key] || "";
-            const defaultValue = defaultSettings[key];
-
-            // 如果用户设置了非空且与默认值不同的值，则认为是自定义设置
-            if (userValue && userValue !== defaultValue) {
-              return true;
-            }
-          }
-
-          return false;
         },
         extractTvInfo(title) {
           // 从标题中提取电视剧信息（剧名、季数等）
