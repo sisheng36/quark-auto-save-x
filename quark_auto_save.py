@@ -1015,6 +1015,157 @@ def extract_episode_number(filename, episode_patterns=None, config_data=None):
  
     return None
 
+# 集数级查重：字幕类扩展名单独归类，视频不挡字幕、字幕不挡视频
+SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".sub", ".vtt", ".sup"}
+
+def _extract_season_marker(text, loose=False):
+    """
+    从文本中提取季标记（S03E01 的 S03 / Season 3 / 第3季 / 第三季）
+
+    Args:
+        text: 文件名或任务配置文本
+        loose: 宽松模式（用于任务的重命名模板），S03 后允许不直接跟集数（如 S03E{}）
+
+    Returns:
+        int: 季号，提取不到返回 None
+    """
+    if not text:
+        return None
+    episode_part = r'\d{1,3}' if not loose else r''
+    m = re.search(r'[Ss](\d{1,2})[Ee]' + episode_part, text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'[Ss]eason[\s._-]*(\d{1,2})', text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'第\s*([0-9]{1,2}|[一二三四五六七八九十百零两]{1,4})\s*季', text)
+    if m:
+        raw = m.group(1)
+        if raw.isdigit():
+            return int(raw)
+        return chinese_to_arabic(raw)
+    return None
+
+def extract_season_episode_key(filename):
+    """
+    从文件名提取 (season, episode) 集数身份，用于换链接后的集数级查重
+
+    Args:
+        filename: 文件名
+
+    Returns:
+        (season, episode): season 为 int（文件名带季标记时）或 None（无季标记）；
+                           无法可靠提取集数时返回 None
+    """
+    if not filename:
+        return None
+    season = _extract_season_marker(os.path.splitext(str(filename))[0])
+    episode = extract_episode_number(filename)
+    if episode is None:
+        return None
+    return (season, episode)
+
+def extract_task_season(task):
+    """
+    从任务的重命名模板/任务名中尽力提取季号，用于给无季标记的分享文件（如 01.mp4）归季
+
+    Args:
+        task: 任务配置 dict
+
+    Returns:
+        int: 季号，提取不到返回 None
+    """
+    if not task:
+        return None
+    for field in ("replace", "episode_naming", "taskname"):
+        value = task.get(field)
+        if isinstance(value, str) and value.strip():
+            season = _extract_season_marker(value, loose=True)
+            if season is not None:
+                return season
+    return None
+
+def build_existing_episode_index(dir_file_list):
+    """
+    扫描保存目录的现有文件，构建"已转存集数"索引（换链接后按集数查重的数据源）
+
+    Args:
+        dir_file_list: ls_dir 返回的目标目录文件列表
+
+    Returns:
+        {
+            "se": {(season, episode): {扩展名类别, ...}},  # 文件名带季标记的文件
+            "ep": {episode: {扩展名类别, ...}},            # 文件名无季标记的文件
+            "seasons": {季号, ...},                        # 目录中出现过哪些季
+        }
+    """
+    index = {"se": {}, "ep": {}, "seasons": set()}
+    if not dir_file_list:
+        return index
+    for dir_file in dir_file_list:
+        if not isinstance(dir_file, dict) or dir_file.get("dir"):
+            continue
+        file_name = dir_file.get("file_name", "")
+        key = extract_season_episode_key(file_name)
+        if key is None:
+            continue
+        season, episode = key
+        ext = os.path.splitext(file_name)[1].lower()
+        category = "subtitle" if ext in SUBTITLE_EXTS else "media"
+        if season is not None:
+            index["se"].setdefault((season, episode), set()).add(category)
+            index["seasons"].add(season)
+        else:
+            index["ep"].setdefault(episode, set()).add(category)
+    return index
+
+def is_episode_already_saved(share_filename, existing_index, task=None):
+    """
+    判断某集是否已存在于保存目录（只看"季+集"身份，与文件大小/修改时间/fid 无关），
+    用于更换分享链接后只转存未转存的集数。判断取向安全：识别不了就不跳过。
+
+    Args:
+        share_filename: 分享文件名
+        existing_index: build_existing_episode_index 构建的索引
+        task: 任务配置（用于给无季标记的分享文件归季）
+
+    Returns:
+        bool: 该集已存在（应跳过）返回 True
+    """
+    if not existing_index:
+        return False
+    key = extract_season_episode_key(share_filename)
+    if key is None:
+        return False
+    season, episode = key
+    ext = os.path.splitext(str(share_filename))[1].lower()
+    category = "subtitle" if ext in SUBTITLE_EXTS else "media"
+
+    def _hit(bucket, k):
+        return category in bucket.get(k, set())
+
+    if season is not None:
+        # 分享文件带季标记：优先精确匹配 (季, 集)
+        if _hit(existing_index["se"], (season, episode)):
+            return True
+        # 目录全是无季标记命名（单季"第xx集"式目录）时，退化为按集数比对
+        if not existing_index["seasons"]:
+            return _hit(existing_index["ep"], episode)
+        return False
+
+    # 分享文件无季标记（如 01.mp4）：按任务上下文/目录单一季推断所属季
+    resolved_season = extract_task_season(task)
+    if resolved_season is None and len(existing_index["seasons"]) == 1:
+        resolved_season = next(iter(existing_index["seasons"]))
+    if resolved_season is not None:
+        if _hit(existing_index["se"], (resolved_season, episode)):
+            return True
+        if not existing_index["seasons"]:
+            return _hit(existing_index["ep"], episode)
+        return False
+    # 季无法确定（多季目录且无任务上下文）：只与目录中无季标记的文件比对，避免误跳
+    return _hit(existing_index["ep"], episode)
+
 # 全局变量
 VERSION = "2.9.0"
 CONFIG_PATH = "quark_config.json"
@@ -3653,6 +3804,10 @@ class Quark:
                         "updated_at": update_time,
                     })
 
+            # 构建"已转存集数"索引：更换分享链接（洗码重传）后 fid/文件名/大小都会变，
+            # 按"季+集"身份查重，已有的集不再重复转存
+            existing_episode_index = build_existing_episode_index(dir_file_list)
+
             # 预先过滤分享文件列表，去除已存在的文件
             filtered_share_files = []
             start_fid = task.get("startfid", "")
@@ -3686,6 +3841,10 @@ class Quark:
                 # 从共享文件中提取剧集号
                 episode_num = extract_episode_number(share_file["file_name"])
                 is_duplicate = False
+
+                # 集数级查重：换链接后按"季+集"身份跳过已转存的集，只转存未转存的集数
+                if is_episode_already_saved(share_file["file_name"], existing_episode_index, task):
+                    is_duplicate = True
 
                 # 通过文件名判断是否已存在（新的查重逻辑）
                 if not is_duplicate:
@@ -3861,6 +4020,10 @@ class Quark:
                         "updated_at": update_time,
                     })
 
+            # 构建"已转存集数"索引：更换分享链接（洗码重传）后 fid/文件名/大小都会变，
+            # 按"季+集"身份查重，已有的集不再重复转存
+            existing_episode_index = build_existing_episode_index(dir_file_list)
+
             # 应用起始文件过滤逻辑
             start_fid = task.get("startfid", "")
             if start_fid:
@@ -3883,6 +4046,12 @@ class Quark:
                     # 文件ID已存在于记录中，跳过处理
                     continue
                     
+                # 集数级查重：换链接后按"季+集"身份跳过已转存的集，只转存未转存的集数
+                if not share_file["dir"] and is_episode_already_saved(
+                    share_file["file_name"], existing_episode_index, task
+                ):
+                    continue
+
                 # 检查文件是否已存在（通过大小和扩展名）- 新增的文件查重逻辑
                 is_duplicate = False
                 if not share_file["dir"]:  # 文件夹不进行内容查重
@@ -4687,17 +4856,9 @@ class Quark:
                     return extract_episode_number(filename)
                 return extract_episode_number(filename, config_data=CONFIG_DATA)
                 
-            # 找出已命名的文件列表，避免重复转存
-            existing_episode_numbers = set()
-            for dir_file in dir_file_list:
-                if not dir_file["dir"]:
-                    try:
-                        # 对于剧集命名模式，直接使用extract_episode_number函数提取剧集号
-                        episode_num = extract_episode_number_local(dir_file["file_name"])
-                        if episode_num is not None:
-                            existing_episode_numbers.add(episode_num)
-                    except:
-                        pass
+            # 构建"已转存集数"索引：更换分享链接（洗码重传）后 fid/文件名/大小都会变，
+            # 按"季+集"身份查重，已有的集不再重复转存
+            existing_episode_index = build_existing_episode_index(dir_file_list)
             
             # 检查是否需要从分享链接获取数据
             if task.get("shareurl"):
@@ -4777,6 +4938,10 @@ class Quark:
                         # 从共享文件中提取剧集号
                         episode_num = extract_episode_number_local(share_file["file_name"])
                         is_duplicate = False
+
+                        # 集数级查重：换链接后按"季+集"身份跳过已转存的集，只转存未转存的集数
+                        if is_episode_already_saved(share_file["file_name"], existing_episode_index, task):
+                            is_duplicate = True
                         
                         # 通过文件名判断是否已存在（新的查重逻辑）
                         if not is_duplicate:
