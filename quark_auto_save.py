@@ -1478,6 +1478,76 @@ def is_movie_task(task):
     return False
 
 
+def get_task_transfer_completion(task, account=None):
+    """判断任务是否已转存完成，并返回转存数 / 当前季集数。
+
+    电影：有转存记录即完成。
+    剧集：转存数 >= 当前季总集数（total_count > 0）才算完成。
+    未匹配或总集数未知：不算完成。
+    """
+    task = task or {}
+    info = {
+        "complete": False,
+        "transferred": None,
+        "total": None,
+        "is_movie": is_movie_task(task),
+        "has_metrics": False,
+    }
+    if info["is_movie"]:
+        has_records = False
+        if account is not None:
+            try:
+                has_records = bool(account.has_transfer_records(task))
+            except Exception:
+                has_records = False
+        transferred = 1 if has_records else 0
+        if not has_records:
+            try:
+                cal_db = CalendarDB()
+                task_name = task.get("taskname") or task.get("task_name") or ""
+                metrics = cal_db.get_task_metrics(task_name) if task_name else None
+                if metrics:
+                    info["has_metrics"] = True
+                    transferred = int(metrics.get("transferred_count") or 0)
+                    has_records = transferred >= 1
+            except Exception:
+                pass
+        info.update({
+            "complete": bool(has_records),
+            "transferred": transferred,
+            "total": 1,
+        })
+        return info
+
+    try:
+        cal_db = CalendarDB()
+        task_name = task.get("taskname") or task.get("task_name") or ""
+        if not task_name:
+            return info
+        metrics = cal_db.get_task_metrics(task_name)
+        if not metrics:
+            return info
+        transferred = int(metrics.get("transferred_count") or 0)
+        total = int(metrics.get("total_count") or 0)
+        info.update({
+            "has_metrics": True,
+            "transferred": transferred,
+            "total": total,
+            "complete": total > 0 and transferred >= total,
+        })
+    except Exception:
+        pass
+    return info
+
+
+def is_task_transfer_complete(task, account=None):
+    """转存任务是否已经全部完成（电影有记录 / 剧集转存数达到当前季集数）。"""
+    try:
+        return bool(get_task_transfer_completion(task, account).get("complete"))
+    except Exception:
+        return False
+
+
 class Config:
     # 同一进程内配置读写互斥锁（跨进程竞争由原子写入兜底）
     _lock = threading.Lock()
@@ -5544,24 +5614,16 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
         # 获取任务的执行周期模式，优先使用任务自身的execution_mode，否则使用系统配置的execution_mode
         execution_mode = task.get("execution_mode") or CONFIG_DATA.get("execution_mode", "manual")
         
-        # 按任务进度执行（自动）
+        # 按任务进度执行（自动）：转存数达到当前季集数（电影有转存记录）才跳过
         if execution_mode == "auto":
             try:
-                # 从task_metrics表获取任务进度
-                cal_db = CalendarDB()
-                task_name = task.get("taskname") or task.get("task_name") or ""
-                if task_name:
-                    metrics = cal_db.get_task_metrics(task_name)
-                    if metrics and metrics.get("progress_pct") is not None:
-                        progress_pct = int(metrics.get("progress_pct", 0))
-                        # 如果任务进度100%，则跳过
-                        if progress_pct >= 100:
-                            return False
-                        # 如果任务进度不是100%，则需要运行
-                        return True
-                    else:
-                        # 没有任务进度数据，退回按自选周期执行的逻辑
-                        execution_mode = "manual"
+                completion = get_task_transfer_completion(task, account)
+                if completion.get("complete"):
+                    return False
+                if completion.get("is_movie") or completion.get("has_metrics"):
+                    return True
+                # 没有任务进度数据，退回按自选周期执行的逻辑
+                execution_mode = "manual"
             except Exception as e:
                 # 获取任务进度失败，退回按自选周期执行的逻辑
                 execution_mode = "manual"
@@ -5666,15 +5728,16 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
             if execution_mode == "auto":
                 # 按任务进度执行时的跳过提示
                 try:
-                    cal_db = CalendarDB()
-                    task_name = task.get("taskname") or task.get("task_name") or ""
-                    if task_name:
-                        metrics = cal_db.get_task_metrics(task_name)
-                        if metrics and metrics.get("progress_pct") is not None:
-                            progress_pct = int(metrics.get("progress_pct", 0))
-                            print(f"任务进度已达 {progress_pct}%，跳过")
+                    completion = get_task_transfer_completion(task, account)
+                    if completion.get("complete") and completion.get("is_movie"):
+                        print("电影已转存完成，跳过")
+                    elif completion.get("complete"):
+                        transferred = completion.get("transferred")
+                        total = completion.get("total")
+                        if transferred is not None and total is not None:
+                            print(f"已转存 {transferred}/{total} 集，跳过")
                         else:
-                            print(f"任务不在执行周期内，跳过")
+                            print("任务已转存完成，跳过")
                     else:
                         print(f"任务不在执行周期内，跳过")
                 except Exception:
@@ -5696,10 +5759,21 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
             elif not task_mode or task_mode not in Quark.VALID_EXTRACT_MODES:
                 task["auto_extract_archive"] = task_settings.get("auto_extract_archive", "disabled")
 
-            # 电影只有 1 个媒体文件，转存完成后即结束（不追更），
+            # 转存已全部完成（电影有记录 / 剧集转存数已达当前季集数）时，
             # 后续运行无需再检测分享链接是否有效，直接跳过保存与重命名。
-            if is_movie_task(task) and account.has_transfer_records(task):
-                print(f"⏭️ 《{task['taskname']}》电影已转存完成，无需追更，跳过链接有效性检测")
+            completion = get_task_transfer_completion(task, account)
+            if completion.get("complete"):
+                if completion.get("is_movie"):
+                    print(f"⏭️ 《{task['taskname']}》电影已转存完成，无需追更，跳过链接有效性检测")
+                else:
+                    transferred = completion.get("transferred")
+                    total = completion.get("total")
+                    count_text = (
+                        f"{transferred}/{total} 集"
+                        if transferred is not None and total is not None
+                        else "全部集数"
+                    )
+                    print(f"⏭️ 《{task['taskname']}》已转存 {count_text}，无需追更，跳过链接有效性检测")
                 continue
 
             # 执行保存任务

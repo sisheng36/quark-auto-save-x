@@ -1156,13 +1156,37 @@ class CalendarDB:
             # 在大多数情况下，即使 checkpoint 失败，读取操作仍能看到已提交的数据
             pass
         
-        # 从数据库直接查询最新的任务进度
-        cursor.execute('SELECT progress_pct FROM task_metrics WHERE task_name=?', (task_name,))
+        # 从数据库直接查询最新的任务进度，并带出转存数 / 当前季集数供完成判定
+        cursor.execute(
+            'SELECT progress_pct, transferred_count, tmdb_id, season_number FROM task_metrics WHERE task_name=?',
+            (task_name,),
+        )
         row = cursor.fetchone()
         if not row:
             return None
+        progress_pct, transferred_count, tmdb_id, season_number = row
+        total_count = None
+        if tmdb_id is not None and season_number is not None:
+            try:
+                season_metrics = self.get_season_metrics(int(tmdb_id), int(season_number)) or {}
+                if season_metrics.get('total_count') not in (None,):
+                    total_count = int(season_metrics.get('total_count') or 0)
+                if not total_count:
+                    cursor.execute(
+                        'SELECT episode_count FROM seasons WHERE tmdb_id=? AND season_number=?',
+                        (int(tmdb_id), int(season_number)),
+                    )
+                    season_row = cursor.fetchone()
+                    if season_row:
+                        total_count = int(season_row[0] or 0)
+            except Exception:
+                total_count = None
         return {
-            'progress_pct': row[0],
+            'progress_pct': progress_pct,
+            'transferred_count': transferred_count,
+            'total_count': total_count,
+            'tmdb_id': tmdb_id,
+            'season_number': season_number,
         }
 
     # --------- 扩展：管理季与集清理/更新工具方法 ---------

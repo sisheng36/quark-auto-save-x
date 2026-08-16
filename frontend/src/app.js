@@ -1023,7 +1023,7 @@ export default {
         // 类型拆分：剧集(tv)/动画(anime)/纪录片(documentary)/综艺(variety)/电影(movie)/其他(other)
         // 追更中：四类剧集且转存进度未达 100%（还没追完，正在追更）
         // 今日加入：shareurl_subscribed_since 为今日（自然日，与订阅天数口径一致，不区分类型）
-        // 待处理：shareurl_ban 非空（分享链接已失效），临时网络错误不计入
+        // 待处理：分享链接已失效且转存尚未完成；转存已完成或临时网络错误不计入
         // 状态分布：已上映/播出中/本季终/已完结/未匹配（互斥归类，具体状态优先）
         overviewStats() {
           try {
@@ -1079,8 +1079,8 @@ export default {
                   }
                 }
               }
-              // 待处理：shareurl_ban 非空即视为分享链接已失效
-              if (task.shareurl_ban && String(task.shareurl_ban).trim() !== '') {
+              // 待处理：分享链接已失效；转存已完成的任务不再计入
+              if (this.shouldShowShareUrlBan(task)) {
                 stats.failedCount += 1;
               }
               // 状态分布（互斥归类：具体状态优先，避免本季终/已完结被"已上映"截胡）
@@ -1752,10 +1752,17 @@ export default {
           if (newValue === 'tasklist') {
             // 确保全局 SSE 已建立
             try { this.ensureGlobalSSE(); } catch (e) {}
-            this.loadTaskLatestInfo();
-            this.loadTasklistMetadata();
-            // 启动任务列表的后台监听
-            this.startTasklistAutoWatch();
+            Promise.all([
+              this.loadTaskLatestInfo().catch(err => {
+                console.warn('加载任务最新信息失败:', err);
+              }),
+              this.loadTasklistMetadata().catch(err => {
+                console.warn('加载任务列表元数据失败:', err);
+              })
+            ]).finally(() => {
+              this.startTasklistAutoWatch();
+              this.checkShareUrlStatus();
+            });
           } else if (oldValue === 'tasklist') {
             // 离开任务列表页面时停止后台监听
             this.stopTasklistAutoWatch();
@@ -2469,6 +2476,63 @@ export default {
             const pct = Math.floor((sc.transferred / sc.aired) * 100);
             return Math.max(0, Math.min(100, pct));
           } catch (e) { return null; }
+        },
+        isMovieTask(task) {
+          try {
+            if (!task) return false;
+            const match = (task.calendar_info && task.calendar_info.match) || task.match || {};
+            if (match.media_type === 'movie') return true;
+            let contentType = task.content_type
+              || (task.calendar_info && task.calendar_info.extracted && task.calendar_info.extracted.content_type)
+              || '';
+            if (!contentType) {
+              const calTask = this.getCalendarTaskByName(task.taskname || task.task_name);
+              if (calTask && calTask.match && calTask.match.media_type === 'movie') return true;
+              contentType = (calTask && calTask.content_type) || '';
+            }
+            if (contentType === 'movie') return true;
+            if (!contentType || contentType === 'other') {
+              const pathLower = String(task.savepath || '').toLowerCase();
+              return ['电影', '影片', 'movie', 'film'].some(keyword => pathLower.includes(keyword));
+            }
+            return false;
+          } catch (e) {
+            return false;
+          }
+        },
+        hasTaskTransferRecord(task) {
+          try {
+            const name = (task && (task.taskname || task.task_name)) || '';
+            if (!name) return false;
+            if (this.taskLatestRecords && this.taskLatestRecords[name]) return true;
+            if (this.taskLatestFiles && this.taskLatestFiles[name]) return true;
+            const sc = this.getTaskSeasonCounts(name);
+            return !!(sc && sc.transferred >= 1);
+          } catch (e) {
+            return false;
+          }
+        },
+        isTaskTransferComplete(task) {
+          try {
+            if (!task) return false;
+            if (this.isMovieTask(task)) {
+              return this.hasTaskTransferRecord(task);
+            }
+            const sc = this.getTaskSeasonCounts(task.taskname || task.task_name);
+            if (!sc) return false;
+            return sc.total > 0 && sc.transferred >= sc.total;
+          } catch (e) {
+            return false;
+          }
+        },
+        shouldShowShareUrlBan(task) {
+          try {
+            if (!task || !task.shareurl_ban || String(task.shareurl_ban).trim() === '') return false;
+            if (this.isTaskTransferComplete(task)) return false;
+            return true;
+          } catch (e) {
+            return !!(task && task.shareurl_ban);
+          }
         },
         getTaskShowStatus(taskNameOrTask) {
           try {
@@ -5906,6 +5970,8 @@ export default {
 
           // 遍历所有任务
           this.formData.tasklist.forEach((task, index) => {
+            // 转存已全部完成：不再验证分享是否过期
+            if (this.isTaskTransferComplete(task)) return;
             // 如果任务有分享链接且没有设置shareurl_ban
             if (task.shareurl && !task.shareurl_ban) {
               // 检查分享链接
@@ -6052,8 +6118,9 @@ export default {
                 console.warn('加载任务列表元数据失败:', err);
               })
             ]).finally(() => {
-              // 数据加载完成后启动后台监听
+              // 数据加载完成后启动后台监听，再检查未完成任务的分享链接
               this.startTasklistAutoWatch();
+              this.checkShareUrlStatus();
             });
             
             // 该分支的系统性加载不应触发"未保存"提示
@@ -6401,15 +6468,8 @@ export default {
               }, 100);
               this.configHasLoaded = true;
 
-              // 加载任务最新信息（包括记录和文件）
+              // 加载任务最新信息（包括记录和文件）；分享验链等到元数据就绪后再做
               this.loadTaskLatestInfo();
-
-              // 数据加载完成后检查分享链接状态
-              if (this.activeTab === 'tasklist') {
-                setTimeout(() => {
-                  this.checkShareUrlStatus();
-                }, 300);
-              }
             })
             .catch(error => {
               // 错误处理
@@ -15251,9 +15311,6 @@ export default {
             this.loadAllTaskNames();
           }
           
-          // 检查分享链接状态
-          this.checkShareUrlStatus();
-
           // 初始化影视发现页面的选择状态
           this.initializeDiscoverySelection();
 
@@ -15278,8 +15335,9 @@ export default {
               console.warn('加载任务列表元数据失败:', err);
             })
           ]).finally(() => {
-            // 数据加载完成后启动后台监听
+            // 数据加载完成后启动后台监听，再检查未完成任务的分享链接
             this.startTasklistAutoWatch();
+            this.checkShareUrlStatus();
           });
         }
         }, 500);
