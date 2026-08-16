@@ -1,3 +1,5 @@
+  import { resolveShareurl, formatSuggestionShareId as formatShareIdFromUrl } from './shareurl.js';
+
   // 拼音工具函数：将中文转为拼音（小写），用于排序比较。
   // 排序比较器会反复调用，因此按任务名缓存转换结果，避免 O(n log n) 次全量转拼音。
   const _pinyinCache = new Map();
@@ -8737,6 +8739,7 @@ export default {
         selectSuggestion(index, suggestion) {
           // 不直接设置分享链接到输入框，只是打开文件选择模态框让用户浏览
           // 用户在模态框中导航后，最终的 this.fileSelect.shareurl 才是需要的地址
+          if (!suggestion || !suggestion.shareurl) return;
 
           // 记录当前选择的资源索引，用于连续浏览功能
           const resourceIndex = this.smart_param.taskSuggestions.data.findIndex(item => 
@@ -9265,7 +9268,7 @@ export default {
           }
           // 处理创建任务模态框的情况（index为-1）
           const currentShareurl = index === -1 ? this.createTask.taskData.shareurl : this.formData.tasklist[index].shareurl;
-          if (this.getShareurl(this.fileSelect.shareurl) != this.getShareurl(currentShareurl)) {
+          if (this.getShareurl(this.fileSelect.shareurl || '') != this.getShareurl(currentShareurl || '')) {
             this.fileSelect.stoken = "";
           }
           this.fileSelect.shareurl = shareurl || currentShareurl;
@@ -9325,7 +9328,7 @@ export default {
             fileSelectModal.style.zIndex = '';
           }
 
-          $('#fileSelectModal').modal('toggle');
+          $('#fileSelectModal').modal('show');
           // 调用getShareDetail时不传递任何参数，使用默认的重试机制
           this.getShareDetail(0, 1);
           
@@ -9370,7 +9373,7 @@ export default {
             if (fid == "0") {
               this.fileSelect.paths = []
             } else {
-              index = this.fileSelect.paths.findIndex(item => item.fid === fid);
+              const index = this.fileSelect.paths.findIndex(item => item.fid === fid);
               if (index !== -1) {
                 this.fileSelect.paths = this.fileSelect.paths.slice(0, index + 1)
               } else {
@@ -9579,16 +9582,10 @@ export default {
           $('#fileSelectModal').modal('hide')
         },
         getShareurl(shareurl, path = {}) {
-          if (path == {} || path.fid == 0) {
-            shareurl = shareurl.match(`.*s/[a-z0-9]+`)[0]
-          } else if (shareurl.includes(path.fid)) {
-            shareurl = shareurl.match(`.*/${path.fid}[^\/]*`)[0]
-          } else if (shareurl.includes('#/list/share')) {
-            shareurl = `${shareurl}/${path.fid}-${path.name}`
-          } else {
-            shareurl = `${shareurl}#/list/share/${path.fid}-${path.name}`
-          }
-          return shareurl;
+          return resolveShareurl(shareurl, path);
+        },
+        formatSuggestionShareId(suggestion) {
+          return formatShareIdFromUrl(suggestion && suggestion.shareurl);
         },
         detectNamingMode(task) {
           // 检测是否为顺序命名模式或剧集命名模式

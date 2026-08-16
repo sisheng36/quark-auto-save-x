@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:smoke": "node tests/smoke.mjs"
+    "test:smoke": "node tests/smoke.mjs",
+    "test:shareurl": "node tests/shareurl.mjs"
   },
   "dependencies": {
     "vue": "^3.5.41"
