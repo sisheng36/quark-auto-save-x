@@ -2391,8 +2391,8 @@
           <div class="modal-header">
             <h5 class="modal-title" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">
               <span v-if="fileSelect.previewRegex && fileSelect.index >= 0 && formData.tasklist[fileSelect.index]" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">{{ formData.tasklist[fileSelect.index].use_sequence_naming ? '顺序命名预览' : (formData.tasklist[fileSelect.index].use_episode_naming ? '剧集命名预览' : '正则命名预览') }}</span>
-              <span v-else-if="fileSelect.previewRegex && fileSelect.index === -1 && document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview'" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">{{ createTask.taskData.use_sequence_naming ? '顺序命名预览' : (createTask.taskData.use_episode_naming ? '剧集命名预览' : '正则命名预览') }}</span>
-              <span v-else-if="fileSelect.previewRegex && fileSelect.index === -1 && document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview-filemanager'" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">{{ fileManager.use_sequence_naming ? '顺序命名预览' : (fileManager.use_episode_naming ? '剧集命名预览' : '正则命名预览') }}</span>
+              <span v-else-if="fileSelect.previewRegex && fileSelect.index === -1 && fileSelect.modalType === 'preview'" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">{{ createTask.taskData.use_sequence_naming ? '顺序命名预览' : (createTask.taskData.use_episode_naming ? '剧集命名预览' : '正则命名预览') }}</span>
+              <span v-else-if="fileSelect.previewRegex && fileSelect.index === -1 && fileSelect.modalType === 'preview-filemanager'" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">{{ fileManager.use_sequence_naming ? '顺序命名预览' : (fileManager.use_episode_naming ? '剧集命名预览' : '正则命名预览') }}</span>
               <span v-else-if="fileSelect.selectDir" style="font-weight: 600; font-family: inherit; letter-spacing: normal;">选择{{fileManager.extract.selectExtractFolderMode ? '解压到的' : (fileSelect.moveMode ? '移动到的' : (fileSelect.selectShare ? '需转存的' : '保存到的'))}}文件夹</span>
               <span v-else style="font-weight: 600; font-family: inherit; letter-spacing: normal;">选择起始文件</span>
               <div v-if="modalLoading" class="spinner-border spinner-border-sm m-1" role="status"></div>
@@ -2442,7 +2442,7 @@
                 </div>
                 <!-- 文件管理器的命名预览 -->
                 <!-- 创建任务模态框的命名预览 -->
-                <div v-else-if="fileSelect.index === -1 && document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview'">
+                <div v-else-if="fileSelect.index === -1 && fileSelect.modalType === 'preview'">
                   <div v-if="createTask.taskData.use_sequence_naming">
                     <div style="margin-bottom: 1px; padding-left: 12px; display: flex; align-items: center;">
                       <span style="font-weight: 600; font-family: inherit; letter-spacing: normal;">顺序命名表达式：</span><span class="badge badge-info" v-html="createTask.taskData.pattern"></span>
@@ -2466,7 +2466,7 @@
                   </div>
                 </div>
                 <!-- 文件管理器的命名预览 -->
-                <div v-else-if="fileSelect.index === -1 && document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview-filemanager'">
+                <div v-else-if="fileSelect.index === -1 && fileSelect.modalType === 'preview-filemanager'">
                   <div v-if="fileManager.use_sequence_naming">
                     <div style="margin-bottom: 1px; padding-left: 12px; display: flex; align-items: center;">
                       <span style="font-weight: 600; font-family: inherit; letter-spacing: normal;">顺序命名表达式：</span><span class="badge badge-info" v-html="fileManager.pattern"></span>
@@ -2498,7 +2498,7 @@
                       fileSelect.index !== null && fileSelect.index >= 0 && formData.tasklist[fileSelect.index] ?
                         (formData.tasklist[fileSelect.index].use_sequence_naming ? '顺序命名' :
                         (formData.tasklist[fileSelect.index].use_episode_naming ? '剧集命名' : '正则命名')) :
-                      fileSelect.index === -1 && (document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview' || document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'source' || document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'start-file') ?
+                      fileSelect.index === -1 && (fileSelect.modalType === 'preview' || fileSelect.modalType === 'source' || fileSelect.modalType === 'start-file') ?
                         (createTask.taskData.use_sequence_naming ? '顺序命名' :
                         (createTask.taskData.use_episode_naming ? '剧集命名' : '正则命名')) :
                         (fileManager.use_sequence_naming ? '顺序命名' :
@@ -2580,7 +2580,7 @@
                     @mouseenter="fileSelectTotalHover = true"
                     @mouseleave="fileSelectTotalHover = false">共 {{ fileSelect.fileList.length }} 个项目<template v-if="isSavepathSelectModal() && fileSelect.selectedFiles.length === 0 && fileSelectTotalHover && fileSelect.fileList.length > 0">，<span class="history-select-all-btn" @click.stop="selectAllFileSelectItems">全选</span></template></span><span v-if="fileSelect.selectedFiles.length > 0">，已选中 {{ fileSelect.selectedFiles.length }} 个项目</span>
             </div>
-            <button type="button" class="btn btn-primary btn-cancel" @click="$('#fileSelectModal').modal('hide')"><span class="btn-text">取消</span></button>
+            <button type="button" class="btn btn-primary btn-cancel" @click="hideFileSelectModal()"><span class="btn-text">取消</span></button>
             <!-- 连续浏览按钮组（仅在资源搜索模式下且当前资源在搜索结果中时显示） -->
             <div v-if="fileSelect.selectShare && smart_param.taskSuggestions.data && smart_param.taskSuggestions.data.length > 1 && isCurrentResourceInSearchResults()" class="resource-navigation-buttons">
               <button type="button" class="btn btn-primary btn-sm" 
@@ -2609,21 +2609,21 @@
             <div class="file-selection-info mr-auto" style="color: var(--dark-text-color); font-size: 0.875rem; line-height: 1.5;">
               共 {{ fileSelect.fileList.length }} 个项目
             </div>
-            <button type="button" class="btn btn-primary btn-cancel" @click="$('#fileSelectModal').modal('hide')"><span class="btn-text">取消</span></button>
+            <button type="button" class="btn btn-primary btn-cancel" @click="hideFileSelectModal()"><span class="btn-text">取消</span></button>
           </div>
-          <div class="modal-footer" v-if="fileSelect.previewRegex && fileSelect.index === -1 && document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview'">
+          <div class="modal-footer" v-if="fileSelect.previewRegex && fileSelect.index === -1 && fileSelect.modalType === 'preview'">
             <div class="file-selection-info mr-auto" style="color: var(--dark-text-color); font-size: 0.875rem; line-height: 1.5;">
               共 {{ fileSelect.fileList.filter(f => f.file_name_re && f.file_name_re !== '×' && !f.file_name_re.startsWith('×')).length }} 个项目可重命名
             </div>
-            <button type="button" class="btn btn-primary btn-cancel" @click="$('#fileSelectModal').modal('hide')"><span class="btn-text">取消</span></button>
+            <button type="button" class="btn btn-primary btn-cancel" @click="hideFileSelectModal()"><span class="btn-text">取消</span></button>
           </div>
           <div class="modal-footer" v-if="fileSelect.previewRegex && fileSelect.index >= 0 && formData.tasklist[fileSelect.index]">
             <div class="file-selection-info mr-auto" style="color: var(--dark-text-color); font-size: 0.875rem; line-height: 1.5;">
               共 {{ fileSelect.fileList.filter(f => f.file_name_re && f.file_name_re !== '×' && !f.file_name_re.startsWith('×')).length }} 个项目可重命名
             </div>
-            <button type="button" class="btn btn-primary btn-cancel" @click="$('#fileSelectModal').modal('hide')"><span class="btn-text">取消</span></button>
+            <button type="button" class="btn btn-primary btn-cancel" @click="hideFileSelectModal()"><span class="btn-text">取消</span></button>
           </div>
-          <div class="modal-footer" v-if="fileSelect.previewRegex && fileSelect.index === -1 && document.getElementById('fileSelectModal').getAttribute('data-modal-type') === 'preview-filemanager'">
+          <div class="modal-footer" v-if="fileSelect.previewRegex && fileSelect.index === -1 && fileSelect.modalType === 'preview-filemanager'">
             <div class="file-selection-info mr-auto" style="color: var(--dark-text-color); font-size: 0.875rem; line-height: 1.5;">
               共 {{ fileSelect.fileList.filter(f => f.file_name_re && f.file_name_re !== '×' && !f.file_name_re.startsWith('×')).length }} 个项目可重命名
             </div>
@@ -2931,7 +2931,7 @@
                       </div>
                       <span v-if="editMetadata.display.matched_season_number" class="matched-season-wrap">
                         <span class="input-group-text square-append">第</span>
-                        <a href="#" @click.prevent="editMetadata.display.matched_tmdb_id && window.open('https://www.themoviedb.org/tv/' + editMetadata.display.matched_tmdb_id + '/season/' + parseInt(editMetadata.display.matched_season_number), '_blank')" class="matched-link matched-season">
+                        <a href="#" @click.prevent="openEditMetadataSeasonPage()" class="matched-link matched-season">
                           {{ editMetadata.display.matched_season_number }}
                         </a>
                         <span class="input-group-text square-append">季</span>
@@ -3041,7 +3041,7 @@
               <span v-if="(fileManager.extract.files && fileManager.extract.files.length > 1)">将 {{ fileManager.extract.files.length }} 个压缩包解压到：</span><span v-else>解压到：</span><span v-if="fileManager.extract.targetFolderPath">{{ fileManager.extract.targetFolderPath }}</span><span v-else>{{ getCurrentFolderPath() }}</span>
               <span class="change-extract-folder-btn" @click="showSelectExtractFolderModal()">更改</span>
             </div>
-            <button type="button" class="btn btn-primary btn-cancel" @click="$('#extractFileModal').modal('hide')"><span class="btn-text">取消</span></button>
+            <button type="button" class="btn btn-primary btn-cancel" @click="hideExtractFileModal()"><span class="btn-text">取消</span></button>
             <button type="button" class="btn btn-primary" @click="performExtract(false)"><span class="btn-text">云解压</span></button>
             <button type="button" class="btn btn-primary" @click="performExtract(true)"><span class="btn-text">云解压并前往解压位置</span></button>
           </div>

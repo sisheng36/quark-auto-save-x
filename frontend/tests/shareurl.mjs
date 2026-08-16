@@ -72,6 +72,53 @@ assert(
 );
 assert(formatSuggestionShareId(null) === '', '空 suggestion 展示应为空串');
 
+// Vue 3 运行时编译用 Proxy + with(_ctx)：document / window / $ 会被当成实例属性变成 undefined，渲染即白屏
+const appHtml = html.slice(html.indexOf('<div id="app">'));
+assert(
+  !/document\./.test(appHtml),
+  '#app 模板不得使用 document.，Vue 3 会读成 undefined 并卸掉整页'
+);
+assert(
+  !/window\./.test(appHtml),
+  '#app 模板不得使用 window.，Vue 3 会读成 undefined'
+);
+assert(
+  !/\$\(['"]/.test(appHtml),
+  '#app 模板不得使用 $()，Vue 3 会读成 undefined'
+);
+assert(
+  /fileSelect\.modalType/.test(appHtml),
+  '文件夹选择框类型应读 fileSelect.modalType，而不是 DOM'
+);
+assert(
+  /hideFileSelectModal\(\)/.test(appHtml),
+  '关闭文件夹选择框应走 hideFileSelectModal()'
+);
+
+// 复现 Vue 3 运行时编译 Proxy：非全局白名单标识符会被 has() 认领，get 得到 undefined
+const vueLikeHas = new Function(
+  'key',
+  'const allowed = "Infinity,undefined,NaN,Math,Number,Date,Array,Object,Boolean,String,JSON,console,Error,Symbol";' +
+  'return key[0] !== "_" && allowed.split(",").indexOf(key) === -1;'
+);
+assert(vueLikeHas('document') === true, 'Vue 3 运行时 Proxy 会认领 document');
+assert(vueLikeHas('window') === true, 'Vue 3 运行时 Proxy 会认领 window');
+assert(vueLikeHas('$') === true, 'Vue 3 运行时 Proxy 会认领 $');
+assert(vueLikeHas('fileSelect') === true, '组件数据 fileSelect 应由 Proxy 认领');
+const readThroughProxy = new Function(
+  'ctx',
+  'const proxy = new Proxy(ctx, { has(_, key) { return typeof key === "string" && key[0] !== "_" && "Infinity,undefined,NaN,Math,JSON,Object,String".split(",").indexOf(key) === -1; }, get(t, k) { return t[k]; } });' +
+  'with (proxy) { return typeof document; }'
+);
+assert(
+  readThroughProxy({ fileSelect: { modalType: 'source' } }) === 'undefined',
+  '模板里写 document 时，Vue 3 Proxy 会把它变成 undefined'
+);
+assert(
+  readThroughProxy({ document: { getElementById() { return {}; } } }) === 'object',
+  '只有把 document 放到实例上才读得到'
+);
+
 if (failures.length) {
   console.error('shareurl 回归失败:');
   for (const f of failures) console.error(' -', f);

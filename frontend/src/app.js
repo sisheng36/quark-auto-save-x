@@ -468,7 +468,8 @@ export default {
           previewFolderId: null, // 文件整理命名预览当前浏览目录（独立于主页面 currentFolder）
           moveMode: false, // 是否为移动文件模式
           moveFileIds: [], // 要移动的文件ID列表
-          shareAuthor: '' // 选择需转存的文件夹模态框左下角展示用
+          shareAuthor: '', // 选择需转存的文件夹模态框左下角展示用
+          modalType: '' // 文件夹选择框类型：source/target/preview 等；模板禁止读 document
         },
         historyParams: {
           sortBy: "transfer_time",
@@ -1893,8 +1894,24 @@ export default {
           if (this.fileManager.extract.selectExtractFolderMode) {
             return false;
           }
+          return this.fileSelect.modalType === 'target';
+        },
+        // Vue 3 模板读不到 window.document / $，类型必须放在实例上
+        setFileSelectModalType(type) {
+          this.fileSelect.modalType = type || '';
           const modal = document.getElementById('fileSelectModal');
-          return modal && modal.getAttribute('data-modal-type') === 'target';
+          if (!modal) return;
+          if (type) {
+            modal.setAttribute('data-modal-type', type);
+          } else {
+            modal.removeAttribute('data-modal-type');
+          }
+        },
+        hideFileSelectModal() {
+          $('#fileSelectModal').modal('hide');
+        },
+        hideExtractFileModal() {
+          $('#extractFileModal').modal('hide');
         },
         // 从日期字符串（YYYY-MM-DD）中提取月份
         getDateMonthFromString(dateStr) {
@@ -5363,6 +5380,13 @@ export default {
           } catch (e) {
             console.warn('打开任务匹配TMDB页面失败', e);
           }
+        },
+        openEditMetadataSeasonPage() {
+          const display = this.editMetadata && this.editMetadata.display;
+          const tmdbId = display && display.matched_tmdb_id;
+          const season = display && display.matched_season_number;
+          if (!tmdbId || season == null || season === '') return;
+          window.open(`https://www.themoviedb.org/tv/${tmdbId}/season/${parseInt(season, 10)}`, '_blank');
         },
         // 获取任务的 TMDB ID（用于任务列表海报视图）
         getTaskTmdbId(task) {
@@ -9068,7 +9092,7 @@ export default {
           this.fileSelect.sortOrder = "desc";
 
           // 设置模态框类型为target（保存目标文件夹）
-          document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'target');
+          this.setFileSelectModalType('target');
 
           // 检查是否从创建任务模态框中打开，如果是则设置更高的z-index
           const createTaskModal = document.getElementById('createTaskModal');
@@ -9304,11 +9328,11 @@ export default {
           
           // 根据不同条件设置模态框类型
           if (this.fileSelect.previewRegex) {
-            document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'preview');
+            this.setFileSelectModalType('preview');
           } else if (this.fileSelect.selectDir) {
-            document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'source');
+            this.setFileSelectModalType('source');
           } else {
-            document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'start-file');
+            this.setFileSelectModalType('start-file');
           }
 
           // 检查是否从创建任务模态框中打开，如果是则设置更高的z-index
@@ -12566,7 +12590,7 @@ export default {
           // 存储临时任务索引
           this.fileSelect.index = -1; // 使用-1表示这是文件管理器的预览
           // 设置模态框标题类型
-          document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'preview-filemanager');
+          this.setFileSelectModalType('preview-filemanager');
           // 显示模态框
           if (isInitialOpen) $('#fileSelectModal').modal('toggle'); // 仅首次打开时toggle
           // 获取文件列表并处理重命名预览
@@ -12764,7 +12788,7 @@ export default {
           this.fileSelect.sortOrder = "desc";
 
           // 设置模态框类型为move（移动目标文件夹）
-          document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'move');
+          this.setFileSelectModalType('move');
 
           $('#fileSelectModal').modal('show');
 
@@ -12846,7 +12870,7 @@ export default {
           this.fileSelect.sortOrder = "desc";
 
           // 设置模态框类型为extract-target（解压目标文件夹）
-          document.getElementById('fileSelectModal').setAttribute('data-modal-type', 'extract-target');
+          this.setFileSelectModalType('extract-target');
 
           // 从云解压模态框打开时，提高文件选择模态框的 z-index，使其显示在云解压之上
           const extractFileModal = document.getElementById('extractFileModal');
