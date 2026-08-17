@@ -29,6 +29,14 @@ if (!/<i class="bi bi-[a-z0-9-]+"/.test(toggleBtn[0])) {
 }
 console.log('移动端侧边栏开关按钮: 存在（d-md-none + data-target="#sidebarMenu" + 图标元素）');
 
+// 0.1) iOS 添加到主屏幕图标回归检查：必须声明 apple-touch-icon（180x180 PNG）
+const iconLink = html.match(/<link[^>]*rel="apple-touch-icon"[^>]*>/);
+if (!iconLink || !/href="\.\/static\/images\/apple-touch-icon\.png"/.test(iconLink[0])) {
+  console.error('FAIL: 缺少 apple-touch-icon 链接（./static/images/apple-touch-icon.png）');
+  process.exit(1);
+}
+console.log('apple-touch-icon 链接: 存在（180x180 PNG）');
+
 // 2) 开发版构建产物（含 Vue 警告，便于发现问题）
 const bundlePath = process.env.QAS_SMOKE_BUNDLE;
 if (!bundlePath) {
