@@ -6123,8 +6123,10 @@ export default {
           this.activeTab = tab;
           // 在本地存储中保存当前标签页状态
           localStorage.setItem('quarkAutoSave_activeTab', tab);
-          if (window.innerWidth <= 768) {
-            $('#sidebarMenu').collapse('toggle')
+          // 移动端：仅在侧边栏抽屉已展开时收起（点击导航项后关闭抽屉）；
+          // 从总览快捷入口等非抽屉入口切换时抽屉本未展开，不应被打开
+          if (window.innerWidth <= 768 && $('#sidebarMenu').hasClass('show')) {
+            $('#sidebarMenu').collapse('hide')
           }
 
           // 切换到总览页：刷新问候语与转存统计

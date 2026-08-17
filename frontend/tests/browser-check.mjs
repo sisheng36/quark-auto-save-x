@@ -155,6 +155,62 @@ if (drawerClosed.btnDisplay === 'none') {
   console.error('FAIL: 抽屉收起后汉堡按钮未重新显示');
   process.exit(1);
 }
+// 点击遮罩（空白区域）也应收起抽屉
+console.log('=== 点击遮罩收起抽屉 ===');
+await page.click('.mobile-sidebar-toggle', { timeout: 10000 });
+await page.waitForTimeout(400);
+const backdropState = await page.evaluate(() => {
+  const sidebar = document.getElementById('sidebarMenu');
+  const backdrop = document.querySelector('.sidebar-backdrop');
+  return {
+    show: sidebar.classList.contains('show'),
+    backdropDisplay: backdrop ? getComputedStyle(backdrop).display : 'no-backdrop'
+  };
+});
+console.log('遮罩显示:', JSON.stringify(backdropState));
+if (!backdropState.show || backdropState.backdropDisplay !== 'block') {
+  console.error('FAIL: 抽屉展开后遮罩未显示');
+  process.exit(1);
+}
+// 点击抽屉右侧的遮罩空白区（视口 390px 宽，抽屉占 78%≈304px，右侧为遮罩可点区）
+await page.click('.sidebar-backdrop', { position: { x: 370, y: 400 }, timeout: 10000 });
+await page.waitForTimeout(400);
+const backdropClosed = await page.evaluate(() => {
+  const sidebar = document.getElementById('sidebarMenu');
+  const btn = document.querySelector('.mobile-sidebar-toggle');
+  return {
+    show: sidebar.classList.contains('show'),
+    btnDisplay: getComputedStyle(btn).display,
+    backdropDisplay: getComputedStyle(document.querySelector('.sidebar-backdrop')).display
+  };
+});
+console.log('点击遮罩后:', JSON.stringify(backdropClosed));
+if (backdropClosed.show || backdropClosed.btnDisplay === 'none' || backdropClosed.backdropDisplay === 'block') {
+  console.error('FAIL: 点击遮罩后抽屉未收起/按钮未重现/遮罩未隐藏');
+  process.exit(1);
+}
+// 回归：总览页快捷入口切换标签时不得误开抽屉
+console.log('=== 总览快捷入口切换标签 ===');
+await page.evaluate(() => { window.__QAS_APP__.activeTab = 'overview'; });
+await page.waitForTimeout(300);
+const quickLinkResult = await (async () => {
+  await page.click('.overview-quick-link', { timeout: 10000 });
+  await page.waitForTimeout(400);
+  return page.evaluate(() => {
+    const sidebar = document.getElementById('sidebarMenu');
+    const btn = document.querySelector('.mobile-sidebar-toggle');
+    return {
+      activeTab: window.__QAS_APP__.activeTab,
+      drawerOpen: sidebar.classList.contains('show'),
+      btnDisplay: getComputedStyle(btn).display
+    };
+  });
+})();
+console.log('快捷入口点击后:', JSON.stringify(quickLinkResult));
+if (quickLinkResult.drawerOpen || quickLinkResult.activeTab !== 'tasklist') {
+  console.error('FAIL: 总览快捷入口切换后抽屉被误开（BugFix 回归）');
+  process.exit(1);
+}
 // 还原桌面视口，避免影响后续截图
 await page.setViewportSize({ width: 1280, height: 800 });
 

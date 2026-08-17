@@ -4269,6 +4269,23 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   .mobile-sidebar-toggle i {
     font-size: 1.25rem;
   }
+  /* 抽屉遮罩：展开时覆盖内容区（z-index 低于抽屉），点击空白处收起抽屉 */
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1044; /* 低于抽屉(1045)，高于页面内容 */
+    background: var(--navbar-mobile-overlay);
+  }
+  .glass-sidebar.collapse.show ~ .sidebar-backdrop {
+    display: block;
+  }
+  html.theme-light .sidebar-backdrop {
+    background: rgba(15, 23, 42, 0.32);
+  }
   /* 浅色主题：与浅色玻璃卡片同款 */
   html.theme-light .mobile-sidebar-toggle {
     background: rgba(255, 255, 255, 0.34);
