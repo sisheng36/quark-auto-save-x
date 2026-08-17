@@ -8367,6 +8367,16 @@ export default {
           }
         },
         async runScriptNow(task_index = null) {
+          // 单任务运行时若配置有未保存修改，先自动保存：
+          // 「立即运行」发送的是表单实时数据（本次运行生效），但定时任务读取的是后端配置文件，
+          // 若不保存，集数范围等新增字段不会持久化，定时任务将按旧配置执行（可能转存范围外的集）
+          if (this.configModified) {
+            if (task_index != null) {
+              await this.saveConfig();
+            } else if (!confirm('配置已修改但未保存，是否继续运行？')) {
+              return;
+            }
+          }
           let body = {};
           if (task_index != null) {
             const task = { ...this.formData.tasklist[task_index] };
@@ -8376,10 +8386,6 @@ export default {
               "tasklist": [task],
               "original_index": task_index + 1  // 添加原始索引，从1开始计数
             };
-          } else if (this.configModified) {
-            if (!confirm('配置已修改但未保存，是否继续运行？')) {
-              return;
-            }
           }
           $('#logModal').modal('toggle');
           this.modalLoading = true;
