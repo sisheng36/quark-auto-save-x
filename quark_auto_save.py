@@ -4446,6 +4446,26 @@ class Quark:
                     share_file["original_name"] = share_file["file_name"]
                     need_save_list.append(share_file)
 
+        # 集数范围过滤（双保险）：公共转存前对最终转存列表再按集号过滤一次。
+        # 即使分享列表层面的过滤被其他路径绕过，转存列表仍只包含范围内的集。
+        # 幂等：与 share_file_list 过滤结果一致时无任何移除；未配置范围时不执行。
+        try:
+            _need_start = int(task.get("episode_start"))
+        except (TypeError, ValueError):
+            _need_start = None
+        try:
+            _need_end = int(task.get("episode_end"))
+        except (TypeError, ValueError):
+            _need_end = None
+        if (_need_start is not None or _need_end is not None) and need_save_list:
+            _before_need = len(need_save_list)
+            need_save_list = filter_files_by_episode_range(need_save_list, task)
+            if len(need_save_list) < _before_need:
+                print(
+                    f"集数范围过滤(转存前): 移除 {_before_need - len(need_save_list)} 个文件，"
+                    f"剩余 {len(need_save_list)} 个待转存"
+                )
+
         fid_list = [item["fid"] for item in need_save_list]
         fid_token_list = [item["share_fid_token"] for item in need_save_list]
         
