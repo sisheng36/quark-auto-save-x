@@ -15220,6 +15220,18 @@ export default {
           this.activeTab = savedTab;
         }
         
+        // 首屏初始化总览页数据：默认或上次记忆的标签为总览时，
+        // 立即生成问候语并加载转存统计，否则首次进入问候语为空、转存动态全为 0
+        this.updateOverviewGreeting();
+        if (this.activeTab === 'overview') {
+          this.loadOverviewTransferStats();
+        }
+        // 定时检测时段变化（早/午/晚），页面长时间停留时问候语自动刷新；
+        // updateOverviewGreeting 在时段未变化时直接返回，开销可忽略
+        this._overviewGreetingTimer = setInterval(() => {
+          this.updateOverviewGreeting();
+        }, 60 * 1000);
+        
         // 从本地存储中恢复侧边栏折叠状态
         const savedSidebarState = localStorage.getItem('quarkAutoSave_sidebarCollapsed');
         if (savedSidebarState) {
@@ -15371,6 +15383,11 @@ export default {
       },
       beforeUnmount() {
         window.removeEventListener('beforeunload', this.handleBeforeUnload);
+        // 清理总览问候语时段检测定时器
+        if (this._overviewGreetingTimer) {
+          clearInterval(this._overviewGreetingTimer);
+          this._overviewGreetingTimer = null;
+        }
         // 移除点击事件监听器
         document.removeEventListener('click', this.handleOutsideClick);
         document.removeEventListener('click', this.handleRenameOutsideClick);

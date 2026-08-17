@@ -830,7 +830,7 @@
             <div class="overview-greeting" aria-label="问候语">
               <div class="overview-greeting-main">
                 <span class="overview-greeting-emoji">{{ overviewGreeting.emoji }}</span>
-                <span class="overview-greeting-text">{{ overviewGreeting.text }}<span v-if="formData.webui && formData.webui.username">，{{ formData.webui.username }}</span></span>
+                <span class="overview-greeting-text">{{ overviewGreeting.text }}<span v-if="overviewGreeting.text && formData.webui && formData.webui.username">，{{ formData.webui.username }}</span></span>
               </div>
               <div class="overview-greeting-date">{{ overviewGreeting.dateText }}</div>
             </div>
