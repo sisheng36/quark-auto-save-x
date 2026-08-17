@@ -3585,7 +3585,17 @@ class Quark:
         except (TypeError, ValueError):
             _range_end = None
         if _range_start is not None or _range_end is not None:
+            _before_names = [f.get("file_name") for f in share_file_list if isinstance(f, dict)]
             share_file_list = filter_files_by_episode_range(share_file_list, task)
+            _after_names = [f.get("file_name") for f in share_file_list if isinstance(f, dict)]
+            if len(_after_names) < len(_before_names):
+                _removed = [n for n in _before_names if n not in _after_names]
+                print(
+                    f"集数范围过滤: 移除 {len(_removed)} 个文件（范围 {_range_start or '不限'}~{_range_end or '不限'}），"
+                    f"剩余 {len(_after_names)} 个待处理"
+                )
+                for _n in _removed:
+                    print(f"  移除: {_n}")
 
         # 获取目标目录文件列表
         savepath = re.sub(r"/{2,}", "/", f"/{task['savepath']}{subdir_path}")
