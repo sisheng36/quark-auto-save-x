@@ -227,6 +227,64 @@ def advanced_filter_files(file_list, filterwords):
     
     return file_list
 
+def filter_files_by_episode_range(share_file_list, task):
+    """
+    按任务配置的「集数范围」过滤分享文件列表（只转存指定区间内的集）。
+
+    任务字段（可选，含边界）：
+        episode_start: 起始集数（整数），配置后只转存该集及之后
+        episode_end:   结束集数（整数），配置后只转存该集及之前
+
+    规则：
+        - 两个字段都未配置或无法解析为整数 → 返回原列表，不影响现有行为
+        - 文件夹条目始终保留（是否处理由 update_subdir 逻辑决定）
+        - 文件用 extract_episode_number 提取集号，start <= 集号 <= end 保留，范围外移除
+        - 提取不到集号的文件安全取向：跳过并打印日志（无法确认是否在范围内，避免误转存）
+
+    Args:
+        share_file_list: 分享文件列表（ls_dir/get_detail 返回的条目）
+        task: 任务配置 dict
+
+    Returns:
+        过滤后的分享文件列表
+    """
+    if not share_file_list or not task:
+        return share_file_list
+
+    def _parse_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    episode_start = _parse_int(task.get("episode_start"))
+    episode_end = _parse_int(task.get("episode_end"))
+    if episode_start is None and episode_end is None:
+        return share_file_list
+
+    filtered = []
+    for share_file in share_file_list:
+        if not isinstance(share_file, dict):
+            filtered.append(share_file)
+            continue
+        # 文件夹保留，交给更新目录/递归逻辑处理
+        if share_file.get("dir"):
+            filtered.append(share_file)
+            continue
+        file_name = share_file.get("file_name", "")
+        episode_num = extract_episode_number(file_name)
+        if episode_num is None:
+            print(
+                f"[集数范围] 无法识别集号，跳过文件（范围 {episode_start or '不限'}~{episode_end or '不限'}）: {file_name}"
+            )
+            continue
+        if episode_start is not None and episode_num < episode_start:
+            continue
+        if episode_end is not None and episode_num > episode_end:
+            continue
+        filtered.append(share_file)
+    return filtered
+
 # 全局的文件排序函数
 def sort_file_by_name(file):
     """
@@ -3516,6 +3574,19 @@ class Quark:
         if task.get("filterwords"):
             share_file_list = advanced_filter_files(share_file_list, task["filterwords"])
 
+        # 应用集数范围过滤：只转存配置区间内的集（episode_start/episode_end，含边界）
+        # 仅在至少一个字段能解析为整数时启用，避免前端空字符串触发无意义的过滤与日志
+        try:
+            _range_start = int(task.get("episode_start"))
+        except (TypeError, ValueError):
+            _range_start = None
+        try:
+            _range_end = int(task.get("episode_end"))
+        except (TypeError, ValueError):
+            _range_end = None
+        if _range_start is not None or _range_end is not None:
+            share_file_list = filter_files_by_episode_range(share_file_list, task)
+
         # 获取目标目录文件列表
         savepath = re.sub(r"/{2,}", "/", f"/{task['savepath']}{subdir_path}")
         if not self.savepath_fid.get(savepath):
@@ -5839,6 +5910,17 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                 print(f"正则替换: {task['replace']}")
         if task.get("filterwords"):
             print(f"过滤规则: {task['filterwords']}")
+        # 集数范围（任务级打印一次，避免子目录递归重复打印）
+        try:
+            _log_range_start = int(task.get("episode_start"))
+        except (TypeError, ValueError):
+            _log_range_start = None
+        try:
+            _log_range_end = int(task.get("episode_end"))
+        except (TypeError, ValueError):
+            _log_range_end = None
+        if _log_range_start is not None or _log_range_end is not None:
+            print(f"集数范围: 只转存第 {_log_range_start or '不限'}~{_log_range_end or '不限'} 集")
         if task.get("update_subdir"):
             print(f"更新目录: {task['update_subdir']}")
         # 获取任务的执行周期模式，优先使用任务自身的execution_mode，否则使用系统配置的execution_mode

@@ -365,7 +365,9 @@ export default {
           episode_naming: "",
           use_episode_naming: false,
           execution_mode: null, // 将在openCreateTaskModal中设置为formData.execution_mode
-          auto_extract_archive: "" // 空字符串表示继承全局设置
+          auto_extract_archive: "", // 空字符串表示继承全局设置
+          episode_start: "", // 集数范围起始（可选，只转存该集及之后）
+          episode_end: "" // 集数范围结束（可选，只转存该集及之前）
         },
         run_log: "",
         runtimeLogs: [],
@@ -817,6 +819,8 @@ export default {
             use_episode_naming: false,
             update_subdir: "",
             startfid: "",
+            episode_start: "", // 集数范围起始（可选，只转存该集及之后）
+            episode_end: "", // 集数范围结束（可选，只转存该集及之前）
             shareurl_ban: null
           }
         }

@@ -1255,6 +1255,14 @@
                       </div>
                     </div>
                   </div>
+                  <div class="task-field" title="只转存指定集数范围内的文件（含边界），例如起始 11、结束 16 则只转存第 11~16 集。文件名需能识别集号，识别不了集号的文件会被跳过；留空表示不限制。可与起始文件、集数查重叠加使用">
+                    <label class="col-form-label">集数范围</label>
+                    <div class="input-group">
+                      <input type="number" min="1" step="1" class="form-control" placeholder="起始集（可选）" v-model="task.episode_start">
+                      <div class="input-group-text">~</div>
+                      <input type="number" min="1" step="1" class="form-control" placeholder="结束集（可选）" v-model="task.episode_end">
+                    </div>
+                  </div>
                   <div class="task-field" title="匹配到的目录及其所有子目录、文件都会参与更新，并应用与根目录相同的正则命名和过滤规则（剧集、顺序命名仅支持对根目录文件重命名）。目录是逐级索引的，无法直接指定某个深层目录；目录层级或文件数量过多时会明显增加扫描耗时，慎用.*">
                     <label class="col-form-label">更新目录</label>
                     <input type="text" name="update_subdir[]" class="form-control" v-model="task.update_subdir" placeholder="可选，输入需要更新的子目录的文件夹名称（或正则表达式），多个项目用竖线分隔，如：4K|1080P">
@@ -2788,6 +2796,16 @@
                     <div class="input-group-append" v-if="createTask.taskData.shareurl">
                       <button class="btn btn-outline-secondary" type="button" @click="fileSelect.selectDir=false;fileSelect.previewRegex=false;showShareSelect(-1)" title="选择起始文件"><i class="bi bi-folder"></i></button>
                     </div>
+                  </div>
+                </div>
+              </div>
+              <div class="form-group row" title="只转存指定集数范围内的文件（含边界），例如起始 11、结束 16 则只转存第 11~16 集。文件名需能识别集号，识别不了集号的文件会被跳过；留空表示不限制。可与起始文件、集数查重叠加使用">
+                <label class="col-sm-2 col-form-label">集数范围</label>
+                <div class="col-sm-10">
+                  <div class="input-group">
+                    <input type="number" min="1" step="1" class="form-control" placeholder="起始集（可选）" v-model="createTask.taskData.episode_start">
+                    <div class="input-group-text">~</div>
+                    <input type="number" min="1" step="1" class="form-control" placeholder="结束集（可选）" v-model="createTask.taskData.episode_end">
                   </div>
                 </div>
               </div>
