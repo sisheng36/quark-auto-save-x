@@ -5004,6 +5004,25 @@ class Quark:
                     # 使用全局排序函数进行排序（倒序，最新的在前）
                     share_file_list = sorted(share_file_list, key=sort_file_by_name, reverse=True)
 
+                    # 应用集数范围过滤（与 do_save_task 一致）：重命名/补转存同样只处理范围内的集，
+                    # 否则 do_save_task 已按范围过滤，do_rename_task 的补转存又会把范围外的集转存进来
+                    try:
+                        _rn_start = int(task.get("episode_start"))
+                    except (TypeError, ValueError):
+                        _rn_start = None
+                    try:
+                        _rn_end = int(task.get("episode_end"))
+                    except (TypeError, ValueError):
+                        _rn_end = None
+                    if _rn_start is not None or _rn_end is not None:
+                        _rn_before = len(share_file_list)
+                        share_file_list = filter_files_by_episode_range(share_file_list, task)
+                        if len(share_file_list) < _rn_before:
+                            print(
+                                f"集数范围过滤(重命名): 移除 {_rn_before - len(share_file_list)} 个文件，"
+                                f"剩余 {len(share_file_list)} 个待处理"
+                            )
+
                     # 预先过滤分享文件列表，去除已存在的文件
                     filtered_share_files = []
                     start_fid = task.get("startfid", "")
