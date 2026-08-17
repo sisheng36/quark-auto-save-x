@@ -51,13 +51,6 @@
       <span class="aurora-orb aurora-orb-3"></span>
     </div>
 
-    <!-- 移动端菜单按钮：展开/收起侧边栏抽屉 -->
-    <button type="button" class="navbar-toggler navbar-toggler-square mobile-sidebar-toggle d-md-none collapsed"
-            data-toggle="collapse" data-target="#sidebarMenu"
-            aria-controls="sidebarMenu" aria-expanded="false" aria-label="打开侧边栏菜单">
-      <i class="bi bi-list"></i>
-    </button>
-
     <!-- 悬浮操作按钮：收起为单个图标，鼠标悬浮展开全部操作 -->
     <div class="floating-action-buttons">
       <button type="button" class="floating-action-btn floating-action-item" title="保存（CTRL+S）" @click="saveConfig()">
@@ -154,6 +147,13 @@
           </div>
         </div>
       </nav>
+
+      <!-- 移动端菜单按钮：展开/收起侧边栏抽屉（位于抽屉之后，便于 CSS 按抽屉状态显隐） -->
+      <button type="button" class="navbar-toggler navbar-toggler-square mobile-sidebar-toggle d-md-none collapsed"
+              data-toggle="collapse" data-target="#sidebarMenu"
+              aria-controls="sidebarMenu" aria-expanded="false" aria-label="打开侧边栏菜单">
+        <i class="bi bi-list"></i>
+      </button>
 
       <main class="glass-main">
         <form @submit.prevent="saveConfig" @keydown.enter.prevent>

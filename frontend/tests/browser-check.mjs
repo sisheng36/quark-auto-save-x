@@ -112,13 +112,18 @@ const drawerOpened = await (async () => {
     return {
       show: sidebar.classList.contains('show'),
       ariaExpanded: btn.getAttribute('aria-expanded'),
-      labelDisplay: navText ? getComputedStyle(navText).display : 'no-label'
+      labelDisplay: navText ? getComputedStyle(navText).display : 'no-label',
+      btnDisplay: getComputedStyle(btn).display // 抽屉展开时按钮应隐藏
     };
   });
 })();
 console.log('抽屉展开:', JSON.stringify(drawerOpened));
 if (!drawerOpened.show || drawerOpened.ariaExpanded !== 'true' || drawerOpened.labelDisplay === 'none') {
   console.error('FAIL: 移动端抽屉未展开或文字标签不可见');
+  process.exit(1);
+}
+if (drawerOpened.btnDisplay !== 'none') {
+  console.error('FAIL: 抽屉展开后汉堡按钮未隐藏（display=' + drawerOpened.btnDisplay + '）');
   process.exit(1);
 }
 const drawerClosed = await (async () => {
@@ -132,11 +137,22 @@ const drawerClosed = await (async () => {
     });
   }
   await page.waitForTimeout(400);
-  return page.evaluate(() => ({ show: document.getElementById('sidebarMenu').classList.contains('show') }));
+  return page.evaluate(() => {
+    const sidebar = document.getElementById('sidebarMenu');
+    const btn = document.querySelector('.mobile-sidebar-toggle');
+    return {
+      show: sidebar.classList.contains('show'),
+      btnDisplay: getComputedStyle(btn).display // 抽屉收起后按钮应重新显示
+    };
+  });
 })();
 console.log('抽屉收起:', JSON.stringify(drawerClosed));
 if (drawerClosed.show) {
   console.error('FAIL: 点击导航项后抽屉未自动收起');
+  process.exit(1);
+}
+if (drawerClosed.btnDisplay === 'none') {
+  console.error('FAIL: 抽屉收起后汉堡按钮未重新显示');
   process.exit(1);
 }
 // 还原桌面视口，避免影响后续截图

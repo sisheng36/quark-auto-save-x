@@ -4268,6 +4268,11 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   .mobile-sidebar-toggle i {
     font-size: 1.25rem;
   }
+  /* 抽屉展开（或动画中）时隐藏汉堡按钮，收起后自动重新显示 */
+  .glass-sidebar.collapse.show ~ .mobile-sidebar-toggle,
+  .glass-sidebar.collapsing ~ .mobile-sidebar-toggle {
+    display: none;
+  }
   /* 抽屉展开时，即使桌面端保存过“折叠”状态也显示完整文字标签 */
   .glass-sidebar.sidebar-collapsed .nav-link {
     justify-content: flex-start;
