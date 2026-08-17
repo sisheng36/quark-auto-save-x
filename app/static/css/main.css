@@ -4257,16 +4257,25 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 12px;
-    background: var(--glass-bg-strong);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
+    /* 与玻璃卡片(.glass-tab)同款磨玻璃质感 */
+    background: linear-gradient(150deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035) 52%, rgba(165, 180, 252, 0.075));
+    -webkit-backdrop-filter: blur(28px) saturate(155%);
+    backdrop-filter: blur(28px) saturate(155%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px; /* 略小于卡片圆角，适配小尺寸 */
+    box-shadow: 0 16px 44px rgba(4, 3, 18, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.15);
     color: var(--text-primary);
   }
   .mobile-sidebar-toggle i {
     font-size: 1.25rem;
+  }
+  /* 浅色主题：与浅色玻璃卡片同款 */
+  html.theme-light .mobile-sidebar-toggle {
+    background: rgba(255, 255, 255, 0.34);
+    border-color: rgba(255, 255, 255, 0.58);
+    -webkit-backdrop-filter: blur(28px) saturate(130%);
+    backdrop-filter: blur(28px) saturate(130%);
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.68);
   }
   /* 抽屉展开（或动画中）时隐藏汉堡按钮，收起后自动重新显示 */
   .glass-sidebar.collapse.show ~ .mobile-sidebar-toggle,
