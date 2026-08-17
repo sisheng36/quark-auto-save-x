@@ -84,11 +84,21 @@ const toggleInfo = await page.evaluate(() => {
   if (!btn) return 'button-missing';
   const r = btn.getBoundingClientRect();
   const cs = getComputedStyle(btn);
-  return { display: cs.display, visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' };
+  const icon = btn.querySelector('i');
+  const iconContent = icon ? getComputedStyle(icon, '::before').content : 'no-icon';
+  return {
+    display: cs.display,
+    visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden',
+    iconContent // 应为图标码点（如 "\f479"），空白按钮时为 "none" 或 "normal"
+  };
 });
 console.log('汉堡按钮:', JSON.stringify(toggleInfo));
 if (!toggleInfo || toggleInfo === 'button-missing' || !toggleInfo.visible) {
   console.error('FAIL: 移动端汉堡按钮不存在或不可见');
+  process.exit(1);
+}
+if (!toggleInfo.iconContent || toggleInfo.iconContent === 'none' || toggleInfo.iconContent === 'normal') {
+  console.error('FAIL: 汉堡按钮图标未渲染（bootstrap-icons 子集缺少该图标）');
   process.exit(1);
 }
 const drawerOpened = await (async () => {

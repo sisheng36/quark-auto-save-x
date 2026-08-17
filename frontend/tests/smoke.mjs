@@ -14,7 +14,7 @@ html = html.replace('version: "[[ version ]]"', 'version: "dev"');
 html = html.replace('plugin_flags: "[[ plugin_flags ]]"', 'plugin_flags: ""');
 
 // 0) 移动端侧边栏开关回归检查：模板必须包含能打开 #sidebarMenu 抽屉的按钮
-const toggleBtn = html.match(/<button[^>]*data-target="#sidebarMenu"[^>]*>/);
+const toggleBtn = html.match(/<button[^>]*data-target="#sidebarMenu"[^>]*>[\s\S]*?<\/button>/);
 if (!toggleBtn) {
   console.error('FAIL: 未找到移动端侧边栏开关按钮（data-target="#sidebarMenu"）');
   process.exit(1);
@@ -23,7 +23,11 @@ if (!/d-md-none/.test(toggleBtn[0])) {
   console.error('FAIL: 侧边栏开关按钮缺少 d-md-none（桌面端不应显示）');
   process.exit(1);
 }
-console.log('移动端侧边栏开关按钮: 存在（d-md-none + data-target="#sidebarMenu"）');
+if (!/<i class="bi bi-[a-z0-9-]+"/.test(toggleBtn[0])) {
+  console.error('FAIL: 侧边栏开关按钮缺少图标元素（<i class="bi ...">）');
+  process.exit(1);
+}
+console.log('移动端侧边栏开关按钮: 存在（d-md-none + data-target="#sidebarMenu" + 图标元素）');
 
 // 2) 开发版构建产物（含 Vue 警告，便于发现问题）
 const bundlePath = process.env.QAS_SMOKE_BUNDLE;
