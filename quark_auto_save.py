@@ -3425,6 +3425,11 @@ class Quark:
         # 每轮任务重置：更新目录下「转存轮询仅提示一次」（实例级，子任务 copy 不影响）
         self._transfer_poll_ui_done = False
         task.pop("_transfer_poll_progress_shown", None)  # 兼容旧版写在 task 上的键
+        # 诊断：打印本任务集数范围配置，用于定位「过滤未生效」时任务对象的实际状态
+        print(
+            f"[任务执行] {task.get('taskname')} episode_start={task.get('episode_start')!r} "
+            f"episode_end={task.get('episode_end')!r}"
+        )
         # 判断资源失效记录
         if task.get("shareurl_ban"):
             add_notify(f"❗《{task['taskname']}》分享资源已失效: {task['shareurl_ban']}\n")
@@ -4510,6 +4515,12 @@ class Quark:
         
         if fid_list:
             # 只在有新文件需要转存时才处理
+            # 诊断：打印本次转存的文件列表，用于定位「范围外文件被转存」时实际转存了哪些文件
+            try:
+                _diag_names = [item.get("save_name") or item.get("file_name", "?") for item in need_save_list]
+                print(f"[转存列表] {len(fid_list)} 个文件: {_diag_names}")
+            except Exception:
+                pass
             save_file_return = self.save_file(
                 fid_list, fid_token_list, to_pdir_fid, pwd_id, stoken
             )
