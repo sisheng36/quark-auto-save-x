@@ -74,6 +74,64 @@ for (const c of consoleErrors.slice(0, 8)) console.log('  CONSOLE:', c.slice(0, 
 const consoleWarns = consoleMsgs.filter(m => m.startsWith('[warning]'));
 for (const w of consoleWarns.slice(0, 8)) console.log('  WARN:', w.slice(0, 250));
 
+// 移动端侧边栏抽屉回归检查
+console.log('=== 移动端侧边栏抽屉 ===');
+await page.setViewportSize({ width: 390, height: 844 });
+await page.reload({ waitUntil: 'networkidle', timeout: 30000 });
+await page.waitForSelector('.mobile-sidebar-toggle', { timeout: 10000 }).catch(() => {});
+const toggleInfo = await page.evaluate(() => {
+  const btn = document.querySelector('.mobile-sidebar-toggle');
+  if (!btn) return 'button-missing';
+  const r = btn.getBoundingClientRect();
+  const cs = getComputedStyle(btn);
+  return { display: cs.display, visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' };
+});
+console.log('汉堡按钮:', JSON.stringify(toggleInfo));
+if (!toggleInfo || toggleInfo === 'button-missing' || !toggleInfo.visible) {
+  console.error('FAIL: 移动端汉堡按钮不存在或不可见');
+  process.exit(1);
+}
+const drawerOpened = await (async () => {
+  // 真实点击（命中测试）：若按钮被 toast 等元素遮挡，这里会直接失败
+  await page.click('.mobile-sidebar-toggle', { timeout: 10000 });
+  await page.waitForTimeout(400); // 等待 0.25s 滑入动画
+  return page.evaluate(() => {
+    const btn = document.querySelector('.mobile-sidebar-toggle');
+    const sidebar = document.getElementById('sidebarMenu');
+    const navText = document.querySelector('.glass-sidebar .nav-text');
+    return {
+      show: sidebar.classList.contains('show'),
+      ariaExpanded: btn.getAttribute('aria-expanded'),
+      labelDisplay: navText ? getComputedStyle(navText).display : 'no-label'
+    };
+  });
+})();
+console.log('抽屉展开:', JSON.stringify(drawerOpened));
+if (!drawerOpened.show || drawerOpened.ariaExpanded !== 'true' || drawerOpened.labelDisplay === 'none') {
+  console.error('FAIL: 移动端抽屉未展开或文字标签不可见');
+  process.exit(1);
+}
+const drawerClosed = await (async () => {
+  // 点击抽屉中靠下的导航项（避开可能的 toast 通知区域），验证 changeTab 自动收起
+  try {
+    await page.click('#sidebarMenu .nav-link:has-text("运行日志")', { timeout: 10000 });
+  } catch {
+    await page.evaluate(() => {
+      const links = document.querySelectorAll('#sidebarMenu .nav-link');
+      (Array.from(links).find(a => a.textContent.includes('运行日志')) || links[links.length - 1]).click();
+    });
+  }
+  await page.waitForTimeout(400);
+  return page.evaluate(() => ({ show: document.getElementById('sidebarMenu').classList.contains('show') }));
+})();
+console.log('抽屉收起:', JSON.stringify(drawerClosed));
+if (drawerClosed.show) {
+  console.error('FAIL: 点击导航项后抽屉未自动收起');
+  process.exit(1);
+}
+// 还原桌面视口，避免影响后续截图
+await page.setViewportSize({ width: 1280, height: 800 });
+
 await page.screenshot({ path: '/tmp/qas-browser-main.png', fullPage: false });
 console.log('截图已保存: /tmp/qas-browser-main.png');
 await browser.close();
