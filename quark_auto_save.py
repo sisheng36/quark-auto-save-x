@@ -3425,11 +3425,6 @@ class Quark:
         # 每轮任务重置：更新目录下「转存轮询仅提示一次」（实例级，子任务 copy 不影响）
         self._transfer_poll_ui_done = False
         task.pop("_transfer_poll_progress_shown", None)  # 兼容旧版写在 task 上的键
-        # 诊断：打印本任务集数范围配置，用于定位「过滤未生效」时任务对象的实际状态
-        print(
-            f"[任务执行] {task.get('taskname')} episode_start={task.get('episode_start')!r} "
-            f"episode_end={task.get('episode_end')!r}"
-        )
         # 判断资源失效记录
         if task.get("shareurl_ban"):
             add_notify(f"❗《{task['taskname']}》分享资源已失效: {task['shareurl_ban']}\n")
@@ -3590,17 +3585,7 @@ class Quark:
         except (TypeError, ValueError):
             _range_end = None
         if _range_start is not None or _range_end is not None:
-            _before_names = [f.get("file_name") for f in share_file_list if isinstance(f, dict)]
             share_file_list = filter_files_by_episode_range(share_file_list, task)
-            _after_names = [f.get("file_name") for f in share_file_list if isinstance(f, dict)]
-            if len(_after_names) < len(_before_names):
-                _removed = [n for n in _before_names if n not in _after_names]
-                print(
-                    f"集数范围过滤: 移除 {len(_removed)} 个文件（范围 {_range_start or '不限'}~{_range_end or '不限'}），"
-                    f"剩余 {len(_after_names)} 个待处理"
-                )
-                for _n in _removed:
-                    print(f"  移除: {_n}")
 
         # 获取目标目录文件列表
         savepath = re.sub(r"/{2,}", "/", f"/{task['savepath']}{subdir_path}")
@@ -4463,13 +4448,7 @@ class Quark:
         except (TypeError, ValueError):
             _need_end = None
         if (_need_start is not None or _need_end is not None) and need_save_list:
-            _before_need = len(need_save_list)
             need_save_list = filter_files_by_episode_range(need_save_list, task)
-            if len(need_save_list) < _before_need:
-                print(
-                    f"集数范围过滤(转存前): 移除 {_before_need - len(need_save_list)} 个文件，"
-                    f"剩余 {len(need_save_list)} 个待转存"
-                )
 
         fid_list = [item["fid"] for item in need_save_list]
         fid_token_list = [item["share_fid_token"] for item in need_save_list]
@@ -4515,12 +4494,6 @@ class Quark:
         
         if fid_list:
             # 只在有新文件需要转存时才处理
-            # 诊断：打印本次转存的文件列表，用于定位「范围外文件被转存」时实际转存了哪些文件
-            try:
-                _diag_names = [item.get("save_name") or item.get("file_name", "?") for item in need_save_list]
-                print(f"[转存列表] {len(fid_list)} 个文件: {_diag_names}")
-            except Exception:
-                pass
             save_file_return = self.save_file(
                 fid_list, fid_token_list, to_pdir_fid, pwd_id, stoken
             )
@@ -5015,13 +4988,7 @@ class Quark:
                     except (TypeError, ValueError):
                         _rn_end = None
                     if _rn_start is not None or _rn_end is not None:
-                        _rn_before = len(share_file_list)
                         share_file_list = filter_files_by_episode_range(share_file_list, task)
-                        if len(share_file_list) < _rn_before:
-                            print(
-                                f"集数范围过滤(重命名): 移除 {_rn_before - len(share_file_list)} 个文件，"
-                                f"剩余 {len(share_file_list)} 个待处理"
-                            )
 
                     # 预先过滤分享文件列表，去除已存在的文件
                     filtered_share_files = []
