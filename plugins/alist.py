@@ -12,6 +12,9 @@ class Alist:
         "token": "",  # Alist服务器Token
         "storage_id": "",  # Alist 服务器夸克存储 ID
     }
+    default_task_config = {
+        "auto_refresh": True,  # 是否自动刷新 AList 目录
+    }
     is_active = False
     # 缓存参数
     storage_mount_path = None
@@ -116,6 +119,12 @@ class Alist:
         Returns:
             task: 返回原任务信息
         """
+        task_config = task.get("addition", {}).get(
+            self.plugin_name, self.default_task_config
+        )
+        if not task_config.get("auto_refresh"):
+            return task
+
         # 检查路径是否在夸克根目录内
         if task.get("savepath"):
             # 确保路径符合要求

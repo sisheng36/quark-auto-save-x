@@ -5575,6 +5575,18 @@ export default {
             emby: {
               try_match: true,
               media_id: ""
+            },
+            alist: {
+              auto_refresh: true
+            },
+            alist_strm: {
+              auto_run: true
+            },
+            plex: {
+              auto_refresh: true
+            },
+            smartstrm: {
+              auto_run: true
             }
           };
           return taskConfigs[pluginName] || {};
@@ -5599,6 +5611,18 @@ export default {
             emby: {
               try_match: "是否尝试自动匹配媒体",
               media_id: "指定要刷新的媒体ID，留空则自动匹配，0表示不刷新"
+            },
+            alist: {
+              auto_refresh: "是否自动刷新 AList 目录"
+            },
+            alist_strm: {
+              auto_run: "是否自动触发 alist-strm 配置运行"
+            },
+            plex: {
+              auto_refresh: "是否自动刷新 Plex 媒体库"
+            },
+            smartstrm: {
+              auto_run: "是否自动触发 SmartStrm 任务"
             }
           };
           return helpTexts[pluginName]?.[key] || '';

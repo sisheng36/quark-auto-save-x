@@ -14,9 +14,13 @@ class Alist_strm:
         "cookie": "",  # alist-strm的cookie，F12抓取，关键参数：session=ey***
         "config_id": "",  # 要触发运行的配置ID，支持多个，用逗号分隔
     }
+    default_task_config = {
+        "auto_run": True,  # 是否自动触发 alist-strm 配置运行
+    }
     is_active = False
 
     def __init__(self, **kwargs):
+        self.plugin_name = self.__class__.__name__.lower()
         if kwargs:
             for key, _ in self.default_config.items():
                 if key in kwargs:
@@ -35,6 +39,11 @@ class Alist_strm:
                     self.is_active = True
 
     def run(self, task, **kwargs):
+        task_config = task.get("addition", {}).get(
+            self.plugin_name, self.default_task_config
+        )
+        if not task_config.get("auto_run"):
+            return
         self.run_selected_configs(self.config_id)
 
     def get_info(self, config_id_str):

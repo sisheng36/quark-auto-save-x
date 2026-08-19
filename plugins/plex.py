@@ -9,10 +9,14 @@ class Plex:
         "token": "",  # Plex Token，可F12在请求中抓取
         "quark_root_path": "",  # 夸克根目录在Plex中的路径；假设夸克目录/media/tv在plex中对应的路径为/quark/media/tv，则为/quark
     }
+    default_task_config = {
+        "auto_refresh": True,  # 是否自动刷新 Plex 媒体库
+    }
     is_active = False
     _libraries = None  # 缓存库信息
 
     def __init__(self, **kwargs):
+        self.plugin_name = self.__class__.__name__.lower()
         if kwargs:
             for key, value in self.default_config.items():
                 if key in kwargs:
@@ -49,6 +53,12 @@ class Plex:
             return self.quark_root_paths[0] if self.quark_root_paths else ""
 
     def run(self, task, **kwargs):
+        task_config = task.get("addition", {}).get(
+            self.plugin_name, self.default_task_config
+        )
+        if not task_config.get("auto_refresh"):
+            return
+
         if task.get("savepath"):
             # 检查是否已缓存库信息
             if self._libraries is None:
