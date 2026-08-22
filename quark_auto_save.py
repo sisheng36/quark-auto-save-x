@@ -1224,6 +1224,27 @@ def is_episode_already_saved(share_filename, existing_index, task=None):
     # 季无法确定（多季目录且无任务上下文）：只与目录中无季标记的文件比对，避免误跳
     return _hit(existing_index["ep"], episode)
 
+def mark_episode_seen(index, file_name):
+    """
+    把文件名对应的「季+集+类别」身份写入集数索引（批内查重用）。
+
+    同一批分享里先被接受的同集文件（如 S01E01.mp4 与 S01E01.mkv）会写入索引，
+    后续文件经 is_episode_already_saved 判定为「已存在」而跳过，避免重复转存。
+    桶结构与 build_existing_episode_index 完全一致：类别区分媒体/字幕，
+    视频不挡字幕、字幕不挡视频；识别不了集号的文件不入索引。
+    """
+    key = extract_season_episode_key(file_name)
+    if key is None:
+        return
+    season, episode = key
+    ext = os.path.splitext(str(file_name))[1].lower()
+    category = "subtitle" if ext in SUBTITLE_EXTS else "media"
+    if season is not None:
+        index["se"].setdefault((season, episode), set()).add(category)
+        index["seasons"].add(season)
+    else:
+        index["ep"].setdefault(episode, set()).add(category)
+
 # 全局变量
 VERSION = "2.9.0"
 CONFIG_PATH = "quark_config.json"
@@ -3974,6 +3995,8 @@ class Quark:
                     share_file["save_name"] = share_file["file_name"]  # 剧集命名模式下保持原文件名，重命名在后续步骤进行
                     share_file["original_name"] = share_file["file_name"]
                     filtered_share_files.append(share_file)
+                    # 批内查重：同集不同封装（如 S01E01.mp4 与 S01E01.mkv）只转存第一个
+                    mark_episode_seen(existing_episode_index, share_file["file_name"])
 
             # 实现高级排序算法
             def sort_by_episode(file):
@@ -4326,6 +4349,9 @@ class Quark:
                                 
                             # 将文件添加到保存列表
                             need_save_list.append(share_file)
+                            # 批内查重：同集不同封装（如 S01E01.mp4 与 S01E01.mkv）只转存第一个
+                            if not share_file["dir"]:
+                                mark_episode_seen(existing_episode_index, share_file["file_name"])
                         elif share_file["dir"]:
                             # 文件夹已存在，根据是否递归处理子目录决定操作
                             
@@ -5087,6 +5113,8 @@ class Quark:
                         # 只处理非重复文件
                         if not is_duplicate:
                             filtered_share_files.append(share_file)
+                            # 批内查重：同集不同封装（如 S01E01.mp4 与 S01E01.mkv）只转存第一个
+                            mark_episode_seen(existing_episode_index, share_file["file_name"])
                     
                     # 实现高级排序算法
                     def sort_by_episode(file):

@@ -151,6 +151,74 @@ def test_index_shape():
     check("空目录 → 空索引", qas.build_existing_episode_index([]), {"se": {}, "ep": {}, "seasons": set()})
 
 
+def test_intra_batch_dedup():
+    """
+    批内查重：同一批分享里同集不同后缀（S01E01.mp4 + S01E01.mkv）只转存第一个。
+    模拟 dir_check_and_save / do_rename_task 的入列点：接受后 mark_episode_seen，
+    后续同集文件经 is_episode_already_saved 命中批内索引被跳过。
+    """
+    print("\n[9] 批内查重：同集不同后缀不重复转存")
+
+    def batch_decide(share_files, task=None, target=[]):
+        index = qas.build_existing_episode_index([fake_file(n) for n in target])
+        accepted = []
+        for f in share_files:
+            if qas.is_episode_already_saved(f, index, task):
+                continue
+            accepted.append(f)
+            qas.mark_episode_seen(index, f)
+        return accepted
+
+    check(
+        "同集 mp4+mkv 只留一个",
+        batch_decide(["庆余年.S01E01.mp4", "庆余年.S01E01.mkv", "庆余年.S01E02.mp4"]),
+        ["庆余年.S01E01.mp4", "庆余年.S01E02.mp4"],
+    )
+    check(
+        "同集 1080p/4K 不同封装只留一个",
+        batch_decide(["庆余年.S01E01.1080p.mp4", "庆余年.S01E01.2160p.mkv"]),
+        ["庆余年.S01E01.1080p.mp4"],
+    )
+    check(
+        "视频不挡字幕：mp4+srt 都留",
+        batch_decide(["庆余年.S01E01.mp4", "庆余年.S01E01.srt"]),
+        ["庆余年.S01E01.mp4", "庆余年.S01E01.srt"],
+    )
+    check(
+        "字幕挡字幕：同集两个 srt 只留一个",
+        batch_decide(["第01集.srt", "第01集.srt"]),
+        ["第01集.srt"],
+    )
+    check(
+        "裸数字同集（任务季上下文）只留一个",
+        batch_decide(["01.mp4", "01.mkv"], task={"taskname": "庆余年"}),
+        ["01.mp4"],
+    )
+    check(
+        "批内+跨次均跳过：目标已有 mp4，同批再遇 mkv",
+        batch_decide(
+            ["庆余年.S01E01.mkv", "庆余年.S01E02.mkv"],
+            target=["庆余年.S01E01.mp4"],
+        ),
+        ["庆余年.S01E02.mkv"],
+    )
+    check(
+        "多季精确：S01E01 双封装只留一个，S02E01 不受影响",
+        batch_decide(
+            ["庆余年.S01E01.mp4", "庆余年.S01E01.mkv", "庆余年.S02E01.mp4"],
+            target=["庆余年.S02E01.mp4"],
+        ),
+        ["庆余年.S01E01.mp4"],
+    )
+    check(
+        "mark_episode_seen 无集数文件不入索引",
+        qas.mark_episode_seen({"se": {}, "ep": {}, "seasons": set()}, "花絮.ts") is None
+        and qas.build_existing_episode_index([])
+        == qas.build_existing_episode_index([fake_file("花絮.ts")]),
+        True,
+    )
+
+
 if __name__ == "__main__":
     test_user_main_scenario()
     test_task_season_context()
@@ -160,5 +228,6 @@ if __name__ == "__main__":
     test_no_episode_files()
     test_extractors()
     test_index_shape()
+    test_intra_batch_dedup()
     print(f"\n结果：{PASSED} 通过, {FAILED} 失败")
     sys.exit(1 if FAILED else 0)
