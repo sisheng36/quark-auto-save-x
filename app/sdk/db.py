@@ -496,6 +496,22 @@ class CalendarDB:
         except Exception:
             pass
 
+        # emby_items（Emby 媒体库本地缓存，用于影视发现入库状态匹配）
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS emby_items (
+            emby_id TEXT PRIMARY KEY,
+            name TEXT,
+            original_title TEXT,
+            year TEXT,
+            item_type TEXT,
+            provider_tmdb TEXT,
+            provider_imdb TEXT,
+            provider_tvdb TEXT,
+            season_numbers TEXT,
+            last_updated INTEGER
+        )
+        ''')
+
         self.conn.commit()
 
     def close(self):
@@ -1266,3 +1282,81 @@ class CalendarDB:
         columns = [description[0] for description in cursor.description]
         rows = cursor.fetchall()
         return [dict(zip(columns, row)) for row in rows]
+
+    # ==================== emby_items ====================
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_emby_item(self, emby_id: str, name: str, original_title: str, year: str,
+                         item_type: str, provider_tmdb: str, provider_imdb: str,
+                         provider_tvdb: str, season_numbers: str, last_updated: int):
+        """单条写入 Emby 媒体条目"""
+        cursor = self.conn.cursor()
+        cursor.execute('''
+        INSERT INTO emby_items (emby_id, name, original_title, year, item_type,
+            provider_tmdb, provider_imdb, provider_tvdb, season_numbers, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(emby_id) DO UPDATE SET
+            name=excluded.name,
+            original_title=excluded.original_title,
+            year=excluded.year,
+            item_type=excluded.item_type,
+            provider_tmdb=excluded.provider_tmdb,
+            provider_imdb=excluded.provider_imdb,
+            provider_tvdb=excluded.provider_tvdb,
+            season_numbers=excluded.season_numbers,
+            last_updated=excluded.last_updated
+        ''', (emby_id, name, original_title, year, item_type,
+              provider_tmdb, provider_imdb, provider_tvdb, season_numbers, last_updated))
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_emby_items_batch(self, items: list):
+        """批量写入 Emby 媒体条目，items 为 dict 列表"""
+        if not items:
+            return
+        cursor = self.conn.cursor()
+        rows = [(
+            it.get('emby_id', ''), it.get('name', ''), it.get('original_title', ''),
+            it.get('year', ''), it.get('item_type', ''), it.get('provider_tmdb', ''),
+            it.get('provider_imdb', ''), it.get('provider_tvdb', ''),
+            it.get('season_numbers', ''), it.get('last_updated', 0)
+        ) for it in items]
+        cursor.executemany('''
+        INSERT INTO emby_items (emby_id, name, original_title, year, item_type,
+            provider_tmdb, provider_imdb, provider_tvdb, season_numbers, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(emby_id) DO UPDATE SET
+            name=excluded.name,
+            original_title=excluded.original_title,
+            year=excluded.year,
+            item_type=excluded.item_type,
+            provider_tmdb=excluded.provider_tmdb,
+            provider_imdb=excluded.provider_imdb,
+            provider_tvdb=excluded.provider_tvdb,
+            season_numbers=excluded.season_numbers,
+            last_updated=excluded.last_updated
+        ''', rows)
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def clear_emby_items(self):
+        """清空 emby_items 表（全量拉取前调用）"""
+        cursor = self.conn.cursor()
+        cursor.execute('DELETE FROM emby_items')
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_all_emby_items(self):
+        """获取全部 Emby 媒体条目，用于内存匹配"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM emby_items')
+        columns = [description[0] for description in cursor.description]
+        rows = cursor.fetchall()
+        return [dict(zip(columns, row)) for row in rows]
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_emby_item_count(self):
+        """获取 Emby 媒体条目数量"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM emby_items')
+        return cursor.fetchone()[0]

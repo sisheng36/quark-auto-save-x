@@ -350,6 +350,12 @@
                                    @change="onPluginConfigModeChange(activePluginConfigTab)"
                                    :options="[{value:'independent',text:'独立配置'},{value:'global',text:'全局配置'}]"></filter-select>
                   </div>
+                  <!-- Emby 立即刷新媒体库缓存按钮 -->
+                  <div v-if="activePluginConfigTab === 'emby'" class="mb-2">
+                    <button type="button" class="btn btn-sm btn-outline-primary" @click="refreshEmbyCache" :disabled="embyRefreshing">
+                      <i class="bi bi-arrow-clockwise"></i> {{ embyRefreshing ? '刷新中…' : '立即拉取 Emby 媒体库' }}
+                    </button>
+                  </div>
                   <!-- 全局插件配置选项 -->
                   <div v-if="['aria2', 'alist_strm_gen', 'emby'].includes(activePluginConfigTab) && formData.plugin_config_mode[activePluginConfigTab] === 'global'">
                     <div v-for="(taskConfig, taskKey) in getPluginTaskConfig(activePluginConfigTab)" :key="taskKey" class="mb-2">
@@ -708,6 +714,17 @@
                     <span class="input-group-text">追剧日历刷新周期</span>
                   </div>
                   <input type="text" class="form-control no-spinner" v-model="formData.performance.calendar_refresh_interval_seconds" placeholder="21600">
+                  <div class="input-group-append">
+                    <span class="input-group-text square-append">秒</span>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-4 col-md-6 mb-2">
+                <div class="input-group" title="Emby媒体库数据定时拉取周期（用于影视发现入库状态匹配），设置为0或负数可关闭。默认值：21600（6小时）">
+                  <div class="input-group-prepend">
+                    <span class="input-group-text">Emby库拉取周期</span>
+                  </div>
+                  <input type="text" class="form-control no-spinner" v-model="formData.performance.emby_library_refresh_interval_seconds" placeholder="21600">
                   <div class="input-group-append">
                     <span class="input-group-text square-append">秒</span>
                   </div>
@@ -1960,6 +1977,12 @@
                          @error="handleImageError($event)">
                     <div class="discovery-rating" v-if="item.rating && item.rating.value">
                       {{ parseFloat(item.rating.value).toFixed(1) }}
+                    </div>
+                    <div class="discovery-emby-status"
+                         :class="getEmbyStatusClass(item)"
+                         :title="getEmbyStatusTooltip(item)"
+                         v-if="embyStatusLoaded && embyStatusConfigured">
+                      <i :class="getEmbyStatusIcon(item)"></i>
                     </div>
                     <div class="discovery-create-task" @click="createTaskFromDiscovery(item)" title="创建任务">
                       <i class="bi bi-plus-lg"></i>

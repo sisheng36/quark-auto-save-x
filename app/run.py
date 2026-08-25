@@ -71,6 +71,7 @@ from utils.task_extractor import TaskExtractor
 from utils.auto_backup import ensure_daily_backup_if_due
 from sdk.tmdb_service import TMDBService
 from sdk.trakt_service import TraktService
+from sdk.emby_service import EmbyService
 from sdk.db import CalendarDB
 from sdk.db import RecordDB
 from utils.task_extractor import TaskExtractor
@@ -1414,9 +1415,11 @@ scheduler = BackgroundScheduler(
 # 定时任务进程/线程跟踪：用于检测和清理未完成的任务
 _crontab_task_process = None  # 定时运行全部任务的进程对象
 _calendar_refresh_thread = None  # 追剧日历自动刷新的线程对象
+_emby_refresh_thread = None  # Emby 媒体库缓存自动刷新的线程对象
 # 记录每日任务上次生效的时间，避免重复日志
 _daily_aired_last_time_str = None
 _calendar_refresh_last_interval = None
+_emby_refresh_last_interval = None
 _last_crontab = None
 _last_crontab_delay = None
 _aired_on_demand_checked_date = None  # 本进程内，当天是否已进行过一次按需检查
@@ -2337,6 +2340,7 @@ def is_login():
     else:
         return False
 DEFAULT_REFRESH_SECONDS = 21600
+DEFAULT_EMBY_REFRESH_SECONDS = 21600
 
 # 豆瓣图片代理全局并发限制，避免瞬时高并发触发远端限流/断连
 DOUBAN_PROXY_MAX_CONCURRENCY = 15
@@ -2614,6 +2618,7 @@ def get_data():
             'cloud_unarchive_timeout_seconds': 100,
             'backup_enabled': True,
             'backup_max_count': 4,
+            'emby_library_refresh_interval_seconds': DEFAULT_EMBY_REFRESH_SECONDS,
         }
     else:
         if 'calendar_refresh_interval_seconds' not in perf:
@@ -2626,6 +2631,8 @@ def get_data():
             data['performance']['backup_enabled'] = True
         if 'backup_max_count' not in perf:
             data['performance']['backup_max_count'] = 4
+        if 'emby_library_refresh_interval_seconds' not in perf:
+            data['performance']['emby_library_refresh_interval_seconds'] = DEFAULT_EMBY_REFRESH_SECONDS
     
     # 确保海报语言有默认值
     if 'poster_language' not in data:
@@ -3017,6 +3024,12 @@ def update():
         except Exception as e:
             logging.warning(f"重启追剧日历自动刷新任务失败: {e}")
         
+        # 根据最新性能配置重启 Emby 媒体库自动拉取任务
+        try:
+            restart_emby_refresh_job()
+        except Exception as e:
+            logging.warning(f"重启 Emby 媒体库自动拉取任务失败: {e}")
+        
         # 根据最新性能配置重启已播出集数更新任务
         try:
             restart_daily_aired_update_job()
@@ -3055,6 +3068,7 @@ def update():
             'calendar_refresh_interval_seconds': DEFAULT_REFRESH_SECONDS,
             'aired_refresh_time': '00:00',
             'cloud_unarchive_timeout_seconds': 100,
+            'emby_library_refresh_interval_seconds': DEFAULT_EMBY_REFRESH_SECONDS,
         }
     else:
         config_data['performance'].setdefault('calendar_refresh_interval_seconds', DEFAULT_REFRESH_SECONDS)
@@ -3063,6 +3077,7 @@ def update():
             config_data['performance']['cloud_unarchive_timeout_seconds'] = 100
         config_data['performance'].setdefault('backup_enabled', True)
         config_data['performance'].setdefault('backup_max_count', 4)
+        config_data['performance'].setdefault('emby_library_refresh_interval_seconds', DEFAULT_EMBY_REFRESH_SECONDS)
     Config.write_json(CONFIG_PATH, config_data)
     # 更新session token，确保当前会话在用户名密码更改后仍然有效
     session["token"] = get_login_token()
@@ -5173,6 +5188,10 @@ def reload_tasks():
         # 这里参考 __main__ 中的启动流程，在重载后立即重新注册：
         try:
             restart_calendar_refresh_job()
+        except Exception:
+            pass
+        try:
+            restart_emby_refresh_job()
         except Exception:
             pass
         try:
@@ -9839,6 +9858,100 @@ def run_calendar_refresh_all_internal():
             pass
     except Exception as e:
         logging.warning(f"自动刷新任务异常: {e}")
+
+
+def restart_emby_refresh_job():
+    """Emby 媒体库数据定时拉取任务"""
+    try:
+        global _emby_refresh_last_interval
+        perf = config_data.get('performance', {}) if isinstance(config_data, dict) else {}
+        interval_seconds = int(perf.get('emby_library_refresh_interval_seconds', DEFAULT_EMBY_REFRESH_SECONDS))
+        if interval_seconds <= 0:
+            try:
+                scheduler.remove_job('emby_refresh_job')
+            except Exception:
+                pass
+            if _emby_refresh_last_interval is not None:
+                logging.info("已关闭 Emby 媒体库自动拉取")
+                _emby_refresh_last_interval = None
+            return
+        try:
+            scheduler.remove_job('emby_refresh_job')
+        except Exception:
+            pass
+        scheduler.add_job(
+            run_emby_refresh_wrapper,
+            IntervalTrigger(seconds=interval_seconds),
+            id='emby_refresh_job',
+            replace_existing=True,
+            misfire_grace_time=None,
+            coalesce=True,
+            max_instances=1,
+        )
+        if scheduler.state == 0:
+            scheduler.start()
+        try:
+            if IS_FLASK_SERVER_PROCESS:
+                if _emby_refresh_last_interval != interval_seconds:
+                    logging.info(f"已启动 Emby 媒体库自动拉取，周期 {interval_seconds} 秒")
+                    _emby_refresh_last_interval = interval_seconds
+        except Exception:
+            pass
+    except Exception as e:
+        logging.warning(f"配置 Emby 媒体库自动拉取任务失败: {e}")
+
+
+def run_emby_refresh_wrapper():
+    """Emby 媒体库缓存自动拉取的包装函数"""
+    global _emby_refresh_thread
+    logging.info(f">>> 开始执行 Emby 媒体库自动拉取")
+    if _emby_refresh_thread is not None:
+        try:
+            if _emby_refresh_thread.is_alive():
+                logging.warning(f">>> 检测到上一次 Emby 媒体库自动拉取仍在运行，将忽略本次执行")
+                return
+        except Exception as e:
+            logging.warning(f">>> 检查上一次 Emby 媒体库自动拉取状态时出错: {e}")
+        finally:
+            _emby_refresh_thread = None
+
+    def run_in_thread():
+        global _emby_refresh_thread
+        try:
+            run_emby_refresh_internal()
+            logging.info(f">>> Emby 媒体库自动拉取执行成功")
+        except Exception as e:
+            logging.error(f">>> Emby 媒体库自动拉取执行异常: {str(e)}")
+            import traceback
+            logging.error(f">>> 异常堆栈: {traceback.format_exc()}")
+        finally:
+            _emby_refresh_thread = None
+
+    _emby_refresh_thread = Thread(target=run_in_thread, daemon=True)
+    _emby_refresh_thread.start()
+
+
+def run_emby_refresh_internal():
+    """执行 Emby 媒体库数据拉取并写入本地缓存"""
+    try:
+        emby_svc = EmbyService.from_config(config_data)
+        if not emby_svc.is_configured():
+            logging.info("Emby 未配置，跳过媒体库拉取")
+            return
+        db = CalendarDB()
+        result = emby_svc.refresh_local_cache(db)
+        if result.get('success'):
+            logging.info(f"Emby 媒体库缓存更新完成: {result.get('message', '')}")
+        else:
+            logging.warning(f"Emby 媒体库缓存更新失败: {result.get('message', '')}")
+        try:
+            db.close()
+        except Exception:
+            pass
+    except Exception as e:
+        logging.warning(f"Emby 媒体库拉取任务异常: {e}")
+
+
 # 本地缓存读取：获取最新一季的本地剧集数据
 @app.route("/api/calendar/episodes_local")
 def get_calendar_episodes_local():
@@ -10537,6 +10650,80 @@ def proxy_douban_image():
         logging.error(f"代理豆瓣图片失败: {str(e)}")
         return Response(f'代理图片失败: {str(e)}', status=500, mimetype='text/plain')
 
+
+# ==================== Emby 媒体库联动 API ====================
+
+@app.route("/api/emby/check_items", methods=["POST"])
+def emby_check_items():
+    """批量检查影视发现页 items 在 Emby 媒体库中的入库状态"""
+    if not is_login():
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    try:
+        items = request.get_json(silent=True) or {}
+        item_list = items.get('items', []) if isinstance(items, dict) else items
+        if not item_list:
+            return jsonify({'success': True, 'data': {'status_map': {}, 'configured': False}})
+        emby_svc = EmbyService.from_config(config_data)
+        if not emby_svc.is_configured():
+            return jsonify({'success': True, 'data': {'status_map': {}, 'configured': False}})
+        cal_db = CalendarDB()
+        try:
+            status_map = emby_svc.match_items(item_list, cal_db)
+        finally:
+            try:
+                cal_db.close()
+            except Exception:
+                pass
+        return jsonify({'success': True, 'data': {'status_map': status_map, 'configured': True}})
+    except Exception as e:
+        logging.error(f"Emby 入库状态检查失败: {str(e)}")
+        return jsonify({'success': False, 'message': f'检查失败: {str(e)}'})
+
+
+@app.route("/api/emby/refresh_cache", methods=["POST"])
+def emby_refresh_cache():
+    """手动触发 Emby 媒体库缓存立即拉取"""
+    if not is_login():
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    try:
+        emby_svc = EmbyService.from_config(config_data)
+        if not emby_svc.is_configured():
+            return jsonify({'success': False, 'message': 'Emby 未配置，请先在插件设置中填写 URL 和 Token'})
+        cal_db = CalendarDB()
+        try:
+            result = emby_svc.refresh_local_cache(cal_db)
+        finally:
+            try:
+                cal_db.close()
+            except Exception:
+                pass
+        return jsonify({'success': result.get('success', False), 'message': result.get('message', ''), 'count': result.get('count', 0)})
+    except Exception as e:
+        logging.error(f"手动刷新 Emby 媒体库缓存失败: {str(e)}")
+        return jsonify({'success': False, 'message': f'刷新失败: {str(e)}'})
+
+
+@app.route("/api/emby/cache_status")
+def emby_cache_status():
+    """获取 Emby 媒体库缓存状态（条目数量、是否已配置）"""
+    if not is_login():
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    try:
+        emby_svc = EmbyService.from_config(config_data)
+        configured = emby_svc.is_configured()
+        cal_db = CalendarDB()
+        try:
+            count = cal_db.get_emby_item_count()
+        finally:
+            try:
+                cal_db.close()
+            except Exception:
+                pass
+        return jsonify({'success': True, 'data': {'configured': configured, 'count': count}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
+
 @app.route("/api/calendar/update_content_type", methods=["POST"])
 def update_show_content_type():
     """更新节目的内容类型"""
@@ -10696,6 +10883,10 @@ if __name__ == "__main__":
     # 在 reload_tasks() 之后重新注册会被清空的后台任务（避免 remove_all_jobs 的影响）
     try:
         restart_calendar_refresh_job()
+    except Exception:
+        pass
+    try:
+        restart_emby_refresh_job()
     except Exception:
         pass
     try:

@@ -2963,6 +2963,32 @@ html.theme-light .overview-quick-link:hover {
   backdrop-filter: blur(8px);
   border: 1px solid rgba(251, 191, 36, 0.3);
 }
+.discovery-emby-status {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: opacity 0.18s ease;
+  cursor: default;
+}
+.discovery-emby-status.in-library {
+  background: #16a34a;
+}
+.discovery-emby-status.not-in-library {
+  background: #dc2626;
+}
+.discovery-item:hover .discovery-emby-status {
+  opacity: 0.35;
+}
 .discovery-create-task {
   position: absolute;
   right: 8px;

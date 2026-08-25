@@ -323,7 +323,9 @@ export default {
             // 已播出集数刷新时间，24小时制，格式：HH:MM，默认00:00
             aired_refresh_time: "00:00",
             // 运行日志显示范围（天），默认1天
-            runtime_log_display_days: 1
+            runtime_log_display_days: 1,
+            // Emby 媒体库拉取周期（秒），默认6小时（21600秒）
+            emby_library_refresh_interval_seconds: 21600
           },
           plugin_config_mode: {
             aria2: "independent",
@@ -669,6 +671,11 @@ export default {
             ]
           }
         },
+        // Emby 入库状态（影视发现页海报指示灯）
+        embyStatusMap: {},
+        embyStatusLoaded: false,
+        embyStatusConfigured: true,
+        embyRefreshing: false,
         // 追剧日历相关数据
         calendar: {
           hasLoaded: false,
@@ -6495,7 +6502,8 @@ export default {
                   calendar_refresh_interval_seconds: 21600,
                   aired_refresh_time: "00:00",
                   runtime_log_display_days: 1,
-                  cloud_unarchive_timeout_seconds: 100
+                  cloud_unarchive_timeout_seconds: 100,
+                  emby_library_refresh_interval_seconds: 21600
                 };
               } else {
                 if (config_data.performance.calendar_refresh_interval_seconds === undefined || config_data.performance.calendar_refresh_interval_seconds === null) {
@@ -6509,6 +6517,9 @@ export default {
                 }
                 if (config_data.performance.cloud_unarchive_timeout_seconds === undefined || config_data.performance.cloud_unarchive_timeout_seconds === null) {
                   config_data.performance.cloud_unarchive_timeout_seconds = 100;
+                }
+                if (config_data.performance.emby_library_refresh_interval_seconds === undefined || config_data.performance.emby_library_refresh_interval_seconds === null) {
+                  config_data.performance.emby_library_refresh_interval_seconds = 21600;
                 }
               }
               // 确保execution_mode有默认值
@@ -13587,6 +13598,7 @@ export default {
               if (requestId !== this.discovery.searchRequestId) return;
               this.discovery.items = response.data.data.items || [];
               this.discovery.isSearchMode = true;
+              this.checkEmbyStatus(requestId, 'search');
             } else {
               if (requestId !== this.discovery.searchRequestId) return;
               this.discovery.error = response.data.message || '搜索影视失败';
@@ -13673,6 +13685,7 @@ export default {
             if (response.data.success) {
               if (requestId !== this.discovery.discoveryRequestId || this.discovery.isSearchOpen) return;
               this.discovery.items = response.data.data.items || [];
+              this.checkEmbyStatus(requestId, 'discovery');
             } else {
               if (requestId !== this.discovery.discoveryRequestId || this.discovery.isSearchOpen) return;
               this.discovery.error = response.data.message || '获取榜单数据失败';
@@ -13685,6 +13698,88 @@ export default {
             if (requestId === this.discovery.discoveryRequestId && !this.discovery.isSearchOpen) {
               this.discovery.hasLoaded = true;
             }
+          }
+        },
+        async checkEmbyStatus(requestId, source) {
+          // 防止快速切换时旧请求结果覆盖新数据
+          if (!this.discovery.items.length) return;
+          const trackId = source === 'search' ? 'searchRequestId' : 'discoveryRequestId';
+          const currentId = this.discovery[trackId];
+          if (requestId !== currentId) return;
+          try {
+            const payload = this.discovery.items.map(item => ({
+              title: item.title,
+              year: item.year,
+              tmdb_id: item.tmdb_id,
+              media_type: item.media_type,
+              content_type: item.content_type || this.getDiscoveryContentType(item)
+            }));
+            const res = await axios.post('/api/emby/check_items', { items: payload });
+            if (res.data.success) {
+              if (this.discovery[trackId] !== requestId) return;
+              this.embyStatusMap = res.data.data.status_map || {};
+              this.embyStatusConfigured = res.data.data.configured;
+              this.embyStatusLoaded = true;
+            }
+          } catch (e) {
+            console.error('Emby 入库状态检查失败:', e);
+          }
+        },
+        getEmbyStatusKey(item) {
+          if (item.tmdb_id && item.media_type) {
+            return `tmdb-${item.media_type}-${item.tmdb_id}`;
+          }
+          if (item.tmdb_id) {
+            return `tmdb-${item.tmdb_id}`;
+          }
+          return `title-${item.title}-${item.year || ''}`;
+        },
+        getEmbyStatus(item) {
+          const key = this.getEmbyStatusKey(item);
+          return this.embyStatusMap[key] || null;
+        },
+        getEmbyStatusClass(item) {
+          const status = this.getEmbyStatus(item);
+          if (status && status.in_library) return 'in-library';
+          return 'not-in-library';
+        },
+        getEmbyStatusIcon(item) {
+          const status = this.getEmbyStatus(item);
+          if (status && status.in_library) return 'bi bi-check-circle-fill';
+          return 'bi bi-x-circle-fill';
+        },
+        getEmbyStatusTooltip(item) {
+          const status = this.getEmbyStatus(item);
+          if (status && status.in_library) {
+            const seasons = status.seasons;
+            if (seasons) {
+              const seasonList = seasons.split(',').filter(Boolean).map(s => '第' + s + '季').join('、');
+              return seasonList ? `已在 Emby 入库: ${seasonList}` : '已在 Emby 入库';
+            }
+            return '已在 Emby 入库';
+          }
+          return '未在 Emby 入库';
+        },
+        async refreshEmbyCache() {
+          if (this.embyRefreshing) return;
+          this.embyRefreshing = true;
+          try {
+            const res = await axios.post('/api/emby/refresh_cache');
+            if (res.data.success) {
+              this.showToast(res.data.message || 'Emby 媒体库缓存已更新');
+              // 刷新成功后重新检查当前发现页的入库状态
+              const requestId = this.discovery.isSearchMode
+                ? this.discovery.searchRequestId
+                : this.discovery.discoveryRequestId;
+              await this.checkEmbyStatus(requestId, this.discovery.isSearchMode ? 'search' : 'discovery');
+            } else {
+              this.showToast(res.data.message || '刷新失败');
+            }
+          } catch (e) {
+            console.error('刷新 Emby 缓存失败:', e);
+            this.showToast('刷新失败，请检查 Emby 配置');
+          } finally {
+            this.embyRefreshing = false;
           }
         },
         openDoubanPage(item) {
