@@ -17,7 +17,7 @@
   </script>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=2">
-  <link rel="stylesheet" href="./static/css/main.css?v=44">
+  <link rel="stylesheet" href="./static/css/main.css?v=45">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
@@ -55,21 +55,21 @@
       <span class="aurora-orb aurora-orb-3"></span>
     </div>
 
-    <!-- 悬浮操作按钮：收起为单个图标，鼠标悬浮展开全部操作 -->
-    <div class="floating-action-buttons">
-      <button type="button" class="floating-action-btn floating-action-item" title="保存（CTRL+S）" @click="saveConfig()">
+    <!-- 悬浮操作按钮：默认收起为单个图标；桌面悬停 / 触屏点击展开 -->
+    <div class="floating-action-buttons" :class="{ 'is-expanded': floatingActionsExpanded }">
+      <button type="button" class="floating-action-btn floating-action-item" title="保存（CTRL+S）" @click="saveConfig(); closeFloatingActions()">
         <i class="bi bi-check2"></i>
       </button>
-      <button type="button" class="floating-action-btn floating-action-item" title="运行全部任务（CTRL+R）" @click="runScriptNow()">
+      <button type="button" class="floating-action-btn floating-action-item" title="运行全部任务（CTRL+R）" @click="runScriptNow(); closeFloatingActions()">
         <i class="bi bi-caret-right"></i>
       </button>
-      <button type="button" class="floating-action-btn floating-action-item" title="单击回到顶部/双击回到底部" @click="scrollToX(0)" @dblclick="scrollToX()">
+      <button type="button" class="floating-action-btn floating-action-item" title="单击回到顶部/双击回到底部" @click="scrollToX(0); closeFloatingActions()" @dblclick="scrollToX()">
         <i class="bi bi-chevron-expand"></i>
       </button>
-      <button type="button" class="floating-action-btn floating-action-item" :title="'页面宽度：' + (pageWidthMode === 'narrow' ? '窄' : pageWidthMode === 'medium' ? '中' : '宽')" @click="togglePageWidth()">
+      <button type="button" class="floating-action-btn floating-action-item" :title="'页面宽度：' + (pageWidthMode === 'narrow' ? '窄' : pageWidthMode === 'medium' ? '中' : '宽')" @click="togglePageWidth(); closeFloatingActions()">
         <i class="bi bi-arrows"></i>
       </button>
-      <button type="button" class="floating-action-btn floating-action-trigger" title="鼠标悬浮展开操作按钮">
+      <button type="button" class="floating-action-btn floating-action-trigger" title="展开操作按钮" @click="toggleFloatingActions()">
         <i class="bi bi-three-dots-vertical"></i>
       </button>
     </div>

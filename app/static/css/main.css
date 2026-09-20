@@ -319,15 +319,27 @@ a:hover {
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.25s ease;
 }
-.floating-action-buttons:hover .floating-action-item {
+.floating-action-buttons.is-expanded .floating-action-item {
   position: static;
   opacity: 1;
   visibility: visible;
   transform: translateY(0) scale(1);
   pointer-events: auto;
 }
-.floating-action-buttons:hover .floating-action-trigger {
+.floating-action-buttons.is-expanded .floating-action-trigger {
   transform: rotate(90deg);
+}
+@media (hover: hover) {
+  .floating-action-buttons:hover .floating-action-item {
+    position: static;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+  .floating-action-buttons:hover .floating-action-trigger {
+    transform: rotate(90deg);
+  }
 }
 .floating-action-btn {
   width: 40px;
@@ -378,20 +390,6 @@ a:hover {
     width: 36px;
     height: 36px;
     font-size: 1rem;
-  }
-}
-
-/* 触屏设备无 hover 状态：直接展开全部操作按钮（隐藏触发器） */
-@media (hover: none) {
-  .floating-action-buttons .floating-action-item {
-    position: static;
-    opacity: 1;
-    visibility: visible;
-    transform: none;
-    pointer-events: auto;
-  }
-  .floating-action-buttons .floating-action-trigger {
-    display: none;
   }
 }
 
@@ -4409,13 +4407,19 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   .pagination-container {
     justify-content: center;
   }
-  .toast-container {
-    top: 10px;
+  .toast-container,
+  .toast-container.toast-container-center {
+    top: 58px;
     right: 12px;
     left: 12px;
+    transform: none;
+    width: auto;
   }
   .toast-custom {
+    position: relative;
+    min-width: 0;
     max-width: 100%;
+    width: 100%;
   }
 }
 

@@ -533,6 +533,7 @@ export default {
         fileManagerJumpInputWidth: '32px',
         allTaskNames: [],
         toastMessage: "",
+        floatingActionsExpanded: false,
         selectedRecords: [],
         lastSelectedRecordIndex: -1, // 记录最后选择的记录索引，用于Shift选择
         historyTotalHover: false, // 转存记录左下角「共 x 条记录」悬停状态
@@ -10755,6 +10756,12 @@ export default {
           this.toastMessage = message;
           $(this.$refs.toast).toast('show');
         },
+        toggleFloatingActions() {
+          this.floatingActionsExpanded = !this.floatingActionsExpanded;
+        },
+        closeFloatingActions() {
+          this.floatingActionsExpanded = false;
+        },
         checkPreviewScrollbar() {
           // 检查命名预览界面的滚动条状态
           const fileSelectModal = document.getElementById('fileSelectModal');
@@ -11560,6 +11567,9 @@ export default {
         },
         // 处理点击表格外区域的事件
         handleOutsideClick(event) {
+          if (this.floatingActionsExpanded && !event.target.closest('.floating-action-buttons')) {
+            this.floatingActionsExpanded = false;
+          }
           // 如果当前不是历史记录页面或者没有选中的记录，则不处理
           if (this.activeTab !== 'history' || this.selectedRecords.length === 0) {
             return;
