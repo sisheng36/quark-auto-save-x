@@ -2991,7 +2991,7 @@ html.theme-light .overview-quick-link:hover {
   position: absolute;
   right: 8px;
   top: 8px;
-  z-index: 2;
+  z-index: 4;
   width: 30px;
   height: 30px;
   display: flex;
@@ -3014,15 +3014,24 @@ html.theme-light .overview-quick-link:hover {
 .discovery-create-task:hover {
   filter: brightness(1.15);
 }
+@media (hover: none) {
+  .discovery-create-task {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
 .discovery-poster-overlay {
   position: absolute;
   inset: auto 0 0 0;
-  z-index: 2;
+  z-index: 1;
+  max-height: calc(100% - 40px);
+  overflow: hidden;
   padding: 18px 10px 8px;
   background: linear-gradient(to top, rgba(8, 6, 26, 0.92), transparent);
   font-size: 0.78rem;
   color: var(--text-secondary);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.18s ease;
 }
 .discovery-item:hover .discovery-poster-overlay {
@@ -3698,6 +3707,104 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
 /* 创建任务模态框 */
 #createTaskModal .modal-dialog {
   max-width: 760px;
+}
+@media (max-width: 767.98px) {
+  #createTaskModal .modal-dialog {
+    margin: 8px auto;
+    max-width: calc(100% - 16px);
+    max-height: calc(100dvh - 16px);
+    display: flex;
+    flex-direction: column;
+  }
+  #createTaskModal .modal-content {
+    max-height: calc(100dvh - 16px);
+    display: flex;
+    flex-direction: column;
+  }
+  #createTaskModal .modal-header {
+    flex-shrink: 0;
+    padding: 0.75rem 1rem;
+  }
+  #createTaskModal .modal-body {
+    flex: 1 1 auto;
+    max-height: none;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0.85rem 1rem;
+  }
+  #createTaskModal .modal-footer {
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: stretch;
+    align-items: stretch;
+    gap: 8px;
+    padding: 0.75rem 1rem;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  }
+  #createTaskModal .modal-footer .file-selection-info {
+    flex: 1 1 100%;
+    margin-right: 0 !important;
+  }
+  #createTaskModal .modal-footer .btn {
+    flex: 1 1 100%;
+    margin: 0 !important;
+  }
+  #createTaskModal .form-group.row {
+    display: block;
+    margin-left: 0;
+    margin-right: 0;
+  }
+  #createTaskModal .form-group.row > [class*="col-"] {
+    max-width: 100%;
+    width: 100%;
+    flex: 0 0 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  #createTaskModal .form-group.row .col-form-label {
+    padding-top: 0;
+    padding-bottom: 6px;
+  }
+  #createTaskModal .input-group,
+  #createTaskModal .form-control {
+    min-width: 0;
+  }
+  #createTaskModal .form-check-inline {
+    margin-bottom: 4px;
+  }
+  #createTaskModal .create-task-wide-group {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #createTaskModal .create-task-wide-group > .form-control {
+    flex: 1 1 100%;
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--glass-border);
+  }
+  #createTaskModal .create-task-wide-group .input-group-prepend,
+  #createTaskModal .create-task-wide-group .input-group-append {
+    width: 100%;
+    margin: 0;
+    display: flex;
+  }
+  #createTaskModal .create-task-wide-group .input-group-prepend .btn,
+  #createTaskModal .create-task-wide-group .input-group-append .btn,
+  #createTaskModal .create-task-wide-group .input-group-append .input-group-text {
+    flex: 1 1 auto;
+    justify-content: center;
+    border-radius: 10px;
+    border: 1px solid var(--glass-border);
+  }
+  #createTaskModal .create-task-wide-group .input-group-prepend .btn {
+    border-right: 1px solid var(--glass-border);
+  }
+  #createTaskModal .create-task-wide-group .input-group-append .input-group-text {
+    border-left: 1px solid var(--glass-border);
+  }
+  #createTaskModal .task-suggestions {
+    max-height: 40vh;
+  }
 }
 /* 编辑元数据 */
 #editMetadataModal .edit-season-number {
