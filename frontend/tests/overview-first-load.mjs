@@ -55,8 +55,10 @@ window.EventSource = class {
 window.pinyinPro = { pinyin: (s) => String(s || '') };
 window.sortFileByName = (f) => [String((f && f.file_name) || f || '')];
 
-// axios 桩：记录 /overview_transfer_stats 的请求次数，返回固定统计与登录用户
+// axios 桩：记录 /overview_transfer_stats 与 /overview_task_stats 的请求次数
 const statsCalls = [];
+const taskStatsCalls = [];
+const shareDetailCalls = [];
 const byUrl = {
   '/data': {
     success: true,
@@ -69,12 +71,24 @@ const byUrl = {
   '/overview_transfer_stats': {
     success: true,
     data: { today_count: 3, today_size: 1024, total_count: 10, total_size: 2048 }
+  },
+  '/overview_task_stats': {
+    success: true,
+    data: {
+      tv_count: 0, anime_count: 0, documentary_count: 0, variety_count: 0,
+      movie_count: 0, other_count: 0, ongoing_count: 0, today_count: 0, failed_count: 0,
+      status_completed: 0, status_airing: 0, status_finale: 0, status_ended: 0,
+      status_unmatched: 0, failed_tasks: []
+    }
   }
 };
 window.axios = {
   async get(url) {
-    if (String(url).includes('/overview_transfer_stats')) statsCalls.push(url);
-    const hit = Object.keys(byUrl).find(k => String(url).includes(k));
+    const raw = String(url);
+    if (raw.includes('/get_share_detail')) shareDetailCalls.push(url);
+    if (raw.includes('/overview_task_stats')) taskStatsCalls.push(url);
+    else if (raw.includes('/overview_transfer_stats')) statsCalls.push(url);
+    const hit = Object.keys(byUrl).find(k => raw.includes(k));
     return { data: hit ? byUrl[hit] : { success: false, message: 'stub' } };
   },
   async post() { return { data: { success: false, message: 'stub' } }; },
@@ -109,8 +123,9 @@ check(!!g.text, `首屏问候语非空（当前: "${g.text}"）`);
 check(!!g.emoji && !!g.dateText, '问候语 emoji 与日期非空');
 check(!!g.period, '问候语时段 key 已设置');
 
-// 2) 首屏即请求转存统计，且数据生效
+// 2) 首屏即请求转存统计与任务看板统计，且数据生效
 check(statsCalls.length >= 1, `首屏已请求 /overview_transfer_stats（次数: ${statsCalls.length}）`);
+check(taskStatsCalls.length >= 1, `首屏已请求 /overview_task_stats（次数: ${taskStatsCalls.length}）`);
 check(app.overviewTransferStats.today_count === 3, '今日转存统计已生效（today_count=3）');
 
 // 3) DOM 渲染：问候语文本不以孤立逗号开头，且包含用户名
@@ -130,6 +145,15 @@ await new Promise(r => setTimeout(r, 30));
 app.changeTab('overview');
 await new Promise(r => setTimeout(r, 50));
 check(statsCalls.length > before, `切回总览重新加载统计（${before} -> ${statsCalls.length}）`);
+
+// 5) 任务列表改走服务端统计，不再对每个任务打 /get_share_detail
+app.changeTab('tasklist');
+await new Promise(r => setTimeout(r, 80));
+check(shareDetailCalls.length === 0, `任务列表不请求 /get_share_detail（次数: ${shareDetailCalls.length}）`);
+check(
+  taskStatsCalls.some(u => String(u).includes('refresh=1') || String(u).includes('refresh=true')),
+  '任务列表请求 /overview_task_stats?refresh=1'
+);
 
 // 清理定时器，避免 Node 进程不退出
 try {

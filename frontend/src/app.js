@@ -31,6 +31,34 @@
   // 运行日志行 HTML 缓存：同一行对象只在内容或移动端状态变化时重新生成
   const _runtimeLogHtmlCache = new WeakMap();
 
+  function emptyOverviewTaskStats() {
+    return {
+      tvCount: 0, animeCount: 0, documentaryCount: 0, varietyCount: 0,
+      movieCount: 0, otherCount: 0, ongoingCount: 0, todayCount: 0, failedCount: 0,
+      statusCompleted: 0, statusAiring: 0, statusFinale: 0, statusEnded: 0,
+      statusUnmatched: 0
+    };
+  }
+  function mapOverviewTaskStats(data) {
+    const d = data || {};
+    return {
+      tvCount: d.tv_count || 0,
+      animeCount: d.anime_count || 0,
+      documentaryCount: d.documentary_count || 0,
+      varietyCount: d.variety_count || 0,
+      movieCount: d.movie_count || 0,
+      otherCount: d.other_count || 0,
+      ongoingCount: d.ongoing_count || 0,
+      todayCount: d.today_count || 0,
+      failedCount: d.failed_count || 0,
+      statusCompleted: d.status_completed || 0,
+      statusAiring: d.status_airing || 0,
+      statusFinale: d.status_finale || 0,
+      statusEnded: d.status_ended || 0,
+      statusUnmatched: d.status_unmatched || 0
+    };
+  }
+
   // 溢出检测指令工厂：根据 getListFn 获取目标列表，避免三个指令大量重复代码。
   // 检测统一推迟到下一帧批量执行：scrollWidth/clientWidth 属于强制同步布局，
   // 若在每个元素的每次渲染中读取，会造成大量 reflow。批量后仅触发一次布局。
@@ -451,6 +479,10 @@ export default {
         overviewGreeting: { text: '', emoji: '', dateText: '', period: '' },
         // 总览页：转存记录统计（今日转存数/大小、累计记录数/大小）
         overviewTransferStats: { today_count: 0, today_size: 0, total_count: 0, total_size: 0 },
+        // 总览页：任务看板统计（由 /overview_task_stats 填充，浏览器只展示）
+        overviewTaskStats: emptyOverviewTaskStats(),
+        overviewShareBanByTaskName: {},
+        _overviewTaskStatsInflight: {},
         _overviewGreetingTimer: null,
         // 标志：当由后端推送或编辑元数据保存触发的程序性更新时，暂时抑制未保存提示
         suppressConfigModifiedOnce: false,
@@ -1033,100 +1065,11 @@ export default {
           }
         },
 
-        // 总览页：任务汇总统计（基于全部任务，不受筛选与排序影响）
-        // 类型拆分：剧集(tv)/动画(anime)/纪录片(documentary)/综艺(variety)/电影(movie)/其他(other)
-        // 追更中：四类剧集且转存进度未达 100%（还没追完，正在追更）
-        // 今日加入：shareurl_subscribed_since 为今日（自然日，与订阅天数口径一致，不区分类型）
-        // 待处理：分享链接已失效且转存尚未完成；转存已完成或临时网络错误不计入
-        // 状态分布：已上映/播出中/本季终/已完结/未匹配（互斥归类，具体状态优先）
+        // 总览页：任务汇总统计（服务端 /overview_task_stats 计算，浏览器只展示）
         overviewStats() {
-          try {
-            const stats = {
-              tvCount: 0, animeCount: 0, documentaryCount: 0, varietyCount: 0,
-              movieCount: 0, otherCount: 0, ongoingCount: 0, todayCount: 0, failedCount: 0,
-              statusCompleted: 0, statusAiring: 0, statusFinale: 0, statusEnded: 0,
-              statusUnmatched: 0
-            };
-            const tasks = (this.formData && Array.isArray(this.formData.tasklist)) ? this.formData.tasklist : [];
-            const now = new Date();
-            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-            tasks.forEach(task => {
-              if (!task || typeof task !== 'object') return;
-              // 解析内容类型，与 tasklistFilterByType 保持同一优先级
-              let contentType = '';
-              if (task.content_type) {
-                contentType = task.content_type;
-              } else if (task.calendar_info && task.calendar_info.extracted && task.calendar_info.extracted.content_type) {
-                contentType = task.calendar_info.extracted.content_type;
-              } else {
-                const name = task.taskname || task.task_name || '';
-                const calTask = name ? this.getCalendarTaskByName(name) : null;
-                contentType = (calTask && calTask.content_type) || 'other';
-              }
-              if (contentType === 'movie') {
-                stats.movieCount += 1;
-              } else if (contentType === 'tv') {
-                stats.tvCount += 1;
-              } else if (contentType === 'anime') {
-                stats.animeCount += 1;
-              } else if (contentType === 'documentary') {
-                stats.documentaryCount += 1;
-              } else if (contentType === 'variety') {
-                stats.varietyCount += 1;
-              } else {
-                stats.otherCount += 1;
-              }
-              // 追更中：四类剧集且转存进度未达 100%（进度信息缺失时视为未追完）
-              const isSeries = ['tv', 'anime', 'variety', 'documentary'].includes(contentType);
-              const taskName = task.taskname || task.task_name || '';
-              const progress = taskName ? this.getTaskProgress(taskName) : null;
-              if (isSeries && (progress === null || progress < 100)) {
-                stats.ongoingCount += 1;
-              }
-              // 今日加入：shareurl_subscribed_since 为今日（忽略时分秒，与订阅天数口径一致）
-              if (task.shareurl_subscribed_since) {
-                const datePart = String(task.shareurl_subscribed_since).trim().split(/\s+/)[0];
-                const parts = datePart.split('-').map(Number);
-                if (parts.length === 3 && parts.every(n => !Number.isNaN(n))) {
-                  if (new Date(parts[0], parts[1] - 1, parts[2]).getTime() === todayStart) {
-                    stats.todayCount += 1;
-                  }
-                }
-              }
-              // 待处理：分享链接已失效；转存已完成的任务不再计入
-              if (this.shouldShowShareUrlBan(task)) {
-                stats.failedCount += 1;
-              }
-              // 状态分布（互斥归类：具体状态优先，避免本季终/已完结被"已上映"截胡）
-              const status = this.getTasklistFullStatus(task);
-              const normalizedProgress = (progress === null || progress === undefined) ? null : Number(progress);
-              const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress);
-              const isMatched = this.isTaskMatchedWithMetadata(task);
-              if (status === '播出中') {
-                stats.statusAiring += 1;
-              } else if (status === '本季终') {
-                stats.statusFinale += 1;
-              } else if (status === '已完结') {
-                stats.statusEnded += 1;
-              } else if (isCompleted) {
-                // 其他终态（已取消/已上映等）且进度 100%
-                stats.statusCompleted += 1;
-              } else if (!isMatched) {
-                stats.statusUnmatched += 1;
-              }
-            });
-            return stats;
-          } catch (e) {
-            return {
-              tvCount: 0, animeCount: 0, documentaryCount: 0, varietyCount: 0,
-              movieCount: 0, otherCount: 0, ongoingCount: 0, todayCount: 0, failedCount: 0,
-              statusCompleted: 0, statusAiring: 0, statusFinale: 0, statusEnded: 0,
-              statusUnmatched: 0
-            };
-          }
+          return this.overviewTaskStats || emptyOverviewTaskStats();
         },
 
-        // 任务列表：整体进度（100% 任务 / 所有存在任务进度的任务）
         // 系统配置：插件设置当前选中的插件（无选中或已不存在时回退到第一个）
         activePluginConfigTab() {
           try {
@@ -2557,11 +2500,13 @@ export default {
         },
         shouldShowShareUrlBan(task) {
           try {
-            if (!task || !task.shareurl_ban || String(task.shareurl_ban).trim() === '') return false;
-            if (this.isTaskTransferComplete(task)) return false;
-            return true;
+            if (!task) return false;
+            const name = task.taskname || task.task_name || '';
+            if (!name) return false;
+            const ban = this.overviewShareBanByTaskName[name];
+            return !!(ban && String(ban).trim() !== '');
           } catch (e) {
-            return !!(task && task.shareurl_ban);
+            return false;
           }
         },
         getTaskShowStatus(taskNameOrTask) {
@@ -6024,47 +5969,61 @@ export default {
               this.showToast('创建文件夹失败');
             });
         },
-        // 添加一个检查分享链接状态的方法
-        checkShareUrlStatus() {
-          // 只在任务列表页面检查
-          if (this.activeTab !== 'tasklist') return;
-
-          // 遍历所有任务
-          this.formData.tasklist.forEach((task, index) => {
-            // 转存已全部完成：不再验证分享是否过期
-            if (this.isTaskTransferComplete(task)) return;
-            // 如果任务有分享链接且没有设置shareurl_ban
-            if (task.shareurl && !task.shareurl_ban) {
-              // 检查分享链接
-              axios.get('/get_share_detail', { params: { shareurl: task.shareurl } })
-                .then(response => {
-                  const share_detail = response.data.data;
-                  if (!response.data.success) {
-                    // 检查是否是可恢复的网络错误或服务端临时错误
-                    if (share_detail.error && (
-                        share_detail.error.includes("request error") ||
-                        share_detail.error.includes("inner error") ||
-                        share_detail.error.includes("网络错误") ||
-                        share_detail.error.includes("服务端错误") ||
-                        share_detail.error.includes("临时错误"))) {
-                      // 忽略可恢复的错误，不设置 shareurl_ban
-                      console.log('检查分享链接时出现可恢复错误，忽略此错误:', share_detail.error);
-                      return;
-                    }
-                    // 使用格式化函数处理其他错误信息
-                    const formattedError = this.formatShareUrlBanMessage(share_detail.error);
-                    if (formattedError) {
-                      task["shareurl_ban"] = formattedError;
-                    }
-                  } else if (share_detail.list !== undefined && share_detail.list.length === 0) {
-                    // 检查文件列表是否为空，确保列表存在且为空
-                    task["shareurl_ban"] = "该分享已被删除，无法访问";
-                  }
-                })
-                .catch(error => {
-                  // 网络请求失败，忽略错误，不设置 shareurl_ban
-                  console.log('检查分享链接状态时网络请求失败，忽略此错误:', error);
+        applyOverviewShareBans(byName) {
+          try {
+            if (!byName || !this.formData || !Array.isArray(this.formData.tasklist)) return;
+            this.suppressConfigModifiedOnce = true;
+            this.formData.tasklist.forEach(task => {
+              if (!task) return;
+              const name = task.taskname || task.task_name;
+              if (!name) return;
+              const ban = byName[name];
+              if (ban && task.shareurl_ban !== ban) {
+                task.shareurl_ban = ban;
+              }
+            });
+            this.$nextTick(() => {
+              this.suppressConfigModifiedOnce = true;
+              this.configModified = false;
+            });
+          } catch (e) {}
+        },
+        loadOverviewTaskStats(refresh = false) {
+          const reqKey = refresh ? 'refresh' : 'base';
+          if (!this._overviewTaskStatsInflight) this._overviewTaskStatsInflight = {};
+          if (this._overviewTaskStatsInflight[reqKey]) {
+            return this._overviewTaskStatsInflight[reqKey];
+          }
+          const url = refresh ? '/overview_task_stats?refresh=1' : '/overview_task_stats';
+          const promise = axios.get(url)
+            .then(response => {
+              if (response.data && response.data.success) {
+                const d = response.data.data || {};
+                this.overviewTaskStats = mapOverviewTaskStats(d);
+                const byName = {};
+                (d.failed_tasks || []).forEach(item => {
+                  if (!item || !item.taskname) return;
+                  byName[item.taskname] = item.shareurl_ban || '';
                 });
+                this.overviewShareBanByTaskName = byName;
+                this.applyOverviewShareBans(byName);
+              }
+            })
+            .catch(error => {
+              console.error('加载总览任务统计失败:', error);
+            })
+            .finally(() => {
+              if (this._overviewTaskStatsInflight) this._overviewTaskStatsInflight[reqKey] = null;
+            });
+          this._overviewTaskStatsInflight[reqKey] = promise;
+          return promise;
+        },
+        // 任务列表：向服务端请求未完成任务的分享失效结果（浏览器不再逐条验链）
+        checkShareUrlStatus() {
+          if (this.activeTab !== 'tasklist') return;
+          this.loadOverviewTaskStats(false).finally(() => {
+            if (this.activeTab === 'tasklist') {
+              this.loadOverviewTaskStats(true);
             }
           });
         },
@@ -6153,6 +6112,7 @@ export default {
           }).catch(error => {
             console.error('加载总览转存统计失败:', error);
           });
+          this.loadOverviewTaskStats(false);
         },
         changeTab(tab) {
           this.activeTab = tab;

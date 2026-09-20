@@ -68,6 +68,12 @@ from sdk.douban_service import douban_service
 
 # 导入追剧日历相关模块
 from utils.task_extractor import TaskExtractor
+from utils.overview_task_stats import (
+    compute_overview_task_stats,
+    format_shareurl_ban_message,
+    localize_show_status,
+    task_display_name,
+)
 from utils.auto_backup import ensure_daily_backup_if_due
 from sdk.tmdb_service import TMDBService
 from sdk.trakt_service import TraktService
@@ -1206,6 +1212,8 @@ task_plugins_config_default = {}
 # 文件列表缓存
 file_list_cache = {}
 cache_lock = Lock()
+# 总览分享验链：同一时刻只跑一轮，避免任务列表重复进入时叠打夸克接口
+_overview_share_refresh_lock = Lock()
 
 # 默认性能参数（如果配置中没有设置）
 DEFAULT_PERFORMANCE_CONFIG = {
@@ -5363,6 +5371,288 @@ def get_overview_transfer_stats():
             db.close()
         except Exception:
             pass
+
+
+def _parse_bound_task_names(raw):
+    if not raw:
+        return []
+    return [part.strip() for part in str(raw).split(",") if part and str(part).strip()]
+
+
+def load_overview_calendar_index(tasklist):
+    """批量读取日历/转存指标，供总览统计使用（不走 /api/calendar/tasks 重接口）。"""
+    calendar_by_name = {}
+    complete_by_name = {}
+    if not tasklist:
+        return calendar_by_name, complete_by_name
+
+    metrics_by_name = {}
+    season_metrics = {}
+    shows_by_id = {}
+    shows_by_task = {}
+    finales = set()
+    season_totals = {}
+    names_with_records = set()
+
+    try:
+        cal_db = CalendarDB()
+        cur = cal_db.conn.cursor()
+        try:
+            cur.execute(
+                "SELECT task_name, tmdb_id, season_number, transferred_count, progress_pct FROM task_metrics"
+            )
+            for task_name, tmdb_id, season_number, transferred_count, progress_pct in cur.fetchall() or []:
+                if not task_name:
+                    continue
+                metrics_by_name[str(task_name)] = {
+                    "tmdb_id": tmdb_id,
+                    "season_number": season_number,
+                    "transferred_count": transferred_count,
+                    "progress_pct": progress_pct,
+                }
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "SELECT tmdb_id, season_number, transferred_count, aired_count, total_count FROM season_metrics"
+            )
+            for tmdb_id, season_number, transferred_count, aired_count, total_count in cur.fetchall() or []:
+                try:
+                    season_metrics[(int(tmdb_id), int(season_number))] = {
+                        "transferred_count": transferred_count,
+                        "aired_count": aired_count,
+                        "total_count": total_count,
+                    }
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            cur.execute("SELECT tmdb_id, status, content_type, bound_task_names FROM shows")
+            for tmdb_id, status, content_type, bound_task_names in cur.fetchall() or []:
+                try:
+                    tid = int(tmdb_id)
+                except Exception:
+                    continue
+                show = {"tmdb_id": tid, "status": status, "content_type": content_type}
+                shows_by_id[tid] = show
+                for bound_name in _parse_bound_task_names(bound_task_names):
+                    shows_by_task[bound_name] = show
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "SELECT DISTINCT tmdb_id, season_number FROM episodes "
+                "WHERE LOWER(COALESCE(type, '')) LIKE '%finale%'"
+            )
+            for tmdb_id, season_number in cur.fetchall() or []:
+                try:
+                    finales.add((int(tmdb_id), int(season_number)))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            cur.execute("SELECT tmdb_id, season_number, episode_count FROM seasons")
+            for tmdb_id, season_number, episode_count in cur.fetchall() or []:
+                try:
+                    season_totals[(int(tmdb_id), int(season_number))] = int(episode_count or 0)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            cal_db.close()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        rec_db = RecordDB()
+        cur = rec_db.conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT task_name FROM transfer_records "
+            "WHERE task_name NOT IN ('rename', 'undo_rename')"
+        )
+        names_with_records = {row[0] for row in (cur.fetchall() or []) if row and row[0]}
+        rec_db.close()
+    except Exception:
+        names_with_records = set()
+
+    for task in tasklist:
+        if not task or not isinstance(task, dict):
+            continue
+        name = task_display_name(task)
+        if not name:
+            continue
+
+        cal = task.get("calendar_info") or {}
+        match = cal.get("match") or {}
+        tmdb_id = match.get("tmdb_id") or task.get("match_tmdb_id") or task.get("tmdb_id")
+        metrics = metrics_by_name.get(name) or {}
+        if not tmdb_id:
+            tmdb_id = metrics.get("tmdb_id")
+        try:
+            tmdb_id = int(tmdb_id) if tmdb_id not in (None, "") else None
+        except Exception:
+            tmdb_id = None
+
+        show = shows_by_id.get(tmdb_id) if tmdb_id else None
+        if not show:
+            show = shows_by_task.get(name)
+            if show and tmdb_id is None:
+                tmdb_id = show.get("tmdb_id")
+
+        season_number = metrics.get("season_number")
+        try:
+            season_number = int(season_number) if season_number not in (None, "") else None
+        except Exception:
+            season_number = None
+
+        sm = season_metrics.get((tmdb_id, season_number)) if tmdb_id and season_number else {}
+        transferred = metrics.get("transferred_count")
+        if transferred is None and sm:
+            transferred = sm.get("transferred_count")
+        aired = (sm or {}).get("aired_count")
+        total = (sm or {}).get("total_count")
+        if not total and tmdb_id and season_number:
+            total = season_totals.get((tmdb_id, season_number))
+
+        try:
+            transferred_i = int(transferred or 0)
+        except Exception:
+            transferred_i = 0
+        try:
+            aired_i = int(aired or 0)
+        except Exception:
+            aired_i = 0
+        try:
+            total_i = int(total or 0)
+        except Exception:
+            total_i = 0
+
+        movie = is_movie_task(task)
+        if movie:
+            if transferred_i <= 0 and name in names_with_records:
+                transferred_i = 1
+            if total_i <= 0:
+                total_i = 1
+            if aired_i <= 0:
+                aired_i = 1
+
+        raw_status = (show or {}).get("status") or ""
+        is_finale = bool(tmdb_id and season_number and (tmdb_id, season_number) in finales)
+        matched_status = localize_show_status(
+            raw_status, is_season_finale=is_finale, aired=aired_i, total=total_i
+        )
+        if movie and not matched_status:
+            matched_status = "电影"
+
+        calendar_by_name[name] = {
+            "content_type": (show or {}).get("content_type"),
+            "matched_status": matched_status,
+            "status": matched_status,
+            "season_counts": {
+                "transferred_count": transferred_i,
+                "aired_count": aired_i,
+                "total_count": total_i,
+            },
+            "match_tmdb_id": tmdb_id,
+            "tmdb_id": tmdb_id,
+        }
+
+        if movie:
+            complete_by_name[name] = name in names_with_records or transferred_i >= 1
+        else:
+            complete_by_name[name] = total_i > 0 and transferred_i >= total_i
+
+    return calendar_by_name, complete_by_name
+
+
+def inspect_shareurl_for_ban(shareurl):
+    """检查分享是否已失效。返回格式化后的 ban 文案；有效或可恢复错误返回 None。"""
+    if not shareurl:
+        return None
+    try:
+        url = str(shareurl)
+        if "pan.qoark.cn" in url:
+            url = _resolve_qoark_redirect(url)
+        account = Quark("", 0)
+        pwd_id, passcode, pdir_fid, paths = account.extract_url(url)
+        if not pwd_id:
+            formatted = format_shareurl_ban_message("提取链接参数失败，请检查分享链接是否有效")
+            return formatted or "提取链接参数失败，请检查分享链接是否有效"
+        is_sharing, stoken, _author = account.get_stoken(pwd_id, passcode)
+        if not is_sharing:
+            return format_shareurl_ban_message(stoken)
+        share_detail = account.get_detail(pwd_id, stoken, pdir_fid, _fetch_share=1)
+        if isinstance(share_detail, dict) and share_detail.get("error"):
+            return format_shareurl_ban_message(share_detail.get("error"))
+        file_list = share_detail.get("list") if isinstance(share_detail, dict) else None
+        if file_list is not None and len(file_list) == 0:
+            return "该分享已被删除，无法访问"
+        return None
+    except Exception:
+        return None
+
+
+def refresh_incomplete_share_bans(tasklist, complete_by_name):
+    """仅对未完成且尚未标记失效的任务验链；新失效只回写 shareurl_ban。"""
+    if not tasklist:
+        return {}
+    if not _overview_share_refresh_lock.acquire(blocking=False):
+        return {}
+    new_bans = {}
+    try:
+        for task in tasklist:
+            if not task or not isinstance(task, dict):
+                continue
+            name = task_display_name(task)
+            if name and complete_by_name.get(name):
+                continue
+            if task.get("shareurl_ban"):
+                continue
+            shareurl = task.get("shareurl")
+            if not shareurl:
+                continue
+            ban = inspect_shareurl_for_ban(shareurl)
+            if not ban:
+                continue
+            task["shareurl_ban"] = ban
+            if name:
+                new_bans[name] = ban
+        if new_bans:
+            try:
+                Config.write_json(CONFIG_PATH, config_data)
+            except Exception:
+                logging.warning("回写分享失效标记失败", exc_info=True)
+        return new_bans
+    finally:
+        _overview_share_refresh_lock.release()
+
+
+# 总览页：任务看板统计（类型/追更中/今日加入/待处理/状态分布）
+@app.route("/overview_task_stats")
+def get_overview_task_stats():
+    if not is_login():
+        return jsonify({"success": False, "message": "未登录"})
+    try:
+        refresh = str(request.args.get("refresh", "")).lower() in ("1", "true", "yes")
+        tasklist = config_data.get("tasklist") or []
+        calendar_by_name, complete_by_name = load_overview_calendar_index(tasklist)
+        if refresh:
+            refresh_incomplete_share_bans(tasklist, complete_by_name)
+        today = datetime.now().strftime("%Y-%m-%d")
+        stats = compute_overview_task_stats(
+            tasklist,
+            calendar_by_name=calendar_by_name,
+            complete_by_name=complete_by_name,
+            today=today,
+        )
+        return jsonify({"success": True, "data": stats})
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"统计失败: {exc}"})
 
 
 # 获取历史转存记录
