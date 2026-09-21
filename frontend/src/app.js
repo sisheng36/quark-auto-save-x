@@ -3146,14 +3146,10 @@ export default {
               console.log('任务数据:', this.calendar.tasks);
               console.log('内容类型:', this.calendar.contentTypes);
               
-              // 首屏优先渲染本地缓存，保证页面快速可见
+              // 首屏只读服务端本地缓存，不在打开页面时打 TMDB
               await this.loadCalendarEpisodesLocal();
               // 同步加载今日更新数据
               try { await this.loadTodayUpdatesLocal(); } catch (e) {}
-              // 背景增量刷新（带节流），完成后热更新
-              if (this.shouldAutoRefreshCalendar()) {
-                this.refreshCalendarData(null, true, true).catch(() => {}); // isAutoRefresh=true
-              }
               // 启动后台轻量监听，近实时发现“最近转存文件”变化
               this.startCalendarAutoWatch();
               
@@ -3312,7 +3308,7 @@ export default {
           return result;
         },
         
-        // 加载本地剧集数据；如无则自动 bootstrap + refresh 再读
+        // 加载本地剧集数据；如无则 bootstrap 一次再读（不在打开页面时逐个打 TMDB）
         async loadCalendarEpisodesLocal() {
           const tryReadLocal = async () => {
             const res = await axios.get('/api/calendar/episodes_local');
@@ -3365,22 +3361,6 @@ export default {
             await axios.post('/api/calendar/bootstrap');
           } catch (e) {
             console.warn('bootstrap 失败:', e);
-          }
-
-          const tasklist = (this.formData && this.formData.tasklist) ? this.formData.tasklist : [];
-          const tmdbIds = [];
-          tasklist.forEach(t => {
-            const cal = (t && t.calendar_info) ? t.calendar_info : {};
-            const match = cal.match || {};
-            if (match.tmdb_id) tmdbIds.push(match.tmdb_id);
-          });
-
-          for (const id of tmdbIds) {
-            try {
-              await axios.get('/api/calendar/refresh_latest_season', { params: { tmdb_id: id } });
-            } catch (e) {
-              console.warn('refresh 失败:', id, e);
-            }
           }
 
           await tryReadLocal();
@@ -4003,9 +3983,6 @@ export default {
             this.initializeCalendarDates();
             // 并行刷新今日更新数据，确保当日更新标识正常显示
             try { await this.loadTodayUpdatesLocal(); } catch (e) {}
-            // 记录自动刷新时间戳，用于节流
-            try { localStorage.setItem('calendar_last_auto_refresh', String(Date.now())); } catch (e) {}
-            
             // 如果不是自动刷新，显示完成提示
             if (!isAutoRefresh) {
               if (failCount === 0) {
@@ -4506,19 +4483,6 @@ export default {
           }
         },
         
-        // 是否需要自动刷新：默认30分钟节流（可根据需要调整）
-        shouldAutoRefreshCalendar() {
-          const key = 'calendar_last_auto_refresh';
-          const throttleMs = 30 * 60 * 1000; // 30分钟
-          try {
-            const last = parseInt(localStorage.getItem(key) || '0');
-            if (!last || (Date.now() - last) > throttleMs) return true;
-          } catch (e) {
-            return true;
-          }
-          return false;
-        },
-
         // 计算“最近转存文件”的签名，便于快速判断是否有变化
         calcLatestFilesSignature(mapObj) {
           try {
@@ -4554,13 +4518,8 @@ export default {
                       this.calendar.progressByTaskName = this.buildProgressByTaskNameFromLatestFiles(latestFiles);
                       this.calendar.progressByShowName = this.buildProgressByShowNameFromTasks(this.calendar.tasks || [], this.calendar.progressByTaskName);
                     } catch (e) {}
-                    // 如果不是首次初始化，且确实有文件变化，则触发刷新（遵守30分钟节流）
-                    if (!isFirstInit && this.shouldAutoRefreshCalendar()) {
-                      await this.refreshCalendarData(null, true, true); // isAutoRefresh=true
-                      // 同步"今日更新"
-                      try { await this.loadTodayUpdatesLocal(); } catch (e) {}
-                    } else if (!isFirstInit) {
-                      // 即使不刷新元数据（节流中），也要更新本地视图以反映文件变化
+                    // 转存文件变化只重读本地缓存，不触发 TMDB 刷新
+                    if (!isFirstInit) {
                       try { await this.loadCalendarEpisodesLocal(); } catch (e) {}
                       try { await this.loadTodayUpdatesLocal(); } catch (e) {}
                     }
@@ -10554,9 +10513,21 @@ export default {
               await this.loadTasklistMetadata();
             }
             
-            // 如果当前是追剧日历页面，也刷新日历数据
+            // 如果当前是追剧日历页面，只重读服务端本地缓存（TMDB 由服务端定时刷新）
             if (this.activeTab === 'calendar') {
-              await this.refreshCalendarData(null, true);
+              try {
+                const tasksResponse = await axios.get('/api/calendar/tasks');
+                if (tasksResponse.data && tasksResponse.data.success) {
+                  this.setCalendarTasks(tasksResponse.data.data.tasks);
+                  this.calendar.taskNames = this.calendar.tasks.map(task => task.task_name);
+                  this.calendar.progressByShowName = this.buildProgressByShowNameFromTasks(this.calendar.tasks || [], this.calendar.progressByTaskName);
+                  const rawTypes = tasksResponse.data.data.content_types || [];
+                  this.updateContentTypes(rawTypes);
+                }
+              } catch (e) {}
+              try { await this.loadCalendarEpisodesLocal(); } catch (e) {}
+              try { await this.loadTodayUpdatesLocal(); } catch (e) {}
+              this.initializeCalendarDates();
             }
           } catch (error) {
             console.warn('触发热更新失败:', error);

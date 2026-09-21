@@ -78,7 +78,7 @@ from utils.auto_backup import ensure_daily_backup_if_due
 from sdk.tmdb_service import TMDBService
 from sdk.trakt_service import TraktService
 from sdk.emby_service import EmbyService
-from sdk.db import CalendarDB
+from sdk.db import CalendarDB, compute_calendar_refresh_schedule
 from sdk.db import RecordDB
 from utils.task_extractor import TaskExtractor
 
@@ -9967,6 +9967,28 @@ def get_calendar_show_info():
 
 
 # --------- 日历刷新调度：按性能设置的周期自动刷新最新季 ---------
+CALENDAR_LAST_FULL_REFRESH_META_KEY = 'last_full_refresh_at'
+
+
+def get_calendar_last_full_refresh_at():
+    """读取上次服务端全量 TMDB 刷新时间（unix 秒）。失败或缺失时返回 0。"""
+    try:
+        raw = CalendarDB().get_meta(CALENDAR_LAST_FULL_REFRESH_META_KEY)
+        if raw is None or raw == '':
+            return 0
+        return int(float(raw))
+    except Exception:
+        return 0
+
+
+def set_calendar_last_full_refresh_at(ts=None):
+    """写入上次服务端全量 TMDB 刷新时间（unix 秒）。"""
+    try:
+        CalendarDB().set_meta(CALENDAR_LAST_FULL_REFRESH_META_KEY, int(ts if ts is not None else time.time()))
+    except Exception:
+        pass
+
+
 def restart_calendar_refresh_job():
     try:
         global _calendar_refresh_last_interval
@@ -9990,6 +10012,30 @@ def restart_calendar_refresh_job():
             scheduler.remove_job('calendar_refresh_job')
         except Exception:
             pass
+
+        now_ts = time.time()
+        last_ts = get_calendar_last_full_refresh_at()
+        run_now, delay_seconds = compute_calendar_refresh_schedule(now_ts, last_ts, interval_seconds)
+        if delay_seconds is None:
+            return
+
+        if run_now:
+            running = False
+            try:
+                running = _calendar_refresh_thread is not None and _calendar_refresh_thread.is_alive()
+            except Exception:
+                running = False
+            tmdb_api_key = ''
+            try:
+                tmdb_api_key = (config_data.get('tmdb_api_key') or '').strip()
+            except Exception:
+                tmdb_api_key = ''
+            if not running and tmdb_api_key:
+                run_calendar_refresh_all_internal_wrapper()
+            next_run = datetime.now() + timedelta(seconds=interval_seconds)
+        else:
+            next_run = datetime.now() + timedelta(seconds=delay_seconds)
+
         scheduler.add_job(
             run_calendar_refresh_all_internal_wrapper,
             IntervalTrigger(seconds=interval_seconds),
@@ -9998,6 +10044,7 @@ def restart_calendar_refresh_job():
             misfire_grace_time=None,
             coalesce=True,
             max_instances=1,
+            next_run_time=next_run,
         )
         if scheduler.state == 0:
             scheduler.start()
@@ -10102,6 +10149,10 @@ def run_calendar_refresh_all_internal():
                     # 如果有 Trakt 的源时间/时区，计算每集的本地播出日期并更新 air_date_local
                     # 如果没有时区信息，将 air_date_local 设置为与 air_date 相同的值
                     update_episodes_air_date_local(db, int(tmdb_id), int(db.get_show(int(tmdb_id))['latest_season_number']), episodes)
+                    try:
+                        db.touch_show_refreshed_at(int(tmdb_id), now_ts)
+                    except Exception:
+                        pass
 
                     # 新增：节目状态变更检测与更新（如 Returning → 本季终/已完结 等）
                     try:
@@ -10135,6 +10186,10 @@ def run_calendar_refresh_all_internal():
                         pass
             except Exception as e:
                 logging.warning(f"自动刷新失败 tmdb_id={tmdb_id}: {e}")
+        try:
+            set_calendar_last_full_refresh_at()
+        except Exception:
+            pass
         try:
             if any_written:
                 notify_calendar_changed('auto_refresh')

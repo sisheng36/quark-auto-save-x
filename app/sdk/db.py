@@ -5,6 +5,33 @@ import time
 from datetime import datetime
 from functools import wraps
 
+def compute_calendar_refresh_schedule(now_ts, last_ts, interval_seconds):
+    """计算是否应立即刷新，以及距离下次周期触发的秒数。
+
+    返回 (run_now: bool, delay_seconds: int|None)。周期关闭时 delay_seconds 为 None。
+    """
+    try:
+        interval_seconds = int(interval_seconds)
+    except Exception:
+        interval_seconds = 0
+    if interval_seconds <= 0:
+        return False, None
+    try:
+        last_ts = int(last_ts or 0)
+    except Exception:
+        last_ts = 0
+    try:
+        now_ts = float(now_ts)
+    except Exception:
+        now_ts = 0
+    if last_ts <= 0 or (now_ts - last_ts) >= interval_seconds:
+        return True, interval_seconds
+    remaining = int(interval_seconds - (now_ts - last_ts))
+    if remaining < 1:
+        return True, interval_seconds
+    return False, remaining
+
+
 # 数据库操作重试装饰器
 def retry_on_locked(max_retries=3, base_delay=0.1):
     """数据库操作重试装饰器，用于处理 database is locked 错误"""
@@ -512,6 +539,14 @@ class CalendarDB:
         )
         ''')
 
+        # 日历任务级元数据（例如上次全量 TMDB 刷新时间）
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS calendar_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        ''')
+
         self.conn.commit()
 
     def close(self):
@@ -539,6 +574,35 @@ class CalendarDB:
             content_type=excluded.content_type,
             is_custom_poster=excluded.is_custom_poster
         ''', (tmdb_id, name, year, status, poster_local_path, latest_season_number, last_refreshed_at, bound_task_names, content_type, is_custom_poster))
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def touch_show_refreshed_at(self, tmdb_id:int, last_refreshed_at:int):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            'UPDATE shows SET last_refreshed_at=? WHERE tmdb_id=?',
+            (int(last_refreshed_at), int(tmdb_id))
+        )
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_meta(self, key:str, default=None):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT value FROM calendar_meta WHERE key=?', (key,))
+        row = cursor.fetchone()
+        if not row:
+            return default
+        return row[0]
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def set_meta(self, key:str, value):
+        cursor = self.conn.cursor()
+        stored = '' if value is None else str(value)
+        cursor.execute(
+            '''INSERT INTO calendar_meta (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value''',
+            (key, stored)
+        )
         self.conn.commit()
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
