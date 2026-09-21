@@ -4850,7 +4850,10 @@ html.theme-light .calendar-poster-item:hover {
   border-color: var(--glass-border-strong);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
-html.theme-light .glass-config-toggle:hover {
+html.theme-light .glass-config-toggle:hover,
+html.theme-light .glass-config-toggle:focus,
+html.theme-light .glass-config-toggle:active {
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.78);
   border-color: var(--glass-border-strong);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.9);
