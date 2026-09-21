@@ -227,6 +227,26 @@ def advanced_filter_files(file_list, filterwords):
     
     return file_list
 
+
+def apply_task_file_filters(file_list, task=None, task_settings=None):
+    """
+    先应用全局过滤规则，再应用任务级过滤规则（叠加，不合并字符串）。
+
+    Args:
+        file_list: 文件列表
+        task: 任务配置，读取 task["filterwords"]
+        task_settings: 全局任务设置；缺省时使用 CONFIG_DATA["task_settings"]
+    """
+    settings = task_settings if task_settings is not None else CONFIG_DATA.get("task_settings", {})
+    global_fw = (settings or {}).get("filterwords") or ""
+    task_fw = (task or {}).get("filterwords") or ""
+    if global_fw:
+        file_list = advanced_filter_files(file_list, global_fw)
+    if task_fw:
+        file_list = advanced_filter_files(file_list, task_fw)
+    return file_list
+
+
 def filter_files_by_episode_range(share_file_list, task):
     """
     按任务配置的「集数范围」过滤分享文件列表（只转存指定区间内的集）。
@@ -2711,10 +2731,10 @@ class Quark:
             print(f"❌ 读取解压目录失败: {list_read_failed}")
             return {"success": False, "message": list_read_failed}
 
-        # 第四步：应用过滤规则并删除被过滤掉的文件
-        if task and task.get("filterwords"):
+        # 第四步：应用过滤规则并删除被过滤掉的文件（全局 + 任务级）
+        if task:
             # 应用过滤规则，获取通过过滤的文件列表
-            filtered_files = advanced_filter_files(all_files, task["filterwords"])
+            filtered_files = apply_task_file_filters(all_files, task)
             
             # 找出被过滤掉的文件（不在过滤后的列表中）
             filtered_file_fids = {f["fid"] for f in filtered_files}
@@ -3591,9 +3611,8 @@ class Quark:
         # 这样可以确保起始文件过滤逻辑正确工作
         share_file_list.sort(key=sort_file_by_name, reverse=True)
 
-        # 应用过滤词过滤
-        if task.get("filterwords"):
-            share_file_list = advanced_filter_files(share_file_list, task["filterwords"])
+        # 应用过滤词过滤（全局 + 任务级）
+        share_file_list = apply_task_file_filters(share_file_list, task)
 
         # 应用集数范围过滤：只转存配置区间内的集（episode_start/episode_end，含边界）
         # 仅在至少一个字段能解析为整数时启用，避免前端空字符串触发无意义的过滤与日志
@@ -4712,14 +4731,9 @@ class Quark:
             non_dir_files = [f for f in dir_file_list if not f.get("dir", False)]
             is_empty_dir = len(non_dir_files) == 0
 
-            # 应用过滤词过滤（修复bug：为本地文件重命名添加过滤规则）
-            if task.get("filterwords"):
-                # 记录过滤前的文件总数
-                original_total_count = len(dir_file_list)
-                
-                # 使用高级过滤函数处理保留词和过滤词
-                dir_file_list = advanced_filter_files(dir_file_list, task["filterwords"])
-                dir_file_name_list = [item["file_name"] for item in dir_file_list]
+            # 应用过滤词过滤（全局 + 任务级）
+            dir_file_list = apply_task_file_filters(dir_file_list, task)
+            dir_file_name_list = [item["file_name"] for item in dir_file_list]
 
             # 找出当前最大序号
             max_sequence = 0
@@ -5156,18 +5170,15 @@ class Quark:
                             # 应用字幕命名规则
                             save_name = apply_subtitle_naming_rule(save_name, task)
                             
-                            # 检查过滤词
+                            # 检查过滤词（全局 + 任务级）
                             should_filter = False
-                            if task.get("filterwords"):
-                                # 使用高级过滤函数检查文件名
-                                temp_file_list = [{"file_name": share_file["file_name"]}]
-                                if advanced_filter_files(temp_file_list, task["filterwords"]):
-                                    # 检查目标文件名
-                                    temp_save_list = [{"file_name": save_name}]
-                                    if not advanced_filter_files(temp_save_list, task["filterwords"]):
-                                        should_filter = True
-                                else:
+                            temp_file_list = [{"file_name": share_file["file_name"]}]
+                            if apply_task_file_filters(temp_file_list, task):
+                                temp_save_list = [{"file_name": save_name}]
+                                if not apply_task_file_filters(temp_save_list, task):
                                     should_filter = True
+                            else:
+                                should_filter = True
                             
                             # 只处理不需要过滤的文件
                             if not should_filter:
@@ -5177,13 +5188,10 @@ class Quark:
                                 need_save_list.append(share_file)
                         else:
                             # 无法提取集号，使用原文件名（仍然检查过滤词）
-                            # 检查过滤词
                             should_filter = False
-                            if task.get("filterwords"):
-                                # 使用高级过滤函数检查文件名
-                                temp_file_list = [{"file_name": share_file["file_name"]}]
-                                if not advanced_filter_files(temp_file_list, task["filterwords"]):
-                                    should_filter = True
+                            temp_file_list = [{"file_name": share_file["file_name"]}]
+                            if not apply_task_file_filters(temp_file_list, task):
+                                should_filter = True
                             
                             # 只处理不需要过滤的文件
                             if not should_filter:
@@ -5446,13 +5454,8 @@ class Quark:
             # 对本地已有文件进行重命名（即使没有分享链接或处理失败也执行）
             renamed_files = {}
             
-            # 应用过滤词过滤（修复bug：为本地文件重命名添加过滤规则）
-            if task.get("filterwords"):
-                # 记录过滤前的文件总数
-                original_total_count = len(dir_file_list)
-                
-                # 使用高级过滤函数处理保留词和过滤词
-                dir_file_list = advanced_filter_files(dir_file_list, task["filterwords"])
+            # 应用过滤词过滤（全局 + 任务级）
+            dir_file_list = apply_task_file_filters(dir_file_list, task)
             
             # 使用一个列表收集所有需要重命名的操作（rename_logs 已在分支开头初始化，此处只追加）
             rename_operations = []
@@ -5590,13 +5593,8 @@ class Quark:
             # 获取目录中的文件列表
             dir_file_list = self.ls_dir(self.savepath_fid[savepath])
             
-            # 应用过滤词过滤（修复bug：为本地文件重命名添加过滤规则）
-            if task.get("filterwords"):
-                # 记录过滤前的文件总数
-                original_total_count = len(dir_file_list)
-                
-                # 使用高级过滤函数处理保留词和过滤词
-                dir_file_list = advanced_filter_files(dir_file_list, task["filterwords"])
+            # 应用过滤词过滤（全局 + 任务级）
+            dir_file_list = apply_task_file_filters(dir_file_list, task)
             
             # 使用一个列表收集所有需要重命名的操作
             rename_operations = []
@@ -5963,6 +5961,9 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                 print(f"正则匹配: {task['pattern']}")
             if task.get("replace") is not None:  # 显示替换规则，即使为空字符串
                 print(f"正则替换: {task['replace']}")
+        global_fw = (CONFIG_DATA.get("task_settings") or {}).get("filterwords") or ""
+        if str(global_fw).strip():
+            print(f"全局过滤规则: {global_fw}")
         if task.get("filterwords"):
             print(f"过滤规则: {task['filterwords']}")
         # 集数范围（任务级打印一次，避免子目录递归重复打印）

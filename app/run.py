@@ -55,6 +55,7 @@ from quark_auto_save import (
     chinese_to_arabic,
     is_date_format,
     apply_subtitle_naming_rule,
+    apply_task_file_filters,
     parse_naming_pattern_extension,
     build_sequence_naming_filename,
     build_episode_naming_filename,
@@ -4497,6 +4498,19 @@ def get_share_detail():
     # 正则命名预览
     def preview_regex(share_detail):
         regex = request.json.get("regex")
+
+        def mark_filtered_files(file_list, set_name_re_x=False):
+            kept = apply_task_file_filters(
+                file_list,
+                {"filterwords": regex.get("filterwords", "")},
+                config_data.get("task_settings") or {},
+            )
+            for item in file_list:
+                if item not in kept:
+                    item["filtered"] = True
+                    if set_name_re_x:
+                        item["file_name_re"] = "×"
+
         # 检查是否为顺序命名模式
         if regex.get("use_sequence_naming") and regex.get("sequence_naming"):
             # 顺序命名模式预览
@@ -4531,16 +4545,9 @@ def get_share_detail():
             
             # 根据提取的排序值进行排序
             sorted_files = sorted(files_to_process, key=extract_sort_value)
-            
-            # 应用高级过滤词过滤
-            filterwords = regex.get("filterwords", "")
-            if filterwords:
-                # 使用高级过滤函数
-                filtered_files = advanced_filter_files(sorted_files, filterwords)
-                # 标记被过滤的文件
-                for item in sorted_files:
-                    if item not in filtered_files:
-                        item["filtered"] = True
+
+            # 应用过滤词过滤（全局 + 任务级）
+            mark_filtered_files(sorted_files)
             
             # 为每个文件分配序号
             for file in sorted_files:
@@ -4567,18 +4574,9 @@ def get_share_detail():
                     episode_patterns.append(p)
                 elif isinstance(p, str):
                     episode_patterns.append({"regex": p})
-                
-            
-            # 应用高级过滤词过滤
-            filterwords = regex.get("filterwords", "")
-            if filterwords:
-                # 使用高级过滤函数
-                filtered_files = advanced_filter_files(share_detail["list"], filterwords)
-                # 标记被过滤的文件
-                for item in share_detail["list"]:
-                    if item not in filtered_files:
-                        item["filtered"] = True
-                        item["file_name_re"] = "×"
+
+            # 应用过滤词过滤（全局 + 任务级）
+            mark_filtered_files(share_detail["list"], set_name_re_x=True)
             
             # 处理未被过滤的文件
             for file in share_detail["list"]:
@@ -4607,16 +4605,9 @@ def get_share_detail():
                 regex.get("taskname", ""),
                 regex.get("magic_regex", {}),
             )
-            
-            # 应用高级过滤词过滤
-            filterwords = regex.get("filterwords", "")
-            if filterwords:
-                # 使用高级过滤函数
-                filtered_files = advanced_filter_files(share_detail["list"], filterwords)
-                # 标记被过滤的文件
-                for item in share_detail["list"]:
-                    if item not in filtered_files:
-                        item["filtered"] = True
+
+            # 应用过滤词过滤（全局 + 任务级）
+            mark_filtered_files(share_detail["list"])
                 
             # 应用正则命名
             for item in share_detail["list"]:

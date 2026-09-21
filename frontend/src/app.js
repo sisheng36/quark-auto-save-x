@@ -293,7 +293,8 @@ export default {
             subtitle_naming_rule: "zh",
             subtitle_add_language_code: false,
             search_preferred_sharers: "",
-            search_blocked_sharers: ""
+            search_blocked_sharers: "",
+            filterwords: ""
           },
           source: {
             cloudsaver: {
@@ -6302,6 +6303,7 @@ export default {
                   subtitle_add_language_code: false,
                   search_preferred_sharers: "",
                   search_blocked_sharers: "",
+                  filterwords: "",
                   auto_search_resources: "enabled",
                   auto_search_resources_on_edit: "enabled",
                   auto_extract_archive: "disabled"
@@ -6330,6 +6332,9 @@ export default {
               }
               if (config_data.task_settings.search_blocked_sharers === undefined) {
                 config_data.task_settings.search_blocked_sharers = "";
+              }
+              if (config_data.task_settings.filterwords === undefined) {
+                config_data.task_settings.filterwords = "";
               }
               // 确保自动搜索资源设置存在
               if (!config_data.task_settings.auto_search_resources) {
