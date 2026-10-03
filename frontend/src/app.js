@@ -2486,9 +2486,9 @@ export default {
 
             // 信息类
             latest_transfer_file: '任务最近一次成功转存的文件名（剧集编号），需该任务有过成功转存记录才会显示',
-            season_counts: '已转存集数/已播出集数/节目总集数，依赖TMDB匹配的元数据，仅在配置了TMDB API且任务成功匹配到条目时显示',
+            season_counts: '已转存集数/已播出集数/节目总集数，末尾的 + 表示 TMDB 当前只返回了已知集数，任务仍会继续追踪',
             latest_update_date: '任务最近一次成功转存的日期，需该任务有过成功转存记录才会显示',
-            task_progress: '已转存集数占已播出集数的百分比，依赖TMDB匹配的元数据，仅在配置了TMDB API且任务成功匹配到条目时显示',
+            task_progress: '已转存集数占已播出集数的百分比，标记“已知”表示当前总集数仍可能增加',
             show_status: '电视节目的完播状态（如：本季终/已完结/已取消），依赖TMDB匹配的元数据，仅在配置了TMDB API、任务成功匹配到条目且节目已完播时显示',
             today_update_indicator: '任务在当日产生转存记录后，将显示当日更新标识'
           };
@@ -2507,14 +2507,30 @@ export default {
             const aired = Number(sc.aired_count || 0);
             const total = Number(sc.total_count || 0);
             if (transferred === 0 && aired === 0 && total === 0) return null;
-            return { transferred, aired, total };
+            return {
+              transferred,
+              aired,
+              total,
+              provisional: !!sc.is_count_provisional,
+              terminal: !!sc.is_terminal,
+              manualStatus: sc.manual_status || '',
+              statusSource: sc.status_source || ''
+            };
           } catch (e) { return null; }
         },
         formatSeasonCounts(sc) {
           try {
             if (!sc) return '';
+            const total = `${sc.total}${sc.provisional ? '+' : ''}`;
             // 为斜杠包裹span，便于单独微调位置
-            return `${sc.transferred} <span class="count-slash">/</span> ${sc.aired} <span class=\"count-slash\">/</span> ${sc.total}`;
+            return `${sc.transferred} <span class="count-slash">/</span> ${sc.aired} <span class="count-slash">/</span> ${total}`;
+          } catch (e) { return ''; }
+        },
+        getTaskTotalCountDisplay(taskNameOrTask) {
+          try {
+            const sc = this.getTaskSeasonCounts(taskNameOrTask);
+            if (!sc) return '';
+            return `${sc.total}${sc.provisional ? '+' : ''}`;
           } catch (e) { return ''; }
         },
         getTaskProgress(taskNameOrTask) {
@@ -2525,6 +2541,14 @@ export default {
             const pct = Math.floor((sc.transferred / sc.aired) * 100);
             return Math.max(0, Math.min(100, pct));
           } catch (e) { return null; }
+        },
+        getTaskProgressDisplay(taskNameOrTask) {
+          try {
+            const progress = this.getTaskProgress(taskNameOrTask);
+            if (progress === null || progress === undefined) return '';
+            const sc = this.getTaskSeasonCounts(taskNameOrTask);
+            return `${progress}%${sc && sc.provisional ? '（已知）' : ''}`;
+          } catch (e) { return ''; }
         },
         isMovieTask(task) {
           try {
@@ -2616,6 +2640,54 @@ export default {
             return taskName;
           } catch (e) { 
             return task.task_name || task.taskname || '';
+          }
+        },
+        getTaskCalendarMeta(task) {
+          try {
+            return this.getCalendarTaskForTask(task) || task || null;
+          } catch (e) { return task || null; }
+        },
+        getTaskManualStatus(task) {
+          try {
+            const meta = this.getTaskCalendarMeta(task);
+            return meta && meta.manual_status ? String(meta.manual_status).trim() : '';
+          } catch (e) { return ''; }
+        },
+        canOverrideTaskStatus(task) {
+          try {
+            const meta = this.getTaskCalendarMeta(task);
+            const tmdbId = meta && (meta.match_tmdb_id || meta.tmdb_id || (meta.match && meta.match.tmdb_id));
+            if (!meta || !tmdbId || this.isMovieTask(meta)) return false;
+            const status = String(meta.matched_status || '').trim();
+            const manual = this.getTaskManualStatus(meta);
+            return manual === 'ended' || !['本季终', '已完结', '已取消'].includes(status);
+          } catch (e) { return false; }
+        },
+        getTaskStatusOverrideLabel(task) {
+          return this.getTaskManualStatus(task) === 'ended' ? '恢复自动判断' : '标记为已完结';
+        },
+        async toggleTaskStatusOverride(task) {
+          try {
+            const meta = this.getTaskCalendarMeta(task);
+            if (!meta) return;
+            const manual = this.getTaskManualStatus(meta) === 'ended';
+            const action = manual ? '恢复自动判断' : '标记为已完结';
+            if (!confirm(`确定要${action}「${meta.task_name || meta.taskname || ''}」吗？`)) return;
+            const taskIndex = this.getTaskIndex(task);
+            const response = await axios.post('/api/calendar/task_status_override', {
+              task_name: meta.task_name || meta.taskname || '',
+              task_index: taskIndex,
+              status: manual ? null : 'ended'
+            });
+            if (!response.data || !response.data.success) {
+              this.showToast((response.data && response.data.message) || `${action}失败`);
+              return;
+            }
+            this.showToast(response.data.message || `${action}成功`);
+            this.calendar.hasLoaded = false;
+            await this.loadCalendarData();
+          } catch (e) {
+            this.showToast('设置任务状态失败：' + (e.response?.data?.message || e.message));
           }
         },
         // 获取节目本地播出时间的展示文本

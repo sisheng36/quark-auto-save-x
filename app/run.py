@@ -393,7 +393,7 @@ def _latest_transfer_for_task(cursor, task, same_name_count=1):
         return latest_time, latest_rows[0][0]
 
 
-def _task_display_source_version(tmdb_id, season_number, content_type, raw_status, total_count, season_name=''):
+def _task_display_source_version(tmdb_id, season_number, content_type, raw_status, total_count, season_name='', manual_status='', is_count_provisional=False):
     """生成任务列表稳定展示快照的来源版本，避免源数据变化后继续使用旧快照。"""
     raw = '|'.join([
         str(tmdb_id or ''),
@@ -402,11 +402,13 @@ def _task_display_source_version(tmdb_id, season_number, content_type, raw_statu
         str(raw_status or '').strip().lower(),
         str(total_count or 0),
         str(season_name or ''),
+        str(manual_status or '').strip().lower(),
+        '1' if is_count_provisional else '0',
     ])
     return hashlib.sha1(raw.encode('utf-8', 'ignore')).hexdigest()[:20]
 
 
-def _valid_task_display_cache(cache, task, tmdb_id, season_number, content_type, raw_status, total_count, season_name=''):
+def _valid_task_display_cache(cache, task, tmdb_id, season_number, content_type, raw_status, total_count, season_name='', manual_status='', is_count_provisional=False):
     """判断任务列表快照是否仍对应当前任务/节目来源。"""
     if not cache or not int(cache.get('is_terminal') or 0):
         return False
@@ -421,9 +423,26 @@ def _valid_task_display_cache(cache, task, tmdb_id, season_number, content_type,
     if cached_type and cached_type != str(content_type or '').strip():
         return False
     expected_version = _task_display_source_version(
-        tmdb_id, season_number, content_type, raw_status, total_count, season_name
+        tmdb_id, season_number, content_type, raw_status, total_count, season_name,
+        manual_status, is_count_provisional,
     )
     return cache.get('source_version') == expected_version
+
+
+def _valid_task_status_override(override, tmdb_id, season_number):
+    """只让手动状态作用于创建它时绑定的任务季，避免改季后继承旧状态。"""
+    if not override or str(override.get('status_override') or '').strip().lower() != 'ended':
+        return False
+    try:
+        stored_tmdb = override.get('tmdb_id')
+        stored_season = override.get('season_number')
+        if stored_tmdb not in (None, '') and int(stored_tmdb) != int(tmdb_id):
+            return False
+        if stored_season not in (None, '') and int(stored_season) != int(season_number):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
@@ -504,6 +523,57 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             transferred_by_task = {}
             task_keys_with_records = set()
 
+        # 批量读取任务级手动终结状态和稳定展示快照。
+        try:
+            task_status_override_map = db.get_task_status_override_map()
+        except Exception:
+            task_status_override_map = {}
+        try:
+            task_display_cache_map = db.get_task_display_cache_map()
+        except Exception:
+            task_display_cache_map = {}
+
+        # 已手动标记已完结或已有有效终态快照的任务，不需要逐集计算播出数量。
+        # 只有某个节目/季下的所有任务都处于终态时，才跳过该节目/季的计算。
+        pair_task_keys = {}
+        pair_terminal_keys = {}
+        for task in tasks_info:
+            try:
+                task_tmdb_id = task.get('match_tmdb_id') or ((task.get('calendar_info') or {}).get('match') or {}).get('tmdb_id')
+                task_season = task.get('matched_latest_season_number')
+                task_name_key = _task_name(task)
+                task_path_key = _task_save_path(task)
+                if not task_tmdb_id or not task_season or not task_name_key:
+                    continue
+                pair = (int(task_tmdb_id), int(task_season))
+                task_key = (task_name_key, task_path_key)
+                pair_task_keys.setdefault(pair, set()).add(task_key)
+                override = task_status_override_map.get(task_key) or {}
+                manual_status = 'ended' if _valid_task_status_override(override, task_tmdb_id, task_season) else ''
+                cache = task_display_cache_map.get(task_key)
+                raw_status = (show_meta.get(int(task_tmdb_id), {}).get('status') or '')
+                season_row = season_meta.get(pair) or {}
+                task_content_type = 'movie' if is_movie_task(task) else (task.get('content_type') or (cache or {}).get('content_type') or '')
+                cache_valid = _valid_task_display_cache(
+                    cache,
+                    task,
+                    task_tmdb_id,
+                    task_season,
+                    task_content_type,
+                    raw_status,
+                    season_row.get('episode_count') or 0,
+                    season_row.get('season_name') or '',
+                    manual_status,
+                )
+                if manual_status == 'ended' or cache_valid:
+                    pair_terminal_keys.setdefault(pair, set()).add(task_key)
+            except Exception:
+                continue
+        terminal_cached_pairs = {
+            pair for pair, keys in pair_task_keys.items()
+            if keys and keys == pair_terminal_keys.get(pair, set())
+        }
+
         # 统计"已播出集数"：使用 is_episode_aired 逐集判断（考虑播出时间）
         # 修复：不再使用简单的日期比较，而是逐集调用 is_episode_aired 判断是否已播出
         from datetime import datetime as _dt
@@ -555,48 +625,6 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         except Exception:
             task_metrics_map = {}
 
-        # 批量读取任务列表稳定展示快照。终态任务可直接使用，不再逐集计算已播数。
-        try:
-            task_display_cache_map = db.get_task_display_cache_map()
-        except Exception:
-            task_display_cache_map = {}
-
-        # 只有某个节目/季下的所有任务都命中有效终态快照时，才跳过该节目/季的已播计算。
-        pair_task_keys = {}
-        pair_terminal_keys = {}
-        for task in tasks_info:
-            try:
-                task_tmdb_id = task.get('match_tmdb_id') or ((task.get('calendar_info') or {}).get('match') or {}).get('tmdb_id')
-                task_season = task.get('matched_latest_season_number')
-                task_name_key = _task_name(task)
-                task_path_key = _task_save_path(task)
-                if not task_tmdb_id or not task_season or not task_name_key:
-                    continue
-                pair = (int(task_tmdb_id), int(task_season))
-                task_key = (task_name_key, task_path_key)
-                pair_task_keys.setdefault(pair, set()).add(task_key)
-                cache = task_display_cache_map.get(task_key)
-                raw_status = (show_meta.get(int(task_tmdb_id), {}).get('status') or '')
-                season_row = season_meta.get(pair) or {}
-                task_content_type = 'movie' if is_movie_task(task) else (task.get('content_type') or (cache or {}).get('content_type') or '')
-                if _valid_task_display_cache(
-                    cache,
-                    task,
-                    task_tmdb_id,
-                    task_season,
-                    task_content_type,
-                    raw_status,
-                    season_row.get('episode_count') or 0,
-                    season_row.get('season_name') or '',
-                ):
-                    pair_terminal_keys.setdefault(pair, set()).add(task_key)
-            except Exception:
-                continue
-        terminal_cached_pairs = {
-            pair for pair, keys in pair_task_keys.items()
-            if keys and keys == pair_terminal_keys.get(pair, set())
-        }
-
         # 注入到任务
         enriched = []
         for t in tasks_info:
@@ -613,11 +641,14 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             _updated_at = None
             task_key = (_task_name(t), _task_save_path(t))
             display_cache = task_display_cache_map.get(task_key)
+            manual_override = task_status_override_map.get(task_key) or {}
+            manual_status = ''
             cached_terminal = False
             terminal_reason = ''
 
             try:
                 cache_season = t.get('matched_latest_season_number') or (display_cache or {}).get('season_number')
+                manual_status = 'ended' if _valid_task_status_override(manual_override, tmdb_id, cache_season) else ''
                 cache_show_meta = show_meta.get(int(tmdb_id), {}) if tmdb_id else {}
                 cache_season_meta = {}
                 if tmdb_id and cache_season:
@@ -631,6 +662,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                     cache_show_meta.get('status') or '',
                     cache_season_meta.get('episode_count') or 0,
                     cache_season_meta.get('season_name') or '',
+                    manual_status,
                 )
                 if cached_terminal:
                     terminal_reason = display_cache.get('terminal_reason') or 'terminal'
@@ -761,6 +793,34 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
 
+            # 手动已完结只覆盖当前任务，不修改 TMDB 节目本身，也不影响同节目的新季任务。
+            if manual_status == 'ended':
+                status = '已完结'
+                terminal_reason = 'manual_ended'
+
+            terminal_status = bool(
+                movie_task
+                or status in ('本季终', '已完结', '已取消', '已上映')
+                or str(status or '').strip().lower().replace(' ', '_') in ('ended', 'canceled', 'cancelled')
+            )
+            terminal_task = cached_terminal or manual_status == 'ended' or terminal_status
+            if not terminal_reason:
+                if manual_status == 'ended':
+                    terminal_reason = 'manual_ended'
+                elif movie_task:
+                    terminal_reason = 'movie'
+                elif status == '本季终':
+                    terminal_reason = 'season_final'
+                elif status in ('已完结', '已取消', '已上映'):
+                    terminal_reason = 'ended' if status == '已完结' else 'cancelled'
+            raw_status_key = str(status or '').strip().lower().replace(' ', '_')
+            is_count_provisional = bool(
+                not movie_task
+                and not terminal_task
+                and status not in ('本季终', '已完结', '已取消')
+                and raw_status_key not in ('ended', 'canceled', 'cancelled')
+            )
+
             if cached_terminal:
                 # 终态快照已经包含稳定的节目状态和当前季统计，跳过本次请求的动态重算结果。
                 try:
@@ -771,15 +831,27 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 status = display_cache.get('matched_status') or status
                 total_count = display_cache.get('total_count')
                 aired_count = display_cache.get('aired_count')
+                is_count_provisional = bool(display_cache.get('is_count_provisional') or 0)
+                terminal_task = True
+                terminal_reason = display_cache.get('terminal_reason') or terminal_reason or 'terminal'
+                t['status_source'] = display_cache.get('status_source') or t.get('status_source') or 'tmdb'
 
             t['matched_status'] = status
             t['latest_season_name'] = latest_season_name
+            t['manual_status'] = manual_status if manual_status == 'ended' else ''
+            t['status_source'] = 'manual' if manual_status == 'ended' else ('tmdb' if tmdb_id else '')
+            t['is_count_provisional'] = is_count_provisional
+            t['is_terminal'] = bool(terminal_task)
+            t['refresh_enabled'] = not bool(terminal_task)
+            t['terminal_reason'] = terminal_reason
 
             # 仅在首次识别到终态时写入稳定展示快照；后续请求只读取快照。
-            if not cached_terminal and tmdb_id and latest_sn:
+            if (not cached_terminal) and tmdb_id and latest_sn:
                 source_raw_status = (show_meta.get(int(tmdb_id), {}).get('status') or '')
                 status_key = str(source_raw_status or '').strip().lower().replace(' ', '_')
-                if movie_task:
+                if manual_status == 'ended':
+                    terminal_reason = 'manual_ended'
+                elif movie_task:
                     terminal_reason = 'movie'
                 elif status in ('已完结', '已取消') or status_key in ('ended', 'canceled', 'cancelled'):
                     terminal_reason = 'ended' if status_key == 'ended' or status == '已完结' else 'cancelled'
@@ -802,6 +874,9 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                             aired_count=int(aired_count or 0),
                             is_terminal=True,
                             terminal_reason=terminal_reason,
+                            status_source='manual' if manual_status == 'ended' else 'tmdb',
+                            is_count_provisional=False,
+                            refresh_enabled=False,
                             source_version=_task_display_source_version(
                                 tmdb_id,
                                 latest_sn,
@@ -809,12 +884,19 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                                 source_raw_status,
                                 total_count,
                                 source_season_name,
+                                manual_status,
+                                False,
                             ),
                             finalized_at=int(time.time()),
                             updated_at=int(time.time()),
                         )
                     except Exception:
                         pass
+
+            # 自动终态首次识别后，修正本次响应中的生命周期字段。
+            t['is_terminal'] = bool(terminal_task)
+            t['refresh_enabled'] = not bool(terminal_task)
+            t['terminal_reason'] = terminal_reason
 
             # 后端兜底：当文件名无集序号但含日期时，尝试用 tmdb_id + season + air_date 推导已转存集数
             # 这样与前端展示口径一致，避免把 transferred_count 误写为 0
@@ -869,10 +951,14 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 'transferred_count': _effective_transferred,
                 'aired_count': aired_count or 0,
                 'total_count': total_count or 0,
+                'is_count_provisional': bool(is_count_provisional),
+                'is_terminal': bool(terminal_task),
+                'manual_status': manual_status if manual_status == 'ended' else '',
+                'status_source': t.get('status_source') or '',
             }
             # 写回 season_metrics（以该任务自身匹配到的季号为键；无匹配则跳过）
             try:
-                if (not cached_terminal) and tmdb_id and latest_sn:
+                if (not terminal_task) and tmdb_id and latest_sn:
                     from time import time as _now
                     # 计算进度百分比：以 min(aired, total) 为分母；分母<=0 则为 0
                     try:
@@ -887,7 +973,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
             try:
-                if (not cached_terminal) and task_name and tmdb_id and latest_sn:
+                if (not terminal_task) and task_name and tmdb_id and latest_sn:
                     from time import time as _now
                     # 同一套百分比口径
                     try:
@@ -2363,6 +2449,7 @@ _TASK_DISPLAY_CACHE_INVALIDATION_REASONS = {
     'purge_tmdb',
     'purge_by_task',
     'purge_orphans',
+    'task_status_override',
 }
 
 
@@ -2390,7 +2477,7 @@ def notify_calendar_changed(reason: str = ""):
                      'refresh_latest_season', 'refresh_episode', 'refresh_season', 'refresh_show', 
                      'auto_refresh', 'status_updated', 'aired_refresh_time_changed', 'update_airtime',
                       'trakt_airtime_synced', 'purge_tmdb', 'purge_by_task', 'purge_orphans',
-                      'delete_records', 'reset_folder', 'task_updated'):
+                      'delete_records', 'reset_folder', 'task_updated', 'task_status_override'):
             try:
                 clear_all_calendar_cache()
             except Exception:
@@ -2416,6 +2503,85 @@ def api_calendar_notify():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/calendar/task_status_override', methods=['POST'])
+def calendar_task_status_override():
+    """设置或清除任务级手动已完结状态。任务是单季的，新季由新任务独立处理。"""
+    if not is_login():
+        return jsonify({'success': False, 'message': '未登录'})
+    try:
+        data = request.get_json(silent=True) or {}
+        tasks = config_data.get('tasklist', []) if isinstance(config_data, dict) else []
+        task_name = str(data.get('task_name') or '').strip()
+        task_index = data.get('task_index')
+        target, locate_error = resolve_task_for_edit(tasks, task_name, task_index)
+        if not target:
+            return jsonify({'success': False, 'message': locate_error or '未找到任务'})
+
+        resolved_name = _task_name(target)
+        save_path = _task_save_path(target)
+        calendar_info = target.get('calendar_info') or {}
+        match = calendar_info.get('match') or {}
+        legacy_match = target.get('match') if isinstance(target.get('match'), dict) else {}
+        tmdb_id = (
+            match.get('tmdb_id')
+            or calendar_info.get('tmdb_id')
+            or legacy_match.get('tmdb_id')
+            or target.get('match_tmdb_id')
+            or target.get('tmdb_id')
+        )
+        season_number = (
+            target.get('matched_latest_season_number')
+            or match.get('latest_season_number')
+            or legacy_match.get('latest_season_number')
+            or calendar_info.get('latest_season_number')
+        )
+        try:
+            tmdb_id = int(tmdb_id) if tmdb_id else None
+            season_number = int(season_number) if season_number else None
+        except (TypeError, ValueError):
+            tmdb_id = None
+            season_number = None
+        if not tmdb_id or not season_number:
+            return jsonify({'success': False, 'message': '任务尚未匹配 TMDB 节目或季'})
+
+        requested_status = data.get('status')
+        if requested_status is None or str(requested_status).strip().lower() in ('', 'auto', 'none', 'null'):
+            CalendarDB().delete_task_status_override(resolved_name, save_path=save_path)
+            manual_status = ''
+            message = '已恢复自动判断'
+        elif str(requested_status).strip().lower() in ('ended', '已完结'):
+            CalendarDB().upsert_task_status_override(
+                resolved_name,
+                save_path,
+                tmdb_id=tmdb_id,
+                season_number=season_number,
+                status_override='ended',
+                note=str(data.get('note') or '').strip(),
+                updated_at=int(time.time()),
+            )
+            manual_status = 'ended'
+            message = '已手动标记为已完结'
+        else:
+            return jsonify({'success': False, 'message': '只支持“已完结”或恢复自动判断'})
+
+        invalidate_task_display_cache(task_name=resolved_name, save_path=save_path)
+        notify_calendar_changed('task_status_override')
+        return jsonify({
+            'success': True,
+            'message': message,
+            'task_name': resolved_name,
+            'save_path': save_path,
+            'tmdb_id': tmdb_id,
+            'season_number': season_number,
+            'manual_status': manual_status,
+            'is_terminal': bool(manual_status),
+            'refresh_enabled': not bool(manual_status),
+        })
+    except Exception as e:
+        logging.warning(f'设置任务手动终结状态失败: {e}')
+        return jsonify({'success': False, 'message': f'设置失败: {str(e)}'})
 
 @app.route('/api/calendar/stream')
 def calendar_stream():
@@ -10316,6 +10482,29 @@ def calendar_edit_metadata():
         if changed:
             Config.write_json(CONFIG_PATH, config_data)
 
+        # 任务改名时迁移手动状态；重新匹配节目或季号后，旧终结状态不能带到新任务范围。
+        try:
+            status_db = CalendarDB()
+            final_task_name_for_status = _task_name(target)
+            final_save_path_for_status = _task_save_path(target)
+            season_was_changed = (
+                new_season_number is not None
+                and str(new_season_number).strip() != ''
+                and old_tmdb_id is not None
+            )
+            if did_rematch or season_was_changed:
+                status_db.delete_task_status_override(task_name, save_path=final_save_path_for_status)
+                if final_task_name_for_status != task_name:
+                    status_db.delete_task_status_override(final_task_name_for_status, save_path=final_save_path_for_status)
+            elif final_task_name_for_status != task_name:
+                status_db.rename_task_status_override(
+                    task_name,
+                    final_task_name_for_status,
+                    save_path=final_save_path_for_status,
+                )
+        except Exception:
+            pass
+
         try:
             sync_task_config_with_database_bindings()
         except Exception as e:
@@ -10582,30 +10771,85 @@ def run_calendar_refresh_all_internal():
             shows = cur.fetchall()
         except Exception:
             shows = []
+        try:
+            task_status_override_map = db.get_task_status_override_map()
+        except Exception:
+            task_status_override_map = {}
+        try:
+            task_display_cache_map = db.get_task_display_cache_map()
+        except Exception:
+            task_display_cache_map = {}
         any_written = False
         status_changed_any = False
         for tmdb_id, content_type in shows:
             if content_type == 'movie':
                 continue
             try:
-                # 直接重用内部逻辑
+                # 只刷新仍处于 active 生命周期的任务季。
+                # 任务是单季的；本季终/已完结任务不会因为节目后续新季而继续刷新。
                 with app.app_context():
-                    # 同一节目可能有多个任务季，自动刷新要覆盖每一个仍被引用的季。
-                    referenced = [
-                        season
-                        for show_id, season in collect_referenced_seasons(config_data.get('tasklist') or [])
-                        if int(show_id) == int(tmdb_id)
-                    ]
+                    current_show = db.get_show(int(tmdb_id)) or {}
+                    current_show_status = str(current_show.get('status') or '').strip()
+                    if current_show_status in ('本季终', '已完结', '已取消', '已上映'):
+                        continue
+
+                    referenced = []
+                    seen_referenced = set()
+                    for task in config_data.get('tasklist') or []:
+                        if not isinstance(task, dict):
+                            continue
+                        task_match = ((task.get('calendar_info') or {}).get('match') or {})
+                        task_tmdb_id = task_match.get('tmdb_id') or (task.get('calendar_info') or {}).get('tmdb_id')
+                        if not task_tmdb_id or int(task_tmdb_id) != int(tmdb_id):
+                            continue
+                        season_number = stored_match_season(task)
+                        if not season_number:
+                            continue
+                        task_key = (_task_name(task), _task_save_path(task))
+                        override = task_status_override_map.get(task_key) or {}
+                        if _valid_task_status_override(override, task_tmdb_id, season_number):
+                            continue
+                        cached = task_display_cache_map.get(task_key) or {}
+                        season_row = db.get_season(int(task_tmdb_id), int(season_number)) or {}
+                        task_content_type = 'movie' if is_movie_task(task) else (task.get('content_type') or cached.get('content_type') or '')
+                        cache_is_terminal = _valid_task_display_cache(
+                            cached,
+                            task,
+                            task_tmdb_id,
+                            season_number,
+                            task_content_type,
+                            current_show_status,
+                            season_row.get('episode_count') or 0,
+                            season_row.get('season_name') or '',
+                            '',
+                        )
+                        if cache_is_terminal:
+                            continue
+                        pair = int(season_number)
+                        if pair not in seen_referenced:
+                            referenced.append(pair)
+                            seen_referenced.add(pair)
                     if not referenced:
-                        try:
-                            referenced = [int(db.get_show(int(tmdb_id))['latest_season_number'] or 1)]
-                        except Exception:
-                            referenced = [1]
+                        continue
                     from time import time as _now
                     now_ts = int(_now())
                     for season_number in referenced:
                         season = tmdb_service.get_tv_show_episodes(int(tmdb_id), int(season_number)) or {}
                         episodes = season.get('episodes', []) or []
+                        if not episodes:
+                            continue
+                        valid_eps = []
+                        for ep in episodes:
+                            try:
+                                episode_number = int(ep.get('episode_number') or 0)
+                                if episode_number > 0:
+                                    valid_eps.append(episode_number)
+                            except Exception:
+                                continue
+                        try:
+                            db.prune_season_episodes_not_in(int(tmdb_id), int(season_number), valid_eps)
+                        except Exception:
+                            pass
                         for ep in episodes:
                             db.upsert_episode(
                                 tmdb_id=int(tmdb_id),
@@ -10619,6 +10863,18 @@ def run_calendar_refresh_all_internal():
                                 updated_at=now_ts,
                             )
                             any_written = True
+                        try:
+                            season_name_raw = season.get('name') or ''
+                            season_name = tmdb_service.process_season_name(season_name_raw)
+                        except Exception:
+                            season_name = season.get('name') or ''
+                        db.upsert_season(
+                            int(tmdb_id),
+                            int(season_number),
+                            len(valid_eps),
+                            f"/tv/{tmdb_id}/season/{season_number}",
+                            season_name,
+                        )
                         # 如果有 Trakt 的源时间/时区，计算每集的本地播出日期并更新 air_date_local
                         # 如果没有时区信息，将 air_date_local 设置为与 air_date 相同的值
                         update_episodes_air_date_local(db, int(tmdb_id), int(season_number), episodes)

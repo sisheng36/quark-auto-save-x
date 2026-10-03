@@ -604,6 +604,34 @@ class CalendarDB:
             PRIMARY KEY (task_name, save_path)
         )
         ''')
+        # 任务列表快照的扩展字段（兼容已有数据库）
+        try:
+            cursor.execute('PRAGMA table_info(task_display_cache)')
+            display_cache_columns = [column[1] for column in cursor.fetchall()]
+            for column_name, column_type in (
+                ('status_source', 'TEXT'),
+                ('is_count_provisional', 'INTEGER NOT NULL DEFAULT 0'),
+                ('refresh_enabled', 'INTEGER NOT NULL DEFAULT 1'),
+            ):
+                if column_name not in display_cache_columns:
+                    cursor.execute(f'ALTER TABLE task_display_cache ADD COLUMN {column_name} {column_type}')
+        except Exception:
+            pass
+
+        # task_status_override（任务级手动终结状态）
+        # 一个任务只对应一个季；手动“已完结”只影响当前任务，不影响同一节目的新季任务。
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS task_status_override (
+            task_name TEXT NOT NULL,
+            save_path TEXT NOT NULL DEFAULT '',
+            tmdb_id INTEGER,
+            season_number INTEGER,
+            status_override TEXT NOT NULL DEFAULT 'ended',
+            note TEXT,
+            updated_at INTEGER,
+            PRIMARY KEY (task_name, save_path)
+        )
+        ''')
 
         # emby_items（Emby 媒体库本地缓存，用于影视发现入库状态匹配）
         cursor.execute('''
@@ -894,7 +922,7 @@ class CalendarDB:
             valid_task_names: 当前存在的任务名列表
 
         规则:
-        - task_metrics/task_display_cache: 删除 task_name 不在当前任务列表中的记录
+        - task_metrics/task_display_cache/task_status_override: 删除 task_name 不在当前任务列表中的记录
         - seasons/episodes: 仅保留出现在 valid_task_pairs 内的季与对应所有集；其余删除
         - season_metrics: 仅保留出现在 valid_task_pairs 内的记录；其余删除
         - shows: 仅保留出现在 valid_task_pairs 内的 tmdb_id；其余删除（连带删除对应的 seasons/episodes）
@@ -907,10 +935,12 @@ class CalendarDB:
                 if not valid_task_names:
                     cursor.execute('DELETE FROM task_metrics')
                     cursor.execute('DELETE FROM task_display_cache')
+                    cursor.execute('DELETE FROM task_status_override')
                 else:
                     placeholders = ','.join(['?'] * len(valid_task_names))
                     cursor.execute(f"DELETE FROM task_metrics WHERE task_name NOT IN ({placeholders})", valid_task_names)
                     cursor.execute(f"DELETE FROM task_display_cache WHERE task_name NOT IN ({placeholders})", valid_task_names)
+                    cursor.execute(f"DELETE FROM task_status_override WHERE task_name NOT IN ({placeholders})", valid_task_names)
             except Exception:
                 pass
 
@@ -1390,6 +1420,9 @@ class CalendarDB:
             'aired_count': values.get('aired_count'),
             'is_terminal': 1 if values.get('is_terminal') else 0,
             'terminal_reason': values.get('terminal_reason') or '',
+            'status_source': values.get('status_source') or '',
+            'is_count_provisional': 1 if values.get('is_count_provisional') else 0,
+            'refresh_enabled': 1 if values.get('refresh_enabled', True) else 0,
             'source_version': values.get('source_version') or '',
             'finalized_at': values.get('finalized_at'),
             'updated_at': values.get('updated_at'),
@@ -1400,8 +1433,9 @@ class CalendarDB:
             task_name, save_path, tmdb_id, season_number, content_type,
             matched_show_name, matched_year, latest_season_name,
             matched_status, total_count, aired_count, is_terminal,
-            terminal_reason, source_version, finalized_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            terminal_reason, status_source, is_count_provisional, refresh_enabled,
+            source_version, finalized_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_name, save_path) DO UPDATE SET
             tmdb_id=excluded.tmdb_id,
             season_number=excluded.season_number,
@@ -1414,6 +1448,9 @@ class CalendarDB:
             aired_count=excluded.aired_count,
             is_terminal=excluded.is_terminal,
             terminal_reason=excluded.terminal_reason,
+            status_source=excluded.status_source,
+            is_count_provisional=excluded.is_count_provisional,
+            refresh_enabled=excluded.refresh_enabled,
             source_version=excluded.source_version,
             finalized_at=excluded.finalized_at,
             updated_at=excluded.updated_at
@@ -1421,7 +1458,8 @@ class CalendarDB:
             name, path, fields['tmdb_id'], fields['season_number'], fields['content_type'],
             fields['matched_show_name'], fields['matched_year'], fields['latest_season_name'],
             fields['matched_status'], fields['total_count'], fields['aired_count'], fields['is_terminal'],
-            fields['terminal_reason'], fields['source_version'], fields['finalized_at'], fields['updated_at'],
+            fields['terminal_reason'], fields['status_source'], fields['is_count_provisional'], fields['refresh_enabled'],
+            fields['source_version'], fields['finalized_at'], fields['updated_at'],
         ))
         self.conn.commit()
 
@@ -1437,7 +1475,8 @@ class CalendarDB:
             SELECT task_name, save_path, tmdb_id, season_number, content_type,
                    matched_show_name, matched_year, latest_season_name,
                    matched_status, total_count, aired_count, is_terminal,
-                   terminal_reason, source_version, finalized_at, updated_at
+                   terminal_reason, status_source, is_count_provisional, refresh_enabled,
+                   source_version, finalized_at, updated_at
             FROM task_display_cache
             WHERE task_name=? AND save_path=?
         ''', (name, path))
@@ -1476,6 +1515,112 @@ class CalendarDB:
         else:
             cursor.execute('DELETE FROM task_display_cache')
         self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_task_status_override(self, task_name: str, save_path='', **values):
+        """写入任务级手动状态覆盖。当前只支持 ended。"""
+        name = str(task_name or '').strip()
+        if not name:
+            return
+        path = normalize_save_path(save_path)
+        status = str(values.get('status_override') or 'ended').strip().lower()
+        if status != 'ended':
+            raise ValueError('不支持的任务状态覆盖')
+        cursor = self.conn.cursor()
+        cursor.execute('''
+        INSERT INTO task_status_override (
+            task_name, save_path, tmdb_id, season_number, status_override, note, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_name, save_path) DO UPDATE SET
+            tmdb_id=excluded.tmdb_id,
+            season_number=excluded.season_number,
+            status_override=excluded.status_override,
+            note=excluded.note,
+            updated_at=excluded.updated_at
+        ''', (
+            name,
+            path,
+            values.get('tmdb_id'),
+            values.get('season_number'),
+            status,
+            values.get('note') or '',
+            values.get('updated_at'),
+        ))
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_task_status_override(self, task_name: str, save_path=''):
+        name = str(task_name or '').strip()
+        if not name:
+            return None
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT task_name, save_path, tmdb_id, season_number, status_override, note, updated_at
+            FROM task_status_override
+            WHERE task_name=? AND save_path=?
+        ''', (name, normalize_save_path(save_path)))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        columns = [column[0] for column in cursor.description]
+        return dict(zip(columns, row))
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_task_status_override_map(self):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM task_status_override')
+        columns = [column[0] for column in cursor.description]
+        return {
+            (str(row[0] or '').strip(), normalize_save_path(row[1])): dict(zip(columns, row))
+            for row in (cursor.fetchall() or [])
+        }
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def delete_task_status_override(self, task_name=None, save_path=None):
+        cursor = self.conn.cursor()
+        if task_name is None:
+            cursor.execute('DELETE FROM task_status_override')
+        elif save_path is None:
+            cursor.execute('DELETE FROM task_status_override WHERE task_name=?', (str(task_name or '').strip(),))
+        else:
+            cursor.execute(
+                'DELETE FROM task_status_override WHERE task_name=? AND save_path=?',
+                (str(task_name or '').strip(), normalize_save_path(save_path)),
+            )
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def rename_task_status_override(self, old_task_name: str, new_task_name: str, save_path=''):
+        """任务改名时迁移手动状态，避免状态继续挂在旧任务名上。"""
+        old_name = str(old_task_name or '').strip()
+        new_name = str(new_task_name or '').strip()
+        if not old_name or not new_name or old_name == new_name:
+            return
+        path = normalize_save_path(save_path)
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT tmdb_id, season_number, status_override, note, updated_at
+            FROM task_status_override
+            WHERE task_name=? AND save_path=?
+        ''', (old_name, path))
+        row = cursor.fetchone()
+        if row:
+            cursor.execute(
+                'DELETE FROM task_status_override WHERE task_name=? AND save_path=?',
+                (old_name, path),
+            )
+            cursor.execute('''
+                INSERT INTO task_status_override
+                    (task_name, save_path, tmdb_id, season_number, status_override, note, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_name, save_path) DO UPDATE SET
+                    tmdb_id=excluded.tmdb_id,
+                    season_number=excluded.season_number,
+                    status_override=excluded.status_override,
+                    note=excluded.note,
+                    updated_at=excluded.updated_at
+            ''', (new_name, path, row[0], row[1], row[2], row[3], row[4]))
+            self.conn.commit()
 
     # --------- 扩展：管理季与集清理/更新工具方法 ---------
     @retry_on_locked(max_retries=3, base_delay=0.1)

@@ -1142,7 +1142,7 @@
                        <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task) !== null"
                             class="task-progress"
                             :class="{'hover-only': formData.button_display.task_progress === 'hover'}">
-                         · {{ getTaskProgress(task) }}%
+                         · {{ getTaskProgressDisplay(task) }}
                       </span>
                        <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(getCalendarTaskForTask(task) || task)"
                             class="task-show-status"
@@ -1164,9 +1164,10 @@
                         <button v-if="!shouldShowShareUrlBan(task)" type="button" class="btn btn-outline-primary" :class="{'hover-only': formData.button_display.run_task === 'hover'}" @click="runScriptNow(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="运行此任务"><i class="bi bi-caret-right"></i></button>
                         <button v-else type="button" class="btn btn-warning" :title="formatShareUrlBanMessage(task.shareurl_ban) || task.shareurl_ban" disabled><i class="bi bi-exclamation-circle"></i></button>
                       </template>
-                      <button v-else-if="key==='delete_task'" type="button" class="btn btn-outline-danger" :class="{'hover-only': formData.button_display.delete_task === 'hover'}" @click="removeTask(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="删除此任务"><i class="bi bi-trash3"></i></button>
-                    </template>
-                  </div>
+                       <button v-else-if="key==='delete_task'" type="button" class="btn btn-outline-danger" :class="{'hover-only': formData.button_display.delete_task === 'hover'}" @click="removeTask(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="删除此任务"><i class="bi bi-trash3"></i></button>
+                     </template>
+                     <button v-if="canOverrideTaskStatus(task)" type="button" class="btn btn-outline-secondary" @click.stop="toggleTaskStatusOverride(task)" :title="getTaskStatusOverrideLabel(task)"><i :class="getTaskManualStatus(task) === 'ended' ? 'bi bi-arrow-counterclockwise' : 'bi bi-check2-circle'"></i></button>
+                   </div>
                 </div>
                 <div v-if="taskExpandState[index]" class="task-card-body" :id="'collapse_'+index">
                   <div class="alert alert-warning" role="alert" v-if="shouldShowShareUrlBan(task)" v-html="formatShareUrlBanMessage(task.shareurl_ban) || task.shareurl_ban"></div>
@@ -2190,7 +2191,7 @@
                       
                       <!-- 刷新元数据按钮（左上角，悬停显示） -->
                       <div class="discovery-refresh-metadata" 
-                           v-if="task.match_tmdb_id && task.content_type !== 'movie'"
+                           v-if="task.match_tmdb_id && task.content_type !== 'movie' && task.refresh_enabled !== false"
                            @click="refreshSeasonMetadata(task)" 
                            title="刷新元数据">
                         <i class="bi bi-arrow-clockwise"></i>
@@ -2201,6 +2202,13 @@
                            @click.stop="openEditMetadataModal(task)"
                            title="编辑元数据">
                         <i class="bi bi-tag"></i>
+                      </div>
+                      <div class="discovery-edit-metadata tasklist-edit-metadata-btn"
+                           v-if="canOverrideTaskStatus(task)"
+                           :style="{ left: task.match_tmdb_id && task.content_type !== 'movie' ? '64px' : '36px' }"
+                           @click.stop="toggleTaskStatusOverride(task)"
+                           :title="getTaskStatusOverrideLabel(task)">
+                        <i :class="getTaskManualStatus(task) === 'ended' ? 'bi bi-arrow-counterclockwise' : 'bi bi-check2-circle'"></i>
                       </div>
                       
                       <!-- 转存进度徽标（复用评分样式） -->
@@ -2223,7 +2231,7 @@
                         <div class="info-line info-line-single" v-if="task.latest_season_name && task.latest_season_name.trim() !== ''">{{ task.latest_season_name }}</div>
                         <div class="info-line" v-if="getTaskNextAirDateTimeDisplayForCalendar(task)">{{ getTaskNextAirDateTimeDisplayForCalendar(task) }}</div>
                         <div class="info-line" v-if="task.matched_show_name && task.season_counts"
-                             v-html="`${getTaskTransferredCount(task)} <span class='count-slash'>/</span> ${getTaskAiredCount(task)} <span class='count-slash'>/</span> ${getTaskTotalCount(task)}`">
+                             v-html="`${getTaskTransferredCount(task)} <span class='count-slash'>/</span> ${getTaskAiredCount(task)} <span class='count-slash'>/</span> ${getTaskTotalCountDisplay(task)}`">
                         </div>
                       </div>
                     </div>
