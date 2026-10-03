@@ -387,8 +387,9 @@ class TaskExtractor:
                     explicit_type = show_info['type']
                 final_type = (explicit_type or show_info['type'] or 'other')
 
-                # 合并信息
+                # 合并信息。task_index 用来区分同名任务，不能再用任务名当唯一键。
                 task_info = {
+                    'task_index': i,
                     'task_name': task_name,
                     'save_path': save_path,
                     'show_name': show_info['show_name'],

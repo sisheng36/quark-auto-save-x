@@ -79,6 +79,7 @@ from utils.season_match import (
     season_when_filling_binding,
     show_latest_season_number,
     stored_match_season,
+    resolve_task_for_edit,
 )
 from utils.overview_task_stats import (
     compute_overview_task_stats,
@@ -7149,16 +7150,26 @@ def get_calendar_tasks():
                 except Exception:
                     pass
 
+            raw_by_index = {}
             raw_by_name = {}
-            for raw_task in tasks or []:
+            for idx, raw_task in enumerate(tasks or []):
+                raw_by_index[idx] = raw_task
                 raw_name = (raw_task.get('taskname') or raw_task.get('task_name') or '').strip()
                 if raw_name and raw_name not in raw_by_name:
                     raw_by_name[raw_name] = raw_task
 
             for t in tasks_info:
-                # 1) 按任务名对齐配置。提取失败会跳过任务，不能再用列表下标。
+                # 1) 同名任务必须按配置索引对齐，任务名只能作缺索引时的回退。
                 task_name = (t.get('task_name') or '').strip()
-                raw = raw_by_name.get(task_name)
+                raw = None
+                try:
+                    task_index = t.get('task_index')
+                    if task_index is not None and str(task_index).strip() != '':
+                        raw = raw_by_index.get(int(task_index))
+                except (TypeError, ValueError):
+                    raw = None
+                if raw is None:
+                    raw = raw_by_name.get(task_name)
                 cal = (raw or {}).get('calendar_info') or {}
                 match = cal.get('match') or {}
                 tmdb_id = match.get('tmdb_id') or (cal.get('tmdb_id') if isinstance(cal, dict) else None)
@@ -9397,20 +9408,18 @@ def calendar_edit_metadata():
         new_season_number = data.get('new_season_number')
         custom_poster_url = (data.get('custom_poster_url') or '').strip()
         local_air_time = (data.get('local_air_time') or '').strip()
+        task_index = data.get('task_index')
 
-        if not task_name:
+        if not task_name and task_index is None:
             return jsonify({"success": False, "message": "缺少任务名称"})
 
         global config_data
         tasks = config_data.get('tasklist', [])
-        target = None
-        for t in tasks:
-            tn = t.get('taskname') or t.get('task_name') or ''
-            if tn == task_name:
-                target = t
-                break
+        target, locate_error = resolve_task_for_edit(tasks, task_name, task_index)
         if not target:
-            return jsonify({"success": False, "message": "未找到任务"})
+            return jsonify({"success": False, "message": locate_error or "未找到任务"})
+        if not task_name:
+            task_name = (target.get('taskname') or target.get('task_name') or '').strip()
 
         cal = (target.get('calendar_info') or {})
         match = (cal.get('match') or {})

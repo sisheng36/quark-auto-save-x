@@ -432,6 +432,7 @@ export default {
           loading: false,
           visible: false,
           original: {
+            task_index: null,
             task_name: '',
             content_type: '',
             tmdb_id: '',
@@ -716,6 +717,7 @@ export default {
           error: null,
           tasks: [],
           taskMapByName: {},
+          taskMapByIndex: {},
           manageMode: false,
           layoutTick: 0,
           contentTypes: [],
@@ -2001,7 +2003,7 @@ export default {
           try {
             const num = String(((task && task.__originalIndex !== undefined) ? task.__originalIndex : index) + 1).padStart(2, '0');
             const name = task && task.taskname ? String(task.taskname).trim() : '';
-            const status = this.getTaskShowStatus(name);
+            const status = this.getTaskShowStatus(this.getCalendarTaskForTask(task) || task);
             return `#${num} ${name}${status ? ' · ' + status : ''}`;
           } catch (e) { return ''; }
         },
@@ -2049,29 +2051,59 @@ export default {
             return this.calendar.taskMapByName[key] || null;
           } catch (e) { return null; }
         },
-        // 统一更新日历任务列表并同步重建 O(1) 任务名映射。
+        getTaskIndex(task) {
+          try {
+            if (!task || typeof task !== 'object') return null;
+            const raw = (task.task_index !== undefined && task.task_index !== null && task.task_index !== '')
+              ? task.task_index
+              : task.__originalIndex;
+            if (raw === undefined || raw === null || raw === '') return null;
+            const idx = Number(raw);
+            if (!Number.isInteger(idx) || idx < 0) return null;
+            return idx;
+          } catch (e) { return null; }
+        },
+        getCalendarTaskForTask(taskOrName) {
+          try {
+            if (taskOrName == null || taskOrName === '') return null;
+            if (typeof taskOrName === 'object') {
+              const idx = this.getTaskIndex(taskOrName);
+              if (idx != null && this.calendar && this.calendar.taskMapByIndex && this.calendar.taskMapByIndex[idx] != null) {
+                return this.calendar.taskMapByIndex[idx];
+              }
+              return this.getCalendarTaskByName(taskOrName.taskname || taskOrName.task_name);
+            }
+            return this.getCalendarTaskByName(taskOrName);
+          } catch (e) { return null; }
+        },
+        // 统一更新日历任务列表并同步重建 O(1) 任务名/索引映射。
         // 整体替换映射对象只触发一次响应式通知，优于逐个 $set 触发大量更新。
         setCalendarTasks(tasks) {
           try {
             this.calendar.tasks = Array.isArray(tasks) ? tasks : [];
             const map = {};
+            const mapByIndex = {};
             for (let i = 0; i < this.calendar.tasks.length; i++) {
               const t = this.calendar.tasks[i];
               const key = (t && (t.task_name || t.taskname || '')).trim();
               if (key) map[key] = t;
+              const idx = this.getTaskIndex(t);
+              if (idx != null) mapByIndex[idx] = t;
             }
             this.calendar.taskMapByName = map;
+            this.calendar.taskMapByIndex = mapByIndex;
             return this.calendar.tasks;
           } catch (e) {
             this.calendar.tasks = [];
             this.calendar.taskMapByName = {};
+            this.calendar.taskMapByIndex = {};
             return this.calendar.tasks;
           }
         },
         // 将任务列表项适配为获取海报所需的 episode-like 对象
         getTasklistPosterLikeEpisode(task) {
           try {
-            const calTask = this.getCalendarTaskByName(task && task.taskname);
+            const calTask = this.getCalendarTaskForTask(task);
             // 复用管理视图的取海报逻辑（优先匹配海报）
             if (calTask) return this.getTaskPosterLikeEpisode(calTask);
             // 兜底：仅返回空对象，getEpisodePosterUrl 内部会处理默认图
@@ -2185,9 +2217,9 @@ export default {
                 item.airDateKey = item.airHasDate ? (parseDateKey(raw.date) ?? 0) : 0;
                 item.airMinutes = parseTimeMinutes(raw && raw.time);
               } else if (by === 'progress') {
-                const p = this.getTaskProgress(t && t.taskname);
+                const p = this.getTaskProgress(t);
                 item.progress = (p != null) ? Number(p) : -1;
-                const calTask = this.getCalendarTaskByName(name) || t;
+                const calTask = this.getCalendarTaskForTask(t) || t;
                 const status = this.getTaskShowStatus(calTask) || '';
                 item.statusPriority = status === '本季终' ? 1 : status === '已取消' ? 2 : status === '已完结' ? 3 : 0;
                 const total = this.getTaskTotalCount(calTask || {});
@@ -2423,10 +2455,12 @@ export default {
           return help[key] || '设置该项目在任务列表中的显示行为：始终显示/悬停显示/禁用，个别项目受插件或TMDB匹配状态影响是否生效或展示';
         },
         // ----- 任务列表新增显示：集数统计/任务进度/节目状态 -----
-        getTaskSeasonCounts(taskName) {
+        getTaskSeasonCounts(taskNameOrTask) {
           try {
-            if (!taskName) return null;
-            const t = this.getCalendarTaskByName(taskName);
+            if (!taskNameOrTask) return null;
+            const t = (typeof taskNameOrTask === 'object')
+              ? (this.getCalendarTaskForTask(taskNameOrTask) || taskNameOrTask)
+              : this.getCalendarTaskByName(taskNameOrTask);
             if (!t || !t.season_counts) return null;
             const sc = t.season_counts || {};
             const transferred = Number(sc.transferred_count || 0);
@@ -2443,9 +2477,9 @@ export default {
             return `${sc.transferred} <span class="count-slash">/</span> ${sc.aired} <span class=\"count-slash\">/</span> ${sc.total}`;
           } catch (e) { return ''; }
         },
-        getTaskProgress(taskName) {
+        getTaskProgress(taskNameOrTask) {
           try {
-            const sc = this.getTaskSeasonCounts(taskName);
+            const sc = this.getTaskSeasonCounts(taskNameOrTask);
             if (!sc) return null;
             if (sc.aired <= 0) return 0;
             const pct = Math.floor((sc.transferred / sc.aired) * 100);
@@ -2461,7 +2495,7 @@ export default {
               || (task.calendar_info && task.calendar_info.extracted && task.calendar_info.extracted.content_type)
               || '';
             if (!contentType) {
-              const calTask = this.getCalendarTaskByName(task.taskname || task.task_name);
+              const calTask = this.getCalendarTaskForTask(task);
               if (calTask && calTask.match && calTask.match.media_type === 'movie') return true;
               contentType = (calTask && calTask.content_type) || '';
             }
@@ -2493,7 +2527,7 @@ export default {
             if (this.isMovieTask(task)) {
               return this.hasTaskTransferRecord(task);
             }
-            const sc = this.getTaskSeasonCounts(task.taskname || task.task_name);
+            const sc = this.getTaskSeasonCounts(task);
             if (!sc) return false;
             return sc.total > 0 && sc.transferred >= sc.total;
           } catch (e) {
@@ -2556,6 +2590,8 @@ export default {
               if (!t && Array.isArray(this.formData.tasklist)) {
                 t = this.formData.tasklist.find(x => (x.taskname || x.task_name) === name);
               }
+            } else if (taskNameOrTask && typeof taskNameOrTask === 'object') {
+              t = this.getCalendarTaskForTask(taskNameOrTask) || taskNameOrTask;
             }
             if (!t) return '';
             const val = (t.local_air_time) 
@@ -2581,12 +2617,14 @@ export default {
             const taskName = (typeof taskNameOrTask === 'string')
               ? taskNameOrTask
               : (taskNameOrTask && (taskNameOrTask.task_name || taskNameOrTask.taskname)) || '';
-            if (!taskName) {
+            const calendarTask = (typeof taskNameOrTask === 'object')
+              ? this.getCalendarTaskForTask(taskNameOrTask)
+              : this.getCalendarTaskByName(taskName);
+            if (!taskName && !calendarTask) {
               return { date: '', time: airTime };
             }
 
             // 需要日历任务和本地剧集数据，否则回退为仅时间
-            const calendarTask = this.getCalendarTaskByName(taskName);
             if (!calendarTask || !this.calendar || !Array.isArray(this.calendar.episodes) || this.calendar.episodes.length === 0) {
               return { date: '', time: airTime };
             }
@@ -2782,7 +2820,7 @@ export default {
               contentType = task.calendar_info.extracted.content_type;
             } else {
               // 如果任务配置中没有，则从 calendar.tasks 中查找
-              const t = (this.calendar.tasks || []).find(x => (x.task_name || x.taskname) === name);
+              const t = this.getCalendarTaskForTask(task);
               contentType = (t && t.content_type) || 'other';
             }
             
@@ -2795,9 +2833,8 @@ export default {
             const filter = filterValue || '';
             if (!filter) return true;
             if (!task) return false;
-            const taskName = task.taskname || task.task_name || '';
             const status = this.getTasklistFullStatus(task);
-            const progress = this.getTaskProgress && taskName ? this.getTaskProgress(taskName) : null;
+            const progress = this.getTaskProgress ? this.getTaskProgress(task) : null;
             const normalizedProgress = (progress === null || progress === undefined) ? null : Number(progress);
             const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress);
             const isMatched = this.isTaskMatchedWithMetadata(task);
@@ -2829,8 +2866,7 @@ export default {
         getTasklistFullStatus(task) {
           try {
             if (!task) return '';
-            const taskName = task.taskname || task.task_name || '';
-            const calTask = taskName ? this.getCalendarTaskByName(taskName) : null;
+            const calTask = this.getCalendarTaskForTask(task);
             const candidates = [
               calTask && calTask.matched_status,
               calTask && calTask.status,
@@ -2852,8 +2888,7 @@ export default {
         isTaskMatchedWithMetadata(task) {
           try {
             if (!task) return false;
-            const taskName = task.taskname || task.task_name || '';
-            const calTask = taskName ? this.getCalendarTaskByName(taskName) : null;
+            const calTask = this.getCalendarTaskForTask(task);
             const candidates = [
               calTask && (calTask.match_tmdb_id || (calTask.match && calTask.match.tmdb_id) || calTask.tmdb_id),
               task.match_tmdb_id,
@@ -4138,7 +4173,8 @@ export default {
           try {
             if (!task) return;
             // 预填充表单数据
-            const currentName = task.task_name || '';
+            const currentName = task.task_name || task.taskname || '';
+            const taskIndex = this.getTaskIndex(task);
             const currentType = this.getContentTypeCN(task.content_type) || '';
             const currentTmdbId = (task.match && task.match.tmdb_id) || task.match_tmdb_id || (task.calendar_info && task.calendar_info.match && task.calendar_info.match.tmdb_id) || '';
             // 只用这个任务自己的季。没有季号时表单默认 1，但不能据此判断用户改过季。
@@ -4161,6 +4197,7 @@ export default {
             this.editMetadata = {
               visible: true,
               original: {
+                task_index: taskIndex,
                 task_name: currentName,
                 content_type: task.content_type || '',
                 tmdb_id: currentTmdbId || '',
@@ -4223,6 +4260,9 @@ export default {
               custom_poster_url: this.editMetadata.form.custom_poster_url,
               local_air_time: this.editMetadata.form.local_air_time
             };
+            if (this.editMetadata.original.task_index != null) {
+              payload.task_index = this.editMetadata.original.task_index;
+            }
             const seasonChanged = String(this.editMetadata.form.season_number ?? '') !== String(this.editMetadata.original.season_number ?? '');
             if (seasonChanged) {
               payload.new_season_number = this.editMetadata.form.season_number;
@@ -4336,10 +4376,7 @@ export default {
                   try {
                     const savedSeason = parseInt(res.data && res.data.season_number, 10);
                     const savedName = (res.data && res.data.season_name) || '';
-                    const names = [
-                      (this.editMetadata.form && this.editMetadata.form.task_name) || '',
-                      (this.editMetadata.original && this.editMetadata.original.task_name) || ''
-                    ].map(name => String(name || '').trim()).filter(Boolean);
+                    const savedIndex = this.getTaskIndex(this.editMetadata.original);
                     if (savedSeason) {
                       const patchSeason = (task) => {
                         if (!task) return;
@@ -4352,13 +4389,11 @@ export default {
                           task.calendar_info.user_manual_season = true;
                         }
                       };
-                      names.forEach(name => {
-                        patchSeason(this.calendar.taskMapByName && this.calendar.taskMapByName[name]);
-                        ((this.formData && this.formData.tasklist) || []).forEach(task => {
-                          const taskName = String(task.taskname || task.task_name || '').trim();
-                          if (taskName === name) patchSeason(task);
-                        });
-                      });
+                      if (savedIndex != null) {
+                        patchSeason(this.calendar.taskMapByIndex && this.calendar.taskMapByIndex[savedIndex]);
+                        const formTask = ((this.formData && this.formData.tasklist) || [])[savedIndex];
+                        patchSeason(formTask);
+                      }
                     }
                   } catch (e) {}
                   // 同步更新任务列表类型集合（热更新左上角类型按钮）
@@ -5334,7 +5369,7 @@ export default {
           try {
             if (!task) return null;
             // 优先从 calendar.tasks 中获取匹配的任务信息
-            const calendarTask = this.getCalendarTaskByName(task.taskname);
+            const calendarTask = this.getCalendarTaskForTask(task);
             if (calendarTask) {
               return (calendarTask.match && calendarTask.match.tmdb_id) || calendarTask.match_tmdb_id || calendarTask.tmdb_id;
             }
@@ -5349,7 +5384,7 @@ export default {
         getTaskMediaType(task) {
           try {
             if (!task) return 'tv';
-            const calendarTask = this.getCalendarTaskByName(task.taskname);
+            const calendarTask = this.getCalendarTaskForTask(task);
             const source = calendarTask || task;
             const cal = source.calendar_info || {};
             const match = source.match || cal.match || {};
@@ -5363,7 +5398,7 @@ export default {
           try {
             if (!task) return null;
             // 优先从 calendar.tasks 中获取匹配的任务信息
-            const calendarTask = this.getCalendarTaskByName(task.taskname);
+            const calendarTask = this.getCalendarTaskForTask(task);
             if (calendarTask) {
               return (calendarTask.match && calendarTask.match.latest_season_number) || 
                      calendarTask.matched_latest_season_number || 

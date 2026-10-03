@@ -1367,12 +1367,12 @@
             <div v-else class="tasklist-poster-mode">
               <!-- 复用管理视图的海报网格样式与自适应布局 -->
               <div class="discovery-grid">
-                <template v-for="(task, index) in sortedTasklist" :key="'poster-'+(task.taskname || index)">
+                <template v-for="(task, index) in sortedTasklist" :key="'poster-'+(task.__originalIndex !== undefined ? task.__originalIndex : index)">
                 <div class="discovery-item"
                      v-if="(taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
                   <div class="discovery-poster"
                        :title="getTaskShareSubscriptionHoverText(task)"
-                       @mouseenter="handleManagementPosterHover($event, getCalendarTaskByName(task.taskname) || {})">
+                       @mouseenter="handleManagementPosterHover($event, getCalendarTaskForTask(task) || {})">
                     <img :src="getEpisodePosterUrl(getTasklistPosterLikeEpisode(task))"
                          :alt="task.taskname"
                          referrerpolicy="no-referrer"
@@ -1385,17 +1385,17 @@
 
                     <!-- 编辑元数据按钮（右上角） -->
                     <div class="discovery-actions-row tasklist-poster-edit" style="top: 8px;">
-                      <div class="discovery-edit-metadata tasklist-edit-task-btn" @click.stop="openEditMetadataModal(getCalendarTaskByName(task.taskname) || { task_name: task.taskname })" title="编辑元数据">
+                       <div class="discovery-edit-metadata tasklist-edit-task-btn" @click.stop="openEditMetadataModal(getCalendarTaskForTask(task) || { task_name: task.taskname, task_index: task.__originalIndex })" title="编辑元数据">
                         <i class="bi bi-pencil"></i>
                       </div>
                     </div>
 
                     <!-- 转存进度徽标（复用评分样式） -->
                     <div class="discovery-rating"
-                         v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).matched_show_name && getCalendarTaskByName(task.taskname).season_counts"
-                         :class="getProgressBadgeClass(getCalendarTaskByName(task.taskname))"
-                         :title="'已转存/已播出：' + getTaskTransferredCount(getCalendarTaskByName(task.taskname)) + '/' + getTaskAiredCount(getCalendarTaskByName(task.taskname))">
-                      {{ getTransferProgress(getCalendarTaskByName(task.taskname)) }}%
+                         v-if="getCalendarTaskForTask(task) && getCalendarTaskForTask(task).matched_show_name && getCalendarTaskForTask(task).season_counts"
+                         :class="getProgressBadgeClass(getCalendarTaskForTask(task))"
+                         :title="'已转存/已播出：' + getTaskTransferredCount(getCalendarTaskForTask(task)) + '/' + getTaskAiredCount(getCalendarTaskForTask(task))">
+                      {{ getTransferProgress(getCalendarTaskForTask(task)) }}%
                     </div>
                     <!-- 左上角任务编号徽标：按需求移除 -->
 
@@ -1405,19 +1405,19 @@
                       <div class="info-line">#{{ String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0') }}</div>
                       <!-- 匹配的剧名 -->
                       <div class="info-line info-line-single">
-                        <template v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).matched_show_name">
-                          {{ getCalendarTaskByName(task.taskname).matched_show_name }}
+                        <template v-if="getCalendarTaskForTask(task) && getCalendarTaskForTask(task).matched_show_name">
+                          {{ getCalendarTaskForTask(task).matched_show_name }}
                         </template>
                         <template v-else>
                           未匹配
                         </template>
                       </div>
                       <!-- 季名称 -->
-                      <div class="info-line info-line-single" v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).latest_season_name && getCalendarTaskByName(task.taskname).latest_season_name.trim() !== ''">
-                        {{ getCalendarTaskByName(task.taskname).latest_season_name }}
+                      <div class="info-line info-line-single" v-if="getCalendarTaskForTask(task) && getCalendarTaskForTask(task).latest_season_name && getCalendarTaskForTask(task).latest_season_name.trim() !== ''">
+                        {{ getCalendarTaskForTask(task).latest_season_name }}
                       </div>
                       <!-- 下一集播出日期 + 时间（基于已转存集数推算） -->
-                      <div class="info-line" v-if="getTaskNextAirDateTimeDisplay(task.taskname)">{{ getTaskNextAirDateTimeDisplay(task.taskname) }}</div>
+                      <div class="info-line" v-if="getTaskNextAirDateTimeDisplay(task)">{{ getTaskNextAirDateTimeDisplay(task) }}</div>
                       <!-- 最近更新日期 -->
                       <div class="info-line" v-if="taskLatestRecords[task.taskname]">{{ getTaskLatestRecordDisplay(task.taskname) }}</div>
                     </div>
@@ -1428,7 +1428,7 @@
                          :style="{ cursor: getTaskTmdbId(task) ? 'pointer' : 'default' }"
                          @click="openTaskTmdbPage(task)">
                       {{ task.taskname }}
-                      <span v-if="getTaskShowStatus(task.taskname)"> · {{ getTaskShowStatus(task.taskname) }}</span>
+                       <span v-if="getTaskShowStatus(getCalendarTaskForTask(task) || task)"> · {{ getTaskShowStatus(getCalendarTaskForTask(task) || task) }}</span>
                       <span v-if="isTaskUpdatedToday(task.taskname) && shouldShowTodayIndicator()"
                             class="task-today-indicator"
                             :class="getTodayIndicatorClass()">
@@ -1436,11 +1436,11 @@
                       </span>
                     </div>
                     <div class="discovery-genre"
-                         :title="(getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).matched_show_name && getCalendarTaskByName(task.taskname).season_counts)
-                           ? ('已转存' + getTaskTransferredCount(getCalendarTaskByName(task.taskname)) + '集 / 已播出' + getTaskAiredCount(getCalendarTaskByName(task.taskname)) + '集 / 节目共' + getTaskTotalCount(getCalendarTaskByName(task.taskname)) + '集')
+                         :title="(getCalendarTaskForTask(task) && getCalendarTaskForTask(task).matched_show_name && getCalendarTaskForTask(task).season_counts)
+                           ? ('已转存' + getTaskTransferredCount(getCalendarTaskForTask(task)) + '集 / 已播出' + getTaskAiredCount(getCalendarTaskForTask(task)) + '集 / 节目共' + getTaskTotalCount(getCalendarTaskForTask(task)) + '集')
                            : ''">
-                      <template v-if="getCalendarTaskByName(task.taskname) && getCalendarTaskByName(task.taskname).matched_show_name && getCalendarTaskByName(task.taskname).season_counts">
-                        <span v-html="`${getTaskTransferredCount(getCalendarTaskByName(task.taskname))} <span class='count-slash'>/</span> ${getTaskAiredCount(getCalendarTaskByName(task.taskname))} <span class='count-slash'>/</span> ${getTaskTotalCount(getCalendarTaskByName(task.taskname))}`"></span>
+                      <template v-if="getCalendarTaskForTask(task) && getCalendarTaskForTask(task).matched_show_name && getCalendarTaskForTask(task).season_counts">
+                        <span v-html="`${getTaskTransferredCount(getCalendarTaskForTask(task))} <span class='count-slash'>/</span> ${getTaskAiredCount(getCalendarTaskForTask(task))} <span class='count-slash'>/</span> ${getTaskTotalCount(getCalendarTaskForTask(task))}`"></span>
                       </template>
                       <template v-else>
                         暂无数据
@@ -2180,7 +2180,7 @@
                 <div class="discovery-grid">
                   <div class="discovery-item"
                        v-for="task in managementTasksFiltered"
-                       :key="task.task_name">
+                       :key="'mgmt-' + (task.task_index != null ? task.task_index : task.task_name)">
                     <div class="discovery-poster" @mouseenter="handleManagementPosterHover($event, task)">
                       <img :src="getEpisodePosterUrl(getTaskPosterLikeEpisode(task))"
                            :alt="task.show_name || task.task_name"

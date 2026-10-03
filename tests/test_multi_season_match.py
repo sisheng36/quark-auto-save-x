@@ -18,8 +18,10 @@ from utils.season_match import (
     choose_match_season,
     correct_stored_season,
     display_season_for_task,
+    resolve_task_for_edit,
     season_when_filling_binding,
     show_latest_season_number,
+    stored_match_season,
 )
 from utils.task_extractor import TaskExtractor
 
@@ -148,6 +150,45 @@ def test_sync_does_not_copy_show_latest():
     )
 
 
+def test_extract_keeps_duplicate_task_index():
+    print("同名任务保留索引")
+    extractor = TaskExtractor()
+    tasks = [
+        task('书虫侦探', '/影视/书虫侦探/第一季', season=1, tmdb_id=42),
+        task('书虫侦探', '/影视/书虫侦探/第二季', season=2, tmdb_id=42),
+    ]
+    infos = extractor.extract_all_tasks_info(tasks, {})
+    check("两个同名任务都提取", len(infos), 2)
+    check("第一个索引 0", infos[0].get('task_index'), 0)
+    check("第二个索引 1", infos[1].get('task_index'), 1)
+    check("第一个路径季", extractor.extract_season_number_from_task(tasks[0]), 1)
+    check("第二个路径季", extractor.extract_season_number_from_task(tasks[1]), 2)
+
+
+def test_resolve_duplicate_task_name():
+    print("同名任务编辑定位")
+    tasks = [
+        task('书虫侦探', '/影视/书虫侦探/第一季', season=1, tmdb_id=42),
+        task('书虫侦探', '/影视/书虫侦探/第二季', season=2, tmdb_id=42),
+        task('别的剧', season=1, tmdb_id=1),
+    ]
+    found, err = resolve_task_for_edit(tasks, '书虫侦探', 1)
+    check("按索引定位第二季", stored_match_season(found), 2)
+    check("按索引无错误", err, None)
+    found0, err0 = resolve_task_for_edit(tasks, '书虫侦探', 0)
+    check("按索引定位第一季", stored_match_season(found0), 1)
+    check("第一季无错误", err0, None)
+    missing, err_dup = resolve_task_for_edit(tasks, '书虫侦探')
+    check("同名无索引失败", missing, None)
+    check("同名无索引提示", err_dup, '存在同名任务，无法唯一定位')
+    unique, err_ok = resolve_task_for_edit(tasks, '别的剧')
+    check("单任务名仍可用", stored_match_season(unique), 1)
+    check("单任务名无错误", err_ok, None)
+    mismatch, err_mis = resolve_task_for_edit(tasks, '别的剧', 0)
+    check("索引与名称不一致失败", mismatch, None)
+    check("索引与名称不一致提示", err_mis, '任务已变化，请刷新后重试')
+
+
 def test_database_binding_and_purge():
     print("精确绑定与清理")
     with tempfile.TemporaryDirectory() as tmp:
@@ -187,6 +228,8 @@ def main():
     test_extract_season()
     test_choose_and_correct()
     test_sync_does_not_copy_show_latest()
+    test_extract_keeps_duplicate_task_index()
+    test_resolve_duplicate_task_name()
     test_database_binding_and_purge()
     print(f"\n通过 {PASSED}，失败 {FAILED}")
     return 0 if FAILED == 0 else 1

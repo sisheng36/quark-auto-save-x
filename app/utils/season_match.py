@@ -162,6 +162,42 @@ def season_when_filling_binding(task: Optional[Dict], show_latest_season) -> int
     return stored_match_season(task) or 1
 
 
+def resolve_task_for_edit(tasks: Optional[Iterable[Dict]], task_name, task_index=None) -> Tuple[Optional[Dict], Optional[str]]:
+    """编辑元数据时定位任务：优先用配置列表索引，避免同名任务改错对象。"""
+    items = [task for task in (tasks or []) if isinstance(task, dict)]
+    name = str(task_name or '').strip()
+    if task_index is not None and str(task_index).strip() != '':
+        idx = _non_negative_int(task_index)
+        if idx is None:
+            return None, '任务索引无效'
+        if idx >= len(items):
+            return None, '未找到任务'
+        target = items[idx]
+        current_name = str(target.get('taskname') or target.get('task_name') or '').strip()
+        if name and current_name and current_name != name:
+            return None, '任务已变化，请刷新后重试'
+        return target, None
+    matches = [
+        task for task in items
+        if str(task.get('taskname') or task.get('task_name') or '').strip() == name
+    ]
+    if len(matches) == 1:
+        return matches[0], None
+    if len(matches) > 1:
+        return None, '存在同名任务，无法唯一定位'
+    return None, '未找到任务'
+
+
+def _non_negative_int(value) -> Optional[int]:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return number
+
+
 def _positive_int(value) -> Optional[int]:
     try:
         number = int(value)
