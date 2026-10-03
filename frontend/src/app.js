@@ -4392,7 +4392,7 @@ export default {
                 // 根据后端返回的信息，决定是否刷新以及刷新哪个节目
                 // 只有在确实有修改（changed=true）且有有效的 tmdb_id 和 season_number 时才刷新
                 let refreshPromise = Promise.resolve();
-                if (res.data.changed && res.data.tmdb_id && res.data.season_number) {
+                if (res.data.changed && res.data.tmdb_id && res.data.season_number && res.data.content_type !== 'movie') {
                   // 只刷新被编辑的单个节目，使用 DEBUG 级别日志
                   const tmdbIdToRefresh = parseInt(res.data.tmdb_id);
                   const seasonNumberToRefresh = parseInt(res.data.season_number);

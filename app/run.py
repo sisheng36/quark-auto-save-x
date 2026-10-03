@@ -9365,6 +9365,76 @@ def calendar_refresh_show():
     except Exception as e:
         return jsonify({"success": False, "message": f"刷新剧失败: {str(e)}"})
 
+# 初始化手动匹配的电影元数据。
+# 电影在日历数据库中使用虚拟的第 1 季/第 1 集，和自动电影匹配保持同一数据模型。
+def _initialize_manual_movie_metadata(cal_db, tmdb_service, tmdb_id, task_final_name):
+    """拉取并写入手动匹配电影的 TMDB 元数据，失败时不修改任务配置。"""
+    details = tmdb_service.get_movie_details(int(tmdb_id)) or {}
+    if not details:
+        return None, '未找到指定 TMDB 电影'
+
+    release_date = (details.get('release_date') or '')[:10]
+    fallback_name = details.get('title') or details.get('original_title') or ''
+    movie_name = tmdb_service.get_chinese_movie_title_with_fallback(int(tmdb_id), fallback_name)
+    if not movie_name:
+        movie_name = fallback_name or f'TMDB {int(tmdb_id)}'
+
+    if release_date:
+        status = '已上映' if release_date <= datetime.now().strftime('%Y-%m-%d') else '待上映'
+    else:
+        status = '电影'
+
+    existing_show = cal_db.get_show(int(tmdb_id)) or {}
+    existing_poster_path = existing_show.get('poster_local_path') or ''
+    is_custom_poster = bool(existing_show.get('is_custom_poster', 0))
+    poster_path = tmdb_service.get_poster_path_with_language(int(tmdb_id), 'movie') or details.get('poster_path') or ''
+    poster_local_path = existing_poster_path
+    if poster_path:
+        poster_local_path = download_poster_local(
+            poster_path,
+            int(tmdb_id),
+            existing_poster_path,
+            is_custom_poster,
+        ) or existing_poster_path
+
+    cal_db.upsert_show(
+        int(tmdb_id),
+        movie_name,
+        release_date[:4],
+        status,
+        poster_local_path,
+        1,
+        0,
+        existing_show.get('bound_task_names', ''),
+        'movie',
+        int(is_custom_poster),
+    )
+    cal_db.upsert_season(int(tmdb_id), 1, 1, f'/movie/{int(tmdb_id)}', '电影')
+    cal_db.upsert_episode(
+        tmdb_id=int(tmdb_id),
+        season_number=1,
+        episode_number=1,
+        name=movie_name,
+        overview=details.get('overview') or '',
+        air_date=release_date,
+        runtime=details.get('runtime'),
+        ep_type='movie',
+        updated_at=int(time.time()),
+    )
+    if release_date:
+        cal_db.update_episode_air_date_local(int(tmdb_id), 1, 1, release_date)
+
+    if task_final_name:
+        cal_db.bind_task_and_content_type(int(tmdb_id), task_final_name, 'movie')
+
+    return {
+        'show': cal_db.get_show(int(tmdb_id)) or {},
+        'name': movie_name,
+        'year': release_date[:4],
+        'details': details,
+    }, None
+
+
 # 编辑追剧日历元数据：修改任务名、任务类型、重绑 TMDB
 @app.route("/api/calendar/edit_metadata", methods=["POST"])
 def calendar_edit_metadata():
@@ -9548,7 +9618,10 @@ def calendar_edit_metadata():
                     logging.warning(f"同步本地播出时间到数据库失败: {e}")
 
         valid_types = {'movie', 'tv', 'anime', 'variety', 'documentary', 'other', ''}
-        if new_content_type in valid_types:
+        # 重新绑定 TMDB 时先暂存类型，待新 ID 校验成功后再写入配置。
+        # 否则新 ID 无效时，旧任务会在当前进程内提前变更类型。
+        pending_content_type = new_content_type if new_tmdb_id and new_content_type in valid_types else ''
+        if new_content_type in valid_types and not new_tmdb_id:
             extracted = (target.setdefault('calendar_info', {}).setdefault('extracted', {}))
             if extracted.get('content_type') != new_content_type:
                 # 同步到任务配置中的 extracted 与顶层 content_type，保证前端与其他逻辑可见
@@ -9559,7 +9632,9 @@ def calendar_edit_metadata():
                 # 未匹配任务：没有 old_tmdb_id 时，不访问数据库，仅更新配置
                 # 已匹配任务：若已有绑定的 tmdb_id，则立即同步到数据库
                 try:
-                    if old_tmdb_id:
+                    # 有新的 TMDB ID 时，等新媒体验证并写入成功后再同步旧记录，
+                    # 避免新 ID 无效时把旧节目的类型提前改掉。
+                    if old_tmdb_id and not new_tmdb_id:
                         cal_db = CalendarDB()
                         cal_db.update_show_content_type(int(old_tmdb_id), new_content_type)
                         # 同步任务名与内容类型绑定关系
@@ -9569,6 +9644,14 @@ def calendar_edit_metadata():
                     logging.warning(f"同步内容类型到数据库失败: {e}")
                 changed = True
 
+        # 手动匹配时，用户选择的类型优先；没有本次类型变更时兼容已有匹配和旧字段。
+        extracted_content_type = ((target.get('calendar_info') or {}).get('extracted') or {}).get('content_type') or ''
+        current_content_type = target.get('content_type') or extracted_content_type or ''
+        current_media_type = match.get('media_type') or legacy_match.get('media_type') or ''
+        effective_content_type = new_content_type or current_media_type or current_content_type
+        if effective_content_type != 'movie' and is_movie_task(target):
+            effective_content_type = 'movie'
+
         did_rematch = False
         new_tid = None
         season_no = None
@@ -9576,8 +9659,65 @@ def calendar_edit_metadata():
         tmdb_api_key = config_data.get('tmdb_api_key', '')
         poster_language = get_poster_language_setting()
         tmdb_service = TMDBService(tmdb_api_key, poster_language) if tmdb_api_key else None
+        movie_rematched = False
+
+        # 电影使用 /movie/{id} 和虚拟 S01E01，不能进入下面的电视剧季刷新流程。
+        if (
+            new_tmdb_id
+            and str(new_tmdb_id).strip() != '0'
+            and effective_content_type == 'movie'
+        ):
+            try:
+                new_tid = int(str(new_tmdb_id).strip())
+            except Exception:
+                return jsonify({"success": False, "message": "TMDB ID 非法"})
+            if not tmdb_service:
+                return jsonify({"success": False, "message": "TMDB API 未配置，无法初始化新电影"})
+
+            task_final_name = target.get('taskname') or target.get('task_name') or new_task_name or task_name
+            movie_result, movie_error = _initialize_manual_movie_metadata(
+                cal_db,
+                tmdb_service,
+                new_tid,
+                task_final_name,
+            )
+            if movie_error:
+                return jsonify({"success": False, "message": movie_error})
+
+            if 'calendar_info' not in target:
+                target['calendar_info'] = {}
+            if 'match' not in target['calendar_info']:
+                target['calendar_info']['match'] = {}
+            target['calendar_info']['match'].update({
+                'tmdb_id': new_tid,
+                'matched_show_name': movie_result['name'],
+                'matched_year': movie_result['year'],
+                'media_type': 'movie',
+                'latest_season_number': 1,
+                'latest_season_fetch_url': f'/movie/{new_tid}',
+            })
+            target['calendar_info']['extracted'] = target['calendar_info'].get('extracted') or {}
+            target['calendar_info']['extracted']['content_type'] = 'movie'
+            target['content_type'] = 'movie'
+
+            season_no = 1
+            did_rematch = True
+            changed = True
+            movie_rematched = True
+
+            # 新电影已经成功写入后才解除旧绑定，避免新 ID 无效时破坏旧匹配。
+            if old_tmdb_id and int(old_tmdb_id) != new_tid:
+                try:
+                    cal_db.unbind_task_from_show(int(old_tmdb_id), task_final_name)
+                except Exception as e:
+                    logging.warning(f"解绑旧节目任务失败: {e}")
+                try:
+                    purge_calendar_by_tmdb_id_internal(int(old_tmdb_id))
+                except Exception as e:
+                    logging.warning(f"清理旧 tmdb 失败: {e}")
+
         # 场景一：提供 new_tmdb_id（重绑节目，可同时指定季数）
-        if new_tmdb_id:
+        if new_tmdb_id and not movie_rematched:
             try:
                 new_tid = int(str(new_tmdb_id).strip())
             except Exception:
@@ -9618,16 +9758,7 @@ def calendar_edit_metadata():
             # 若 tmdb 发生变更，先解绑旧节目的任务引用；实际清理延后到配置写盘之后
             old_to_purge_tmdb_id = None
             if old_tmdb_id and int(old_tmdb_id) != new_tid:
-                # 解绑旧节目的任务引用
-                try:
-                    try:
-                        _task_final_name = target.get('taskname') or target.get('task_name') or new_task_name or task_name
-                    except Exception:
-                        _task_final_name = task_name
-                    cal_db.unbind_task_from_show(int(old_tmdb_id), _task_final_name)
-                except Exception as e:
-                    logging.warning(f"解绑旧节目任务失败: {e}")
-                # 记录待清理的旧 tmdb，在配置更新并落盘后再执行清理
+                # 先记录旧节目，待新 TMDB 校验、写入和配置更新成功后再解绑，避免失败时破坏旧绑定。
                 try:
                     old_to_purge_tmdb_id = int(old_tmdb_id)
                 except Exception:
@@ -9657,6 +9788,12 @@ def calendar_edit_metadata():
                 show = cal_db.get_show(new_tid)
                 if not show:
                     return jsonify({"success": False, "message": "未找到指定 TMDB 节目"})
+
+            if pending_content_type:
+                extracted = target.setdefault('calendar_info', {}).setdefault('extracted', {})
+                extracted['content_type'] = pending_content_type
+                target['content_type'] = pending_content_type
+                target['calendar_info']['user_manual_content_type'] = True
 
             task_final_name = target.get('taskname') or target.get('task_name') or new_task_name or task_name
             ct = (target.get('calendar_info') or {}).get('extracted', {}).get('content_type', '')
@@ -9748,6 +9885,10 @@ def calendar_edit_metadata():
             # 如果需要，延后清理旧节目的数据（此时任务配置已指向新节目，避免被清理函数误判仍被引用）
             if old_to_purge_tmdb_id is not None:
                 try:
+                    cal_db.unbind_task_from_show(int(old_to_purge_tmdb_id), task_final_name)
+                except Exception as e:
+                    logging.warning(f"解绑旧节目任务失败: {e}")
+                try:
                     purge_calendar_by_tmdb_id_internal(int(old_to_purge_tmdb_id))
                 except Exception as e:
                     logging.warning(f"清理旧 tmdb 失败: {e}")
@@ -9778,7 +9919,7 @@ def calendar_edit_metadata():
             except Exception:
                 pass
         # 场景二：未提供 new_tmdb_id，但提供了 new_season_number（仅修改季数）
-        elif (new_season_number is not None) and (str(new_season_number).strip() != '') and old_tmdb_id:
+        elif (not movie_rematched) and (new_season_number is not None) and (str(new_season_number).strip() != '') and old_tmdb_id:
             try:
                 season_no = int(new_season_number)
             except Exception:
@@ -10058,6 +10199,7 @@ def calendar_edit_metadata():
             "tmdb_id": final_tmdb_id,
             "season_number": response_season,
             "season_name": saved_season_name,
+            "content_type": target.get('content_type') or ((target.get('calendar_info') or {}).get('extracted') or {}).get('content_type') or '',
             "user_manual_season": bool((target.get('calendar_info') or {}).get('user_manual_season')),
         }
         return jsonify(result)
