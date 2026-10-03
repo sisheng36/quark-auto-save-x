@@ -2,8 +2,33 @@ import os
 import json
 import sqlite3
 import time
+import re
 from datetime import datetime
 from functools import wraps
+
+
+def normalize_save_path(path):
+    """规范化任务保存路径，避免前导/重复/尾部斜杠造成任务串计。"""
+    if path is None:
+        return ''
+    value = str(path).strip().replace('\\', '/')
+    value = re.sub(r'/+', '/', value)
+    if not value:
+        return ''
+    if not value.startswith('/'):
+        value = '/' + value
+    if len(value) > 1:
+        value = value.rstrip('/')
+    return value
+
+
+def save_path_matches(record_path, task_path):
+    """判断转存记录路径是否属于任务保存目录（包含其子目录）。"""
+    record = normalize_save_path(record_path)
+    task = normalize_save_path(task_path)
+    if not record or not task:
+        return False
+    return record == task or record.startswith(task + '/')
 
 def compute_calendar_refresh_schedule(now_ts, last_ts, interval_seconds):
     """计算是否应立即刷新，以及距离下次周期触发的秒数。
@@ -503,25 +528,57 @@ class CalendarDB:
         except Exception:
             pass
 
-        # task_metrics（缓存：每任务的转存进度）
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS task_metrics (
-            task_name TEXT PRIMARY KEY,
-            tmdb_id INTEGER,
-            season_number INTEGER,
-            transferred_count INTEGER,
-            progress_pct INTEGER,
-            updated_at INTEGER
-        )
-        ''')
-        # 迁移：如缺少 progress_pct 列则新增
+        # task_metrics（缓存：按任务名 + 保存路径隔离转存进度）
+        # 旧版本只有 task_name 主键，同名多季任务会互相覆盖。SQLite 不能直接修改主键，
+        # 因此将旧表迁移到复合主键表；旧数据保留为 save_path=''，待下一次任务运行时按路径重算。
         try:
             cursor.execute('PRAGMA table_info(task_metrics)')
-            cols = [c[1] for c in cursor.fetchall()]
-            if 'progress_pct' not in cols:
-                cursor.execute('ALTER TABLE task_metrics ADD COLUMN progress_pct INTEGER')
+            task_metric_columns = cursor.fetchall()
         except Exception:
-            pass
+            task_metric_columns = []
+
+        has_save_path = any(row[1] == 'save_path' for row in task_metric_columns)
+        has_composite_pk = (
+            any(row[1] == 'task_name' and row[5] == 1 for row in task_metric_columns)
+            and any(row[1] == 'save_path' and row[5] == 2 for row in task_metric_columns)
+        )
+        if task_metric_columns and (not has_save_path or not has_composite_pk):
+            cursor.execute('ALTER TABLE task_metrics RENAME TO task_metrics_legacy')
+            cursor.execute('''
+            CREATE TABLE task_metrics (
+                task_name TEXT NOT NULL,
+                save_path TEXT NOT NULL DEFAULT '',
+                tmdb_id INTEGER,
+                season_number INTEGER,
+                transferred_count INTEGER,
+                progress_pct INTEGER,
+                updated_at INTEGER,
+                PRIMARY KEY (task_name, save_path)
+            )
+            ''')
+            legacy_columns = {row[1] for row in task_metric_columns}
+            progress_expr = 'progress_pct' if 'progress_pct' in legacy_columns else 'NULL'
+            save_path_expr = 'save_path' if 'save_path' in legacy_columns else "''"
+            cursor.execute(f'''
+                INSERT OR IGNORE INTO task_metrics
+                    (task_name, save_path, tmdb_id, season_number, transferred_count, progress_pct, updated_at)
+                SELECT task_name, COALESCE({save_path_expr}, ''), tmdb_id, season_number, transferred_count, {progress_expr}, updated_at
+                FROM task_metrics_legacy
+            ''')
+            cursor.execute('DROP TABLE task_metrics_legacy')
+        else:
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS task_metrics (
+                task_name TEXT NOT NULL,
+                save_path TEXT NOT NULL DEFAULT '',
+                tmdb_id INTEGER,
+                season_number INTEGER,
+                transferred_count INTEGER,
+                progress_pct INTEGER,
+                updated_at INTEGER,
+                PRIMARY KEY (task_name, save_path)
+            )
+            ''')
 
         # emby_items（Emby 媒体库本地缓存，用于影视发现入库状态匹配）
         cursor.execute('''
@@ -1211,22 +1268,23 @@ class CalendarDB:
         }
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
-    def upsert_task_metrics(self, task_name:str, tmdb_id:int, season_number:int, transferred_count:int, progress_pct, updated_at:int):
+    def upsert_task_metrics(self, task_name:str, tmdb_id:int, season_number:int, transferred_count:int, progress_pct, updated_at:int, save_path=''):
+        save_path = normalize_save_path(save_path)
         cursor = self.conn.cursor()
         cursor.execute('''
-        INSERT INTO task_metrics (task_name, tmdb_id, season_number, transferred_count, progress_pct, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(task_name) DO UPDATE SET
+        INSERT INTO task_metrics (task_name, save_path, tmdb_id, season_number, transferred_count, progress_pct, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_name, save_path) DO UPDATE SET
             tmdb_id=excluded.tmdb_id,
             season_number=excluded.season_number,
             transferred_count=excluded.transferred_count,
             progress_pct=COALESCE(excluded.progress_pct, progress_pct),
             updated_at=excluded.updated_at
-        ''', (task_name, tmdb_id, season_number, transferred_count, progress_pct, updated_at))
+        ''', (task_name, save_path, tmdb_id, season_number, transferred_count, progress_pct, updated_at))
         self.conn.commit()
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
-    def get_task_metrics(self, task_name:str):
+    def get_task_metrics(self, task_name:str, save_path=''):
         """获取任务的进度指标（直接从数据库读取最新数据）
         
         在 WAL 模式下，即使主数据库文件已经是最新的，新连接建立时的快照可能基于旧的 WAL 索引文件状态，
@@ -1251,10 +1309,12 @@ class CalendarDB:
             # 在大多数情况下，即使 checkpoint 失败，读取操作仍能看到已提交的数据
             pass
         
-        # 从数据库直接查询最新的任务进度，并带出转存数 / 当前季集数供完成判定
+        save_path = normalize_save_path(save_path)
+        # 从数据库直接查询最新的任务进度，并带出转存数 / 当前季集数供完成判定。
+        # 传入保存路径时只读该路径，不能回退到同名任务的旧无路径缓存。
         cursor.execute(
-            'SELECT progress_pct, transferred_count, tmdb_id, season_number FROM task_metrics WHERE task_name=?',
-            (task_name,),
+            'SELECT progress_pct, transferred_count, tmdb_id, season_number FROM task_metrics WHERE task_name=? AND save_path=?',
+            (task_name, save_path),
         )
         row = cursor.fetchone()
         if not row:

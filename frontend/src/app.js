@@ -424,7 +424,9 @@ export default {
             return '';
           }
         })(),
-        taskLatestRecords: {}, // 存储每个任务的最新转存记录日期
+        taskLatestRecords: {}, // 唯一任务名的兼容映射
+        taskLatestRecordsByPath: {}, // 按任务保存路径隔离
+        taskLatestFilesByPath: {}, // 按任务保存路径隔离
         taskLatestFiles: {}, // 存储每个任务的最近转存文件
         modalLoading: false,
         // 编辑元数据状态
@@ -726,6 +728,7 @@ export default {
           progressByShowName: {},
           // 当日更新数据（来源：/api/calendar/today_updates_local）
           todayUpdatesByTaskName: {}, // { [task_name]: true }
+          todayUpdatesByPath: {}, // { [save_path]: true }
           todayUpdatesByShow: {},     // { [show_name]: Set(keys) }，key: 'S01E02' 或 'D:YYYY-MM-DD'
           // 按 tmdb_id 缓存 content_type，避免为每集重复查询（性能优化）
           contentTypeByTmdbId: {}, // { [tmdb_id]: content_type }
@@ -2063,6 +2066,43 @@ export default {
             return idx;
           } catch (e) { return null; }
         },
+        getTaskSavePath(task) {
+          try {
+            if (!task || typeof task !== 'object') return '';
+            let value = task.savepath || task.save_path || '';
+            if (!value) {
+              const calendarTask = this.getCalendarTaskForTask(task);
+              value = calendarTask && (calendarTask.save_path || calendarTask.savepath) || '';
+            }
+            value = String(value || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/');
+            if (!value) return '';
+            if (!value.startsWith('/')) value = '/' + value;
+            if (value.length > 1) value = value.replace(/\/+$/, '');
+            return value;
+          } catch (e) { return ''; }
+        },
+        getTaskLatestFile(task) {
+          try {
+            if (!task) return '';
+            const path = this.getTaskSavePath(task);
+            if (path && this.taskLatestFiles && this.taskLatestFiles[path]) return this.taskLatestFiles[path];
+            const calendarTask = typeof task === 'object' ? this.getCalendarTaskForTask(task) : null;
+            if (calendarTask && calendarTask.latest_file) return calendarTask.latest_file;
+            const name = typeof task === 'string' ? task : (task.taskname || task.task_name || '');
+            return (this.taskLatestFiles && this.taskLatestFiles[name]) || '';
+          } catch (e) { return ''; }
+        },
+        getTaskLatestRecord(task) {
+          try {
+            if (!task) return null;
+            const path = this.getTaskSavePath(task);
+            if (path && this.taskLatestRecords && this.taskLatestRecords[path]) return this.taskLatestRecords[path];
+            const calendarTask = typeof task === 'object' ? this.getCalendarTaskForTask(task) : null;
+            if (calendarTask && calendarTask.latest_record) return calendarTask.latest_record;
+            const name = typeof task === 'string' ? task : (task.taskname || task.task_name || '');
+            return (this.taskLatestRecords && this.taskLatestRecords[name]) || null;
+          } catch (e) { return null; }
+        },
         getCalendarTaskForTask(taskOrName) {
           try {
             if (taskOrName == null || taskOrName === '') return null;
@@ -2228,7 +2268,7 @@ export default {
                 item.total = total;
                 item.number = parseInt(name.match(/^#?(\d+)/)?.[1] || '0');
               } else if (by === 'update_time') {
-                const rec = this.taskLatestRecords[t.taskname];
+                const rec = this.getTaskLatestRecord(t);
                 item.updateTime = (rec && rec.full) ? new Date(rec.full).getTime() : 0;
               } else if (by === 'subscribe_duration') {
                 item.sinceMs = getSinceMs(t);
@@ -2511,11 +2551,9 @@ export default {
         },
         hasTaskTransferRecord(task) {
           try {
-            const name = (task && (task.taskname || task.task_name)) || '';
-            if (!name) return false;
-            if (this.taskLatestRecords && this.taskLatestRecords[name]) return true;
-            if (this.taskLatestFiles && this.taskLatestFiles[name]) return true;
-            const sc = this.getTaskSeasonCounts(name);
+            if (!task) return false;
+            if (this.getTaskLatestRecord(task) || this.getTaskLatestFile(task)) return true;
+            const sc = this.getTaskSeasonCounts(task);
             return !!(sc && sc.transferred >= 1);
           } catch (e) {
             return false;
@@ -3336,7 +3374,8 @@ export default {
           tasks.forEach(t => {
             const tname = t.task_name;
             const sname = t.show_name;
-            const prog = progressByTaskName[tname];
+            const path = this.getTaskSavePath(t);
+            const prog = (path && progressByTaskName[path]) || progressByTaskName[tname];
             if (sname && prog) {
               result[sname] = pickNewer(result[sname], prog);
             }
@@ -10682,14 +10721,14 @@ export default {
             console.warn('停止任务列表后台监听失败:', e);
           }
         },
-        getTaskLatestRecordDisplay(taskName) {
+        getTaskLatestRecordDisplay(task) {
           // 获取任务最新记录的显示文本
-          const latestRecord = this.taskLatestRecords[taskName];
+          const latestRecord = this.getTaskLatestRecord(task);
           return latestRecord ? latestRecord.display : '';
         },
-        isTaskUpdatedToday(taskName) {
+        isTaskUpdatedToday(task) {
           // 检查任务是否在今天更新
-          const latestRecord = this.taskLatestRecords[taskName];
+          const latestRecord = this.getTaskLatestRecord(task);
           if (!latestRecord || !latestRecord.full) {
             return false;
           }
@@ -14437,6 +14476,7 @@ export default {
             if (res.data && res.data.success) {
               const items = res.data.data && res.data.data.items ? res.data.data.items : [];
               const byTask = {};
+              const byPath = {};
               const byShow = {};
               const makeKey = (it) => {
                 if (it && it.episode_number != null && it.season_number != null) {
@@ -14451,6 +14491,7 @@ export default {
               };
               items.forEach(it => {
                 if (it && it.task_name) byTask[it.task_name] = true;
+                if (it && it.save_path) byPath[this.getTaskSavePath({ save_path: it.save_path })] = true;
                 const key = makeKey(it);
                 const sname = (it && it.show_name) ? String(it.show_name).trim() : '';
                 if (sname && key) {
@@ -14462,6 +14503,7 @@ export default {
               const byShowObj = {};
               Object.keys(byShow).forEach(k => { byShowObj[k] = Array.from(byShow[k]); });
               this.calendar.todayUpdatesByTaskName = byTask;
+              this.calendar.todayUpdatesByPath = byPath;
               this.calendar.todayUpdatesByShow = byShowObj;
             }
           } catch (e) {
@@ -14514,6 +14556,8 @@ export default {
           try {
             const name = task && (task.task_name || task.taskname);
             if (!name) return false;
+            const path = this.getTaskSavePath(task);
+            if (path && this.calendar.todayUpdatesByPath && this.calendar.todayUpdatesByPath[path]) return true;
             return !!(this.calendar.todayUpdatesByTaskName && this.calendar.todayUpdatesByTaskName[name]);
           } catch (e) { return false; }
         },

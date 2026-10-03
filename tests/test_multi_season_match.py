@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'app'))
 sys.path.insert(0, ROOT)
 
-from sdk.db import CalendarDB
+from sdk.db import CalendarDB, normalize_save_path, save_path_matches
 from utils.season_match import (
     binding_sync_should_overwrite_season,
     choose_match_season,
@@ -189,6 +189,46 @@ def test_resolve_duplicate_task_name():
     check("索引与名称不一致提示", err_mis, '任务已变化，请刷新后重试')
 
 
+def test_duplicate_task_transfer_metrics_are_isolated():
+    print("同名任务转存进度隔离")
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CalendarDB(os.path.join(tmp, 'calendar.db'))
+        db.upsert_season_metrics(42, 1, 6, 6, 6, 100, 1)
+        db.upsert_season_metrics(42, 2, 0, 0, 8, 0, 1)
+        db.upsert_task_metrics('书虫侦探', 42, 1, 6, 100, 1, save_path='/影视/书虫侦探/第一季')
+        db.upsert_task_metrics('书虫侦探', 42, 2, 0, 0, 1, save_path='/影视/书虫侦探/第二季')
+        first = db.get_task_metrics('书虫侦探', '/影视/书虫侦探/第一季')
+        second = db.get_task_metrics('书虫侦探', '/影视/书虫侦探/第二季')
+        check("第一季按路径读取 6 集", first.get('transferred_count'), 6)
+        check("第二季按路径读取 0 集", second.get('transferred_count'), 0)
+        check("第一季总集数独立", first.get('total_count'), 6)
+        check("第二季总集数独立", second.get('total_count'), 8)
+        check("路径规范化", normalize_save_path('影视//书虫侦探/第一季/'), '/影视/书虫侦探/第一季')
+        check("子目录归属", save_path_matches('/影视/书虫侦探/第一季/特别篇', '/影视/书虫侦探/第一季'), True)
+        check("相邻季不串计", save_path_matches('/影视/书虫侦探/第二季', '/影视/书虫侦探/第一季'), False)
+        db.close()
+
+
+def test_duplicate_task_latest_files_are_isolated():
+    print("同名任务最新文件隔离")
+    extractor = TaskExtractor()
+    tasks = [
+        task('书虫侦探', '/影视/书虫侦探/第一季', season=1, tmdb_id=42),
+        task('书虫侦探', '/影视/书虫侦探/第二季', season=2, tmdb_id=42),
+    ]
+    infos = extractor.extract_all_tasks_info(
+        tasks,
+        {
+            '/影视/书虫侦探/第一季': 'S01E06',
+            '/影视/书虫侦探/第二季': 'S02E01',
+        },
+    )
+    check("第一季最新文件独立", infos[0].get('latest_file'), 'S01E06')
+    check("第二季最新文件独立", infos[1].get('latest_file'), 'S02E01')
+    check("第一季集数不串计", infos[0].get('episode_number'), 6)
+    check("第二季集数不串计", infos[1].get('episode_number'), 1)
+
+
 def test_database_binding_and_purge():
     print("精确绑定与清理")
     with tempfile.TemporaryDirectory() as tmp:
@@ -230,6 +270,8 @@ def main():
     test_sync_does_not_copy_show_latest()
     test_extract_keeps_duplicate_task_index()
     test_resolve_duplicate_task_name()
+    test_duplicate_task_transfer_metrics_are_isolated()
+    test_duplicate_task_latest_files_are_isolated()
     test_database_binding_and_purge()
     print(f"\n通过 {PASSED}，失败 {FAILED}")
     return 0 if FAILED == 0 else 1

@@ -23,14 +23,22 @@ from logging.handlers import RotatingFileHandler
 
 # 添加数据库导入
 try:
-    from app.sdk.db import RecordDB, CalendarDB
+    from app.sdk.db import RecordDB, CalendarDB, normalize_save_path, save_path_matches
 except ImportError:
     # 如果直接运行脚本，路径可能不同
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     try:
-        from app.sdk.db import RecordDB, CalendarDB
+        from app.sdk.db import RecordDB, CalendarDB, normalize_save_path, save_path_matches
     except ImportError:
         # 定义一个空的RecordDB类，以防止导入失败
+        def normalize_save_path(path):
+            return str(path or '').strip().replace('\\', '/').strip('/')
+
+        def save_path_matches(record_path, task_path):
+            record = normalize_save_path(record_path)
+            task = normalize_save_path(task_path)
+            return bool(record and task and (record == task or record.startswith(task + '/')))
+
         class RecordDB:
             def __init__(self, *args, **kwargs):
                 self.enabled = False
@@ -1755,7 +1763,8 @@ def get_task_transfer_completion(task, account=None):
             try:
                 cal_db = CalendarDB()
                 task_name = task.get("taskname") or task.get("task_name") or ""
-                metrics = cal_db.get_task_metrics(task_name) if task_name else None
+                save_path = normalize_save_path(task.get("savepath") or task.get("save_path") or "")
+                metrics = cal_db.get_task_metrics(task_name, save_path) if task_name else None
                 if metrics:
                     info["has_metrics"] = True
                     transferred = int(metrics.get("transferred_count") or 0)
@@ -1774,7 +1783,8 @@ def get_task_transfer_completion(task, account=None):
         task_name = task.get("taskname") or task.get("task_name") or ""
         if not task_name:
             return info
-        metrics = cal_db.get_task_metrics(task_name)
+        save_path = normalize_save_path(task.get("savepath") or task.get("save_path") or "")
+        metrics = cal_db.get_task_metrics(task_name, save_path)
         if not metrics:
             return info
         transferred = int(metrics.get("transferred_count") or 0)
@@ -3141,7 +3151,10 @@ class Quark:
                     base_url = os.environ.get("CALENDAR_SERVER_BASE", f"http://127.0.0.1:{port}")
                     requests.post(
                         f"{base_url}/api/calendar/metrics/sync_task",
-                        json={"task_name": _tname},
+                        json={
+                            "task_name": _tname,
+                            "save_path": normalize_save_path(task.get("savepath") or task.get("save_path") or ""),
+                        },
                         timeout=1
                     )
             except Exception:
@@ -3451,11 +3464,22 @@ class Quark:
         try:
             db = RecordDB()
             cursor = db.conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM transfer_records WHERE task_name = ?",
-                (task_name,),
-            )
-            count = cursor.fetchone()[0] or 0
+            save_path = normalize_save_path(task.get("savepath") or task.get("save_path") or "")
+            if save_path:
+                cursor.execute(
+                    "SELECT save_path FROM transfer_records WHERE task_name = ?",
+                    (task_name,),
+                )
+                count = sum(
+                    1 for (record_path,) in (cursor.fetchall() or [])
+                    if save_path_matches(record_path, save_path)
+                )
+            else:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM transfer_records WHERE task_name = ?",
+                    (task_name,),
+                )
+                count = cursor.fetchone()[0] or 0
             db.close()
             return count > 0
         except Exception as e:
@@ -5990,7 +6014,10 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                 cal_db = CalendarDB()
                 task_name = task.get("taskname") or task.get("task_name") or ""
                 if task_name:
-                    metrics = cal_db.get_task_metrics(task_name)
+                    metrics = cal_db.get_task_metrics(
+                        task_name,
+                        normalize_save_path(task.get("savepath") or task.get("save_path") or ""),
+                    )
                     if metrics and metrics.get("progress_pct") is not None:
                         # 有任务进度数据，显示自动模式
                         print(f"执行周期: 自动")

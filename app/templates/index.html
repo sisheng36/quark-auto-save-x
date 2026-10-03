@@ -1124,33 +1124,33 @@
                     <i class="bi bi-caret-right-fill"></i>
                     <span class="task-card-title">#<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span></span>
                     <template v-for="key in formData.button_display_order" :key="'header-' + key">
-                      <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && taskLatestFiles[task.taskname]"
+                       <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && getTaskLatestFile(task)"
                             class="task-latest-file"
                             :class="{'hover-only': formData.button_display.latest_transfer_file === 'hover'}">
-                         · {{ taskLatestFiles[task.taskname] }}
+                         · {{ getTaskLatestFile(task) }}
                       </span>
-                      <span v-else-if="key==='season_counts' && formData.button_display.season_counts !== 'disabled' && getTaskSeasonCounts(task.taskname)"
+                       <span v-else-if="key==='season_counts' && formData.button_display.season_counts !== 'disabled' && getTaskSeasonCounts(task)"
                             class="task-season-counts"
                             :class="{'hover-only': formData.button_display.season_counts === 'hover'}"
-                            v-html="' · ' + formatSeasonCounts(getTaskSeasonCounts(task.taskname))">
+                             v-html="' · ' + formatSeasonCounts(getTaskSeasonCounts(task))">
                       </span>
-                      <span v-else-if="key==='latest_update_date' && formData.button_display.latest_update_date !== 'disabled' && taskLatestRecords[task.taskname]"
+                       <span v-else-if="key==='latest_update_date' && formData.button_display.latest_update_date !== 'disabled' && getTaskLatestRecord(task)"
                             class="task-latest-date"
                             :class="{'hover-only': formData.button_display.latest_update_date === 'hover'}">
-                         · {{ getTaskLatestRecordDisplay(task.taskname) }}
+                         · {{ getTaskLatestRecordDisplay(task) }}
                       </span>
-                      <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task.taskname) !== null"
+                       <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task) !== null"
                             class="task-progress"
                             :class="{'hover-only': formData.button_display.task_progress === 'hover'}">
-                         · {{ getTaskProgress(task.taskname) }}%
+                         · {{ getTaskProgress(task) }}%
                       </span>
-                      <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(task.taskname)"
+                       <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(getCalendarTaskForTask(task) || task)"
                             class="task-show-status"
                             :class="{'hover-only': formData.button_display.show_status === 'hover'}">
-                         · {{ getTaskShowStatus(task.taskname) }}
+                         · {{ getTaskShowStatus(getCalendarTaskForTask(task) || task) }}
                       </span>
                     </template>
-                    <span v-if="isTaskUpdatedToday(task.taskname) && shouldShowTodayIndicator()"
+                     <span v-if="isTaskUpdatedToday(task) && shouldShowTodayIndicator()"
                           class="task-today-indicator"
                           :class="getTodayIndicatorClass()">
                       <i class="bi bi-stars"></i>
@@ -1419,7 +1419,7 @@
                       <!-- 下一集播出日期 + 时间（基于已转存集数推算） -->
                       <div class="info-line" v-if="getTaskNextAirDateTimeDisplay(task)">{{ getTaskNextAirDateTimeDisplay(task) }}</div>
                       <!-- 最近更新日期 -->
-                      <div class="info-line" v-if="taskLatestRecords[task.taskname]">{{ getTaskLatestRecordDisplay(task.taskname) }}</div>
+                       <div class="info-line" v-if="getTaskLatestRecord(task)">{{ getTaskLatestRecordDisplay(task) }}</div>
                     </div>
                   </div>
                   <div class="discovery-info">
@@ -1429,7 +1429,7 @@
                          @click="openTaskTmdbPage(task)">
                       {{ task.taskname }}
                        <span v-if="getTaskShowStatus(getCalendarTaskForTask(task) || task)"> · {{ getTaskShowStatus(getCalendarTaskForTask(task) || task) }}</span>
-                      <span v-if="isTaskUpdatedToday(task.taskname) && shouldShowTodayIndicator()"
+                      <span v-if="isTaskUpdatedToday(task) && shouldShowTodayIndicator()"
                             class="task-today-indicator"
                             :class="getTodayIndicatorClass()">
                         <i class="bi bi-stars"></i>

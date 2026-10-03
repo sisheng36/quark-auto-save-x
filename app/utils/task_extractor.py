@@ -365,7 +365,17 @@ class TaskExtractor:
             try:
                 task_name = task.get('taskname', '')
                 save_path = task.get('savepath', '')
-                latest_file = task_latest_files.get(task_name, '')
+                # 保存路径优先于任务名，避免同名多季任务共用最新文件。
+                normalized_save_path = str(save_path or '').strip().replace('\\', '/')
+                while '//' in normalized_save_path:
+                    normalized_save_path = normalized_save_path.replace('//', '/')
+                if normalized_save_path and not normalized_save_path.startswith('/'):
+                    normalized_save_path = '/' + normalized_save_path
+                if len(normalized_save_path) > 1:
+                    normalized_save_path = normalized_save_path.rstrip('/')
+                latest_file = task_latest_files.get(normalized_save_path, '')
+                if not latest_file:
+                    latest_file = task_latest_files.get(task_name, '')
 
                 # 提取基本信息
                 show_info = self.extract_show_info_from_path(save_path)

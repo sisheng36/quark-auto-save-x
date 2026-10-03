@@ -92,7 +92,7 @@ from sdk.tmdb_service import TMDBService
 from sdk.trakt_service import TraktService
 from sdk.emby_service import EmbyService
 from sdk.db import CalendarDB, compute_calendar_refresh_schedule
-from sdk.db import RecordDB
+from sdk.db import RecordDB, normalize_save_path, save_path_matches
 from utils.task_extractor import TaskExtractor
 
 
@@ -335,6 +335,63 @@ def is_movie_task(task: dict) -> bool:
         pass
     return False
 
+
+def _task_name(task):
+    if not isinstance(task, dict):
+        return ''
+    return str(task.get('task_name') or task.get('taskname') or '').strip()
+
+
+def _task_save_path(task):
+    if not isinstance(task, dict):
+        return ''
+    return normalize_save_path(task.get('save_path') or task.get('savepath') or '')
+
+
+def _record_belongs_to_task(record_path, task, same_name_count=1):
+    """按任务保存目录归属转存记录；没有路径的旧记录仅在任务名唯一时回退。"""
+    task_path = _task_save_path(task)
+    record_path = normalize_save_path(record_path)
+    if record_path and task_path:
+        return save_path_matches(record_path, task_path)
+    if not record_path:
+        return same_name_count == 1
+    return False
+
+
+def _latest_transfer_for_task(cursor, task, same_name_count=1):
+    """获取任务自己的最近转存时间和文件，支持保存目录下的子目录记录。"""
+    name = _task_name(task)
+    if not name:
+        return None, None
+    cursor.execute(
+        """
+        SELECT renamed_to, original_name, transfer_time, modify_date, save_path
+        FROM transfer_records
+        WHERE task_name = ? AND task_name NOT IN ('rename', 'undo_rename')
+        ORDER BY transfer_time DESC, id DESC
+        """,
+        (name,),
+    )
+    rows = [row for row in (cursor.fetchall() or []) if _record_belongs_to_task(row[4], task, same_name_count)]
+    if not rows:
+        return None, None
+    latest_time = rows[0][2]
+    time_window = 60000
+    latest_rows = [row for row in rows if abs((row[2] or 0) - latest_time) <= time_window]
+    if not latest_rows:
+        latest_rows = rows[:1]
+    if len(latest_rows) == 1:
+        return latest_time, latest_rows[0][0]
+    file_list = [
+        {'file_name': row[0], 'original_name': row[1], 'updated_at': row[2]}
+        for row in latest_rows
+    ]
+    try:
+        return latest_time, sorted(file_list, key=sort_file_by_name)[-1]['file_name']
+    except Exception:
+        return latest_time, latest_rows[0][0]
+
 def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
     """为任务列表注入日历相关元数据：节目状态、最新季处理后名称、已转存/已播出/本季总集数。
     返回新的任务字典列表，增加以下字段：
@@ -358,96 +415,60 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         for tid, sn, sname, ecount in rows:
             season_meta[(int(tid), int(sn))] = {'season_name': sname or '', 'episode_count': int(ecount or 0)}
 
-        # 统计"已转存集数"：基于转存记录最新进度构建映射（按任务名）
-        # 同时收集“在数据库中存在转存记录的任务名”集合，用于区分“真实归零”与“获取异常”
+        # 统计“已转存集数”：按任务保存路径隔离。同名多季任务不能共用任务名映射。
         transferred_by_task = {}
-        task_names_with_records = set()
-        movie_task_names = {
-            (task.get('task_name') or task.get('taskname') or '')
-            for task in tasks_info
-            if is_movie_task(task)
-        }
+        task_keys_with_records = set()
+        same_name_counts = {}
+        for task in tasks_info:
+            name = _task_name(task)
+            if name:
+                same_name_counts[name] = same_name_counts.get(name, 0) + 1
         try:
             rdb = RecordDB()
             cursor = rdb.conn.cursor()
-            cursor.execute(
-                """
-                SELECT task_name, MAX(transfer_time) as latest_transfer_time
-                FROM transfer_records
-                WHERE task_name NOT IN ('rename', 'undo_rename')
-                GROUP BY task_name
-                """
-            )
-            latest_times = cursor.fetchall() or []
-            task_names_with_records = set(t[0] for t in latest_times)
             extractor = TaskExtractor()
-            for task_name, latest_time in latest_times:
+            for task in tasks_info:
+                task_name = _task_name(task)
+                latest_time, latest_file = _latest_transfer_for_task(
+                    cursor, task, same_name_counts.get(task_name, 1)
+                )
                 if latest_time:
+                    task_key = (_task_name(task), _task_save_path(task))
+                    task_keys_with_records.add(task_key)
                     # 电影不是剧集。只要存在一次成功转存记录，就代表唯一的内容项已完成。
-                    if task_name in movie_task_names:
-                        transferred_by_task[task_name] = 1
+                    if is_movie_task(task):
+                        transferred_by_task[task_key] = 1
                         continue
-                    cursor.execute(
-                        """
-                        SELECT renamed_to, original_name, transfer_time, modify_date
-                        FROM transfer_records
-                        WHERE task_name = ? AND transfer_time >= ? AND transfer_time <= ?
-                        ORDER BY id DESC
-                        """,
-                        (task_name, latest_time - 60000, latest_time + 60000)
-                    )
-                    files = cursor.fetchall() or []
-                    best = files[0][0] if files else ''
-                    if len(files) > 1:
-                        file_list = [{'file_name': f[0], 'original_name': f[1], 'updated_at': f[2]} for f in files]
-                        try:
-                            best = sorted(file_list, key=sort_file_by_name)[-1]['file_name']
-                        except Exception:
-                            best = files[0][0]
-                    if best:
-                        name_wo_ext = os.path.splitext(best)[0]
+                    if latest_file:
+                        name_wo_ext = os.path.splitext(latest_file)[0]
                         processed = process_season_episode_info(name_wo_ext, task_name)
                         parsed = extractor.extract_progress_from_latest_file(processed)
                         if parsed and parsed.get('episode_number'):
-                            # 包含集数的情况
-                            transferred_by_task[task_name] = int(parsed['episode_number'])
+                            transferred_by_task[task_key] = int(parsed['episode_number'])
                         elif parsed and parsed.get('air_date'):
-                            # 只有日期的情况：通过查询数据库获取对应日期的最大集数
+                            # 只有日期的情况：按该任务自己的 tmdb_id + 季号查询。
                             air_date = parsed['air_date']
                             try:
-                                # 查找该任务对应的任务信息
-                                task_info = next((t for t in tasks_info if (t.get('task_name') or t.get('taskname')) == task_name), None)
-                                if task_info:
-                                    # 获取 tmdb_id 和 season_number（与兜底逻辑保持一致）
-                                    tmdb_id = task_info.get('match_tmdb_id') or ((task_info.get('calendar_info') or {}).get('match') or {}).get('tmdb_id')
-                                    season_no = None
-                                    try:
-                                        if task_info.get('matched_latest_season_number') is not None:
-                                            v = int(task_info.get('matched_latest_season_number'))
-                                            if v > 0:
-                                                season_no = v
-                                    except Exception:
-                                        season_no = None
-                                    
-                                    # 使用 tmdb_id + season_number + air_date 查询（episodes 表中没有 show_name 字段）
-                                    if tmdb_id and season_no:
-                                        cur.execute(
-                                            """
-                                            SELECT MAX(CAST(episode_number AS INTEGER))
-                                            FROM episodes
-                                            WHERE tmdb_id = ? AND season_number = ? AND air_date = ?
-                                            """,
-                                            (int(tmdb_id), int(season_no), air_date)
-                                        )
-                                        result = cur.fetchone()
-                                        if result and result[0] is not None:
-                                            transferred_by_task[task_name] = int(result[0])
+                                tmdb_id = task.get('match_tmdb_id') or ((task.get('calendar_info') or {}).get('match') or {}).get('tmdb_id')
+                                season_no = task.get('matched_latest_season_number')
+                                if tmdb_id and season_no:
+                                    cur.execute(
+                                        """
+                                        SELECT MAX(CAST(episode_number AS INTEGER))
+                                        FROM episodes
+                                        WHERE tmdb_id = ? AND season_number = ? AND air_date = ?
+                                        """,
+                                        (int(tmdb_id), int(season_no), air_date)
+                                    )
+                                    result = cur.fetchone()
+                                    if result and result[0] is not None:
+                                        transferred_by_task[task_key] = int(result[0])
                             except Exception:
                                 pass
             rdb.close()
         except Exception:
             transferred_by_task = {}
-            task_names_with_records = set()
+            task_keys_with_records = set()
 
         # 统计"已播出集数"：使用 is_episode_aired 逐集判断（考虑播出时间）
         # 修复：不再使用简单的日期比较，而是逐集调用 is_episode_aired 判断是否已播出
@@ -479,6 +500,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
 
         # 读取 season_metrics 缓存（优先使用缓存回填展示；若缓存日期早于今天，则强制使用今日即时统计覆盖已播出集数，并在下方写回）
         season_metrics_map = {}
+        task_metrics_map = {}
         try:
             cur.execute('SELECT tmdb_id, season_number, transferred_count, aired_count, total_count, updated_at FROM season_metrics')
             for tid, sn, tc, ac, tc2, ua in (cur.fetchall() or []):
@@ -490,6 +512,12 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 }
         except Exception:
             season_metrics_map = {}
+        try:
+            cur.execute('SELECT task_name, save_path, transferred_count FROM task_metrics')
+            for task_name_row, save_path_row, transferred_row in (cur.fetchall() or []):
+                task_metrics_map[(_task_name({'task_name': task_name_row}), normalize_save_path(save_path_row))] = transferred_row
+        except Exception:
+            task_metrics_map = {}
 
         # 注入到任务
         enriched = []
@@ -503,6 +531,8 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             total_count = None
             transferred_count = None
             aired_count = None
+            _cached_transferred = None
+            _updated_at = None
 
             try:
                 if tmdb_id and int(tmdb_id) in show_meta:
@@ -527,7 +557,9 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                         _metrics = season_metrics_map.get((int(tmdb_id), latest_sn)) or {}
                         total_count = _metrics.get('total_count')
                         aired_count = _metrics.get('aired_count')
-                        _cached_transferred = _metrics.get('transferred_count')
+                        _cached_transferred = task_metrics_map.get((task_name, _task_save_path(t)))
+                        if _cached_transferred is None and same_name_counts.get(task_name, 1) == 1:
+                            _cached_transferred = _metrics.get('transferred_count')
                         _updated_at = _metrics.get('updated_at')
                         # 一致性修复：总集数以 seasons 表为准（只要有值就覆盖/校正缓存）
                         # 说明：seasons.episode_count 会在 refresh_latest_season / refresh_season 等刷新逻辑中更新，
@@ -582,8 +614,9 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 total_count = 1
                 aired_count = 1
 
-            if task_name in transferred_by_task:
-                transferred_count = transferred_by_task[task_name]
+            task_key = (task_name, _task_save_path(t))
+            if task_key in transferred_by_task:
+                transferred_count = transferred_by_task[task_key]
 
             # 将状态本地化：returning_series 用本地已播/总集数判断；其余通过 TMDBService 的单表映射
             try:
@@ -641,40 +674,19 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             # 则显示 0 并依赖下方写回把缓存的已转存集数刷新为 0。
             try:
                 if (not _effective_transferred) and (locals().get('_cached_transferred') not in (None, 0)):
-                    if task_name in task_names_with_records:
+                    if task_key in task_keys_with_records:
                         _effective_transferred = int(locals().get('_cached_transferred') or 0)
             except Exception:
                 pass
 
             if (not _effective_transferred) and task_name and tmdb_id and latest_sn:
                 try:
-                    # 取最近一条转存记录的文件名，解析出日期
+                    # 取当前任务自己的最近转存记录，解析出日期；同名任务不能共用记录。
                     rdb2 = RecordDB()
                     cur2 = rdb2.conn.cursor()
-                    cur2.execute(
-                        """
-                        SELECT MAX(transfer_time) as latest_transfer_time
-                        FROM transfer_records
-                        WHERE task_name = ? AND task_name NOT IN ('rename', 'undo_rename')
-                        """,
-                        (task_name,)
+                    _lt, _best = _latest_transfer_for_task(
+                        cur2, t, same_name_counts.get(task_name, 1)
                     )
-                    _row = cur2.fetchone()
-                    _lt = _row[0] if _row else None
-                    _best = None
-                    if _lt:
-                        cur2.execute(
-                            """
-                            SELECT renamed_to, original_name, transfer_time, modify_date
-                            FROM transfer_records
-                            WHERE task_name = ? AND transfer_time >= ? AND transfer_time <= ?
-                            ORDER BY id DESC
-                            """,
-                            (task_name, _lt - 60000, _lt + 60000)
-                        )
-                        _files = cur2.fetchall() or []
-                        if _files:
-                            _best = _files[0][0]
                     rdb2.close()
 
                     if _best:
@@ -731,7 +743,10 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                         progress_pct = (100 * min(_trans, denom) // denom) if denom > 0 else 0
                     except Exception:
                         progress_pct = 0
-                    CalendarDB().upsert_task_metrics(task_name, int(tmdb_id), int(latest_sn), int(_effective_transferred or 0), int(progress_pct), int(_now()))
+                    CalendarDB().upsert_task_metrics(
+                        task_name, int(tmdb_id), int(latest_sn), int(_effective_transferred or 0),
+                        int(progress_pct), int(_now()), save_path=_task_save_path(t)
+                    )
             except Exception:
                 pass
             
@@ -744,46 +759,26 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
     except Exception:
         return tasks_info
 
-# 内部：根据 task_name 重新计算转存进度，并写回 metrics 与推送变更
-def recompute_task_metrics_and_notify(task_name: str) -> bool:
+# 内部：根据任务重新计算转存进度，并写回 metrics 与推送变更。
+# task_or_name 可以是完整任务对象；传入同名字符串时会为所有同名任务分别重算。
+def recompute_task_metrics_and_notify(task_or_name) -> bool:
     try:
-        if not task_name:
+        tasks = (config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else []
+        if isinstance(task_or_name, dict):
+            tgt = task_or_name
+            task_name = _task_name(tgt)
+        else:
+            task_name = str(task_or_name or '').strip()
+            matches = [t for t in tasks if _task_name(t) == task_name]
+            if len(matches) > 1:
+                return all(recompute_task_metrics_and_notify(t) for t in matches)
+            tgt = matches[0] if matches else None
+        if not task_name or not tgt:
             return False
         rdb = RecordDB()
         cursor = rdb.conn.cursor()
-        cursor.execute(
-            """
-            SELECT MAX(transfer_time) as latest_transfer_time
-            FROM transfer_records
-            WHERE task_name = ? AND task_name NOT IN ('rename', 'undo_rename')
-            """,
-            (task_name,)
-        )
-        row = cursor.fetchone()
-        latest_time = row[0] if row else None
-        latest_file = None
-        if latest_time:
-            time_window = 60000
-            cursor.execute(
-                """
-                SELECT renamed_to, original_name, transfer_time, modify_date
-                FROM transfer_records
-                WHERE task_name = ? AND transfer_time >= ? AND transfer_time <= ?
-                ORDER BY id DESC
-                """,
-                (task_name, latest_time - time_window, latest_time + time_window)
-            )
-            files = cursor.fetchall() or []
-            if files:
-                if len(files) == 1:
-                    latest_file = files[0][0]
-                else:
-                    # 使用 sort_file_by_name 排序选择最新文件（与 enrich_tasks_with_calendar_meta 保持一致）
-                    file_list = [{'file_name': f[0], 'original_name': f[1], 'updated_at': f[2]} for f in files]
-                    try:
-                        latest_file = sorted(file_list, key=sort_file_by_name)[-1]['file_name']
-                    except Exception:
-                        latest_file = files[0][0]
+        same_name_count = sum(1 for task in tasks if _task_name(task) == task_name) or 1
+        latest_time, latest_file = _latest_transfer_for_task(cursor, tgt, same_name_count)
         rdb.close()
 
         ep_no = None
@@ -808,14 +803,6 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
         # 仅从任务配置解析 tmdb 与季号：强制要求 matched_latest_season_number 存在，否则视为未匹配
         tmdb_id = None
         season_no = None
-        try:
-            tasks = (config_data or {}).get('tasklist', [])
-        except Exception:
-            tasks = []
-        try:
-            tgt = next((t for t in tasks if (t.get('taskname') or t.get('task_name') or '') == task_name), None)
-        except Exception:
-            tgt = None
         movie_task = is_movie_task(tgt) if tgt else False
         if tgt:
             try:
@@ -848,7 +835,10 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
             transferred = 1 if latest_time else 0
             progress_pct = 100 if transferred else 0
             cal_db.upsert_season_metrics(tmdb_id, season_no, transferred, 1, 1, progress_pct, now_ts)
-            cal_db.upsert_task_metrics(task_name, tmdb_id, season_no, transferred, progress_pct, now_ts)
+            cal_db.upsert_task_metrics(
+                task_name, tmdb_id, season_no, transferred, progress_pct, now_ts,
+                save_path=_task_save_path(tgt)
+            )
             try:
                 notify_calendar_changed('transfer_update')
             except Exception:
@@ -874,7 +864,10 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
 
         # 更新 task_metrics 的 transferred_count
         if ep_no is not None:
-            cal_db.upsert_task_metrics(task_name, tmdb_id, season_no, ep_no, None, now_ts)
+            cal_db.upsert_task_metrics(
+                task_name, tmdb_id, season_no, ep_no, None, now_ts,
+                save_path=_task_save_path(tgt)
+            )
 
         # 读取 season_metrics/或动态计算，写回 progress_pct
         try:
@@ -900,7 +893,10 @@ def recompute_task_metrics_and_notify(task_name: str) -> bool:
             progress_pct = (100 * min(trans, denom) // denom) if denom > 0 else 0
             # 更新 season_metrics 时，需要传入 transferred_count（已转存集数），不能传 None
             cal_db.upsert_season_metrics(tmdb_id, season_no, trans, aired, total, progress_pct, now_ts)
-            cal_db.upsert_task_metrics(task_name, tmdb_id, season_no, trans, progress_pct, now_ts)
+            cal_db.upsert_task_metrics(
+                task_name, tmdb_id, season_no, trans, progress_pct, now_ts,
+                save_path=_task_save_path(tgt)
+            )
         except Exception:
             pass
 
@@ -919,7 +915,16 @@ def register_metrics_sync_routes(app):
         try:
             data = request.get_json(silent=True) or {}
             task_name = data.get('task_name') or request.args.get('task_name')
-            ok = recompute_task_metrics_and_notify(task_name)
+            save_path = normalize_save_path(data.get('save_path') or request.args.get('save_path') or '')
+            target = next(
+                (
+                    task for task in ((config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else [])
+                    if _task_name(task) == str(task_name or '').strip()
+                    and (not save_path or _task_save_path(task) == save_path)
+                ),
+                None,
+            )
+            ok = recompute_task_metrics_and_notify(target or task_name)
             return jsonify({'success': bool(ok)})
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)})
@@ -5530,6 +5535,12 @@ def load_overview_calendar_index(tasklist):
         return calendar_by_name, complete_by_name
 
     metrics_by_name = {}
+    metrics_by_task_key = {}
+    task_name_counts = {}
+    for configured_task in tasklist or []:
+        configured_name = task_display_name(configured_task)
+        if configured_name:
+            task_name_counts[configured_name] = task_name_counts.get(configured_name, 0) + 1
     season_metrics = {}
     shows_by_id = {}
     shows_by_task = {}
@@ -5542,17 +5553,20 @@ def load_overview_calendar_index(tasklist):
         cur = cal_db.conn.cursor()
         try:
             cur.execute(
-                "SELECT task_name, tmdb_id, season_number, transferred_count, progress_pct FROM task_metrics"
+                "SELECT task_name, save_path, tmdb_id, season_number, transferred_count, progress_pct FROM task_metrics"
             )
-            for task_name, tmdb_id, season_number, transferred_count, progress_pct in cur.fetchall() or []:
+            for task_name, save_path, tmdb_id, season_number, transferred_count, progress_pct in cur.fetchall() or []:
                 if not task_name:
                     continue
-                metrics_by_name[str(task_name)] = {
+                metric = {
                     "tmdb_id": tmdb_id,
                     "season_number": season_number,
                     "transferred_count": transferred_count,
                     "progress_pct": progress_pct,
                 }
+                metrics_by_task_key[(str(task_name), normalize_save_path(save_path))] = metric
+                if not save_path:
+                    metrics_by_name[str(task_name)] = metric
         except Exception:
             pass
         try:
@@ -5633,7 +5647,9 @@ def load_overview_calendar_index(tasklist):
         cal = task.get("calendar_info") or {}
         match = cal.get("match") or {}
         tmdb_id = match.get("tmdb_id") or task.get("match_tmdb_id") or task.get("tmdb_id")
-        metrics = metrics_by_name.get(name) or {}
+        metrics = metrics_by_task_key.get((name, _task_save_path(task))) or {}
+        if not metrics and task_name_counts.get(name, 1) == 1:
+            metrics = metrics_by_name.get(name) or {}
         if not tmdb_id:
             tmdb_id = metrics.get("tmdb_id")
         try:
@@ -5943,20 +5959,22 @@ def get_task_latest_info():
         db = RecordDB()
         cursor = db.conn.cursor()
 
-        # 获取所有任务的最新转存时间
-        query = """
-        SELECT task_name, MAX(transfer_time) as latest_transfer_time
-        FROM transfer_records
-        WHERE task_name NOT IN ('rename', 'undo_rename')
-        GROUP BY task_name
-        """
-        cursor.execute(query)
-        latest_times = cursor.fetchall()
+        task_latest_records = {}       # 唯一任务名的兼容映射
+        task_latest_files = {}         # 唯一任务名的兼容映射
+        task_latest_records_by_path = {}
+        task_latest_files_by_path = {}
+        configured_tasks = (config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else []
+        same_name_counts = {}
+        for task in configured_tasks:
+            name = _task_name(task)
+            if name:
+                same_name_counts[name] = same_name_counts.get(name, 0) + 1
 
-        task_latest_records = {}  # 存储最新转存日期
-        task_latest_files = {}    # 存储最新转存文件
-
-        for task_name, latest_time in latest_times:
+        for task in configured_tasks:
+            task_name = _task_name(task)
+            latest_time, best_file = _latest_transfer_for_task(
+                cursor, task, same_name_counts.get(task_name, 1)
+            )
             if latest_time:
                 # 1. 处理最新转存日期
                 try:
@@ -5970,54 +5988,26 @@ def get_task_latest_info():
                         date_obj = datetime.fromtimestamp(timestamp)
                         formatted_date = date_obj.strftime("%m-%d")
                         full_date = date_obj.strftime("%Y-%m-%d")
-                        task_latest_records[task_name] = {
+                        record_value = {
                             "display": formatted_date,  # 显示用的 MM-DD 格式
                             "full": full_date          # 比较用的 YYYY-MM-DD 格式
                         }
+                        save_path = _task_save_path(task)
+                        if save_path:
+                            task_latest_records_by_path[save_path] = record_value
+                        if same_name_counts.get(task_name, 1) == 1:
+                            task_latest_records[task_name] = record_value
                 except (ValueError, TypeError, OverflowError):
                     pass  # 忽略无效的时间戳
 
-                # 2. 处理最新转存文件
-                # 获取该任务在最新转存时间附近（同一分钟内）的所有文件
-                # 这样可以处理同时转存多个文件但时间戳略有差异的情况
-                time_window = 60000  # 60秒的时间窗口（毫秒）
-                query = """
-                SELECT renamed_to, original_name, transfer_time, modify_date
-                FROM transfer_records
-                WHERE task_name = ? AND transfer_time >= ? AND transfer_time <= ?
-                ORDER BY id DESC
-                """
-                cursor.execute(query, (task_name, latest_time - time_window, latest_time + time_window))
-                files = cursor.fetchall()
-
-                if files:
-                    if len(files) == 1:
-                        # 如果只有一个文件，直接使用
-                        best_file = files[0][0]  # renamed_to
-                    else:
-                        # 如果有多个文件，使用全局排序函数进行排序
-                        file_list = []
-                        for renamed_to, original_name, transfer_time, modify_date in files:
-                            # 构造文件信息字典，模拟全局排序函数需要的格式
-                            file_info = {
-                                'file_name': renamed_to,
-                                'original_name': original_name,
-                                'updated_at': transfer_time  # 使用转存时间而不是文件修改时间
-                            }
-                            file_list.append(file_info)
-
-                        # 使用全局排序函数进行正向排序，最后一个就是最新的
-                        try:
-                            sorted_files = sorted(file_list, key=sort_file_by_name)
-                            best_file = sorted_files[-1]['file_name']  # 取排序后的最后一个文件
-                        except Exception as e:
-                            # 如果排序失败，使用第一个文件作为备选
-                            best_file = files[0][0]
-
-                    # 去除扩展名并处理季数集数信息
-                    if best_file:
-                        file_name_without_ext = os.path.splitext(best_file)[0]
-                        processed_name = process_season_episode_info(file_name_without_ext, task_name)
+                # 2. 处理最新转存文件。文件已由 _latest_transfer_for_task 按路径隔离。
+                if best_file:
+                    file_name_without_ext = os.path.splitext(best_file)[0]
+                    processed_name = process_season_episode_info(file_name_without_ext, task_name)
+                    save_path = _task_save_path(task)
+                    if save_path:
+                        task_latest_files_by_path[save_path] = processed_name
+                    if same_name_counts.get(task_name, 1) == 1:
                         task_latest_files[task_name] = processed_name
 
         # 注入"追剧日历"层面的签名信息，便于前端在无新增转存文件时也能检测到新增/删除剧目
@@ -6045,13 +6035,18 @@ def get_task_latest_info():
         except Exception:
             pass
 
+        # 路径键直接并入旧映射，兼容旧前端，同时让同名任务可以按 savepath 读取。
+        task_latest_records.update(task_latest_records_by_path)
+        task_latest_files.update(task_latest_files_by_path)
         db.close()
 
         return jsonify({
             "success": True,
             "data": {
                 "latest_records": task_latest_records,
-                "latest_files": task_latest_files
+                "latest_files": task_latest_files,
+                "latest_records_by_path": task_latest_records_by_path,
+                "latest_files_by_path": task_latest_files_by_path
             }
         })
 
@@ -6078,7 +6073,7 @@ def get_calendar_today_updates_local():
         cur = rdb.conn.cursor()
         cur.execute(
             """
-            SELECT task_name, renamed_to, original_name, transfer_time
+                SELECT task_name, renamed_to, original_name, transfer_time, save_path
             FROM transfer_records
             WHERE task_name NOT IN ('rename', 'undo_rename')
               AND transfer_time >= ? AND transfer_time <= ?
@@ -6111,7 +6106,13 @@ def get_calendar_today_updates_local():
         # 提取剧集编号/日期
         extractor = TaskExtractor()
         items = []
-        for task_name, renamed_to, original_name, transfer_time in rows:
+        configured_tasks = (config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else []
+        same_name_counts = {}
+        for configured_task in configured_tasks:
+            configured_name = _task_name(configured_task)
+            if configured_name:
+                same_name_counts[configured_name] = same_name_counts.get(configured_name, 0) + 1
+        for task_name, renamed_to, original_name, transfer_time, save_path in rows:
             # 解析进度信息
             base_name = os.path.splitext(renamed_to or '')[0]
             parsed = extractor.extract_progress_from_latest_file(base_name)
@@ -6123,7 +6124,9 @@ def get_calendar_today_updates_local():
                 continue
             bind = tmdb_map.get(task_name, {})
             items.append({
-                'task_name': task_name or '',
+                # 同名任务没有路径时不能安全地按名称回退到另一季；前端会优先使用路径。
+                'task_name': (task_name or '') if same_name_counts.get(task_name, 1) == 1 else '',
+                'save_path': normalize_save_path(save_path),
                 'tmdb_id': bind.get('tmdb_id'),
                 'show_name': bind.get('show_name') or '',
                 'season_number': season,
@@ -6985,58 +6988,27 @@ def get_calendar_tasks():
         db = RecordDB()
         cursor = db.conn.cursor()
         
-        # 获取所有任务的最新转存时间（优化：使用单个查询）
-        query = """
-        SELECT task_name, MAX(transfer_time) as latest_transfer_time
-        FROM transfer_records
-        WHERE task_name NOT IN ('rename', 'undo_rename')
-        GROUP BY task_name
-        """
-        cursor.execute(query)
-        latest_times = cursor.fetchall()
-        
+        # 获取每个配置任务自己的最新转存文件；保存路径优先，任务名只作为唯一任务回退。
         task_latest_files = {}
-        
-        # 批量查询文件信息，减少数据库查询次数
-        for task_name, latest_time in latest_times:
-            if latest_time:
-                # 获取该任务在最新转存时间附近的所有文件
-                time_window = 60000  # 60秒的时间窗口（毫秒）
-                query = """
-                SELECT renamed_to, original_name, transfer_time, modify_date
-                FROM transfer_records
-                WHERE task_name = ? AND transfer_time >= ? AND transfer_time <= ?
-                ORDER BY id DESC
-                LIMIT 10
-                """
-                cursor.execute(query, (task_name, latest_time - time_window, latest_time + time_window))
-                files = cursor.fetchall()
-                
-                if files:
-                    if len(files) == 1:
-                        best_file = files[0][0]  # renamed_to
-                    else:
-                        # 如果有多个文件，使用全局排序函数进行排序
-                        file_list = []
-                        for renamed_to, original_name, transfer_time, modify_date in files:
-                            file_info = {
-                                'file_name': renamed_to,
-                                'original_name': original_name,
-                                'updated_at': transfer_time
-                            }
-                            file_list.append(file_info)
-                        
-                        try:
-                            sorted_files = sorted(file_list, key=sort_file_by_name)
-                            best_file = sorted_files[-1]['file_name']
-                        except Exception:
-                            best_file = files[0][0]
-                    
-                    # 去除扩展名并处理季数集数信息
-                    if best_file:
-                        file_name_without_ext = os.path.splitext(best_file)[0]
-                        processed_name = process_season_episode_info(file_name_without_ext, task_name)
-                        task_latest_files[task_name] = processed_name
+        same_name_counts = {}
+        for task in tasks or []:
+            name = _task_name(task)
+            if name:
+                same_name_counts[name] = same_name_counts.get(name, 0) + 1
+        for task in tasks or []:
+            task_name = _task_name(task)
+            latest_time, best_file = _latest_transfer_for_task(
+                cursor, task, same_name_counts.get(task_name, 1)
+            )
+            if latest_time and best_file:
+                file_name_without_ext = os.path.splitext(best_file)[0]
+                processed_name = process_season_episode_info(file_name_without_ext, task_name)
+                save_path = normalize_save_path(task.get('savepath') or task.get('save_path') or '')
+                if save_path:
+                    task_latest_files[save_path] = processed_name
+                # 唯一任务保留旧名称键，兼容旧版调用方。
+                if same_name_counts.get(task_name, 1) == 1:
+                    task_latest_files[task_name] = processed_name
         
         db.close()
         
@@ -10497,6 +10469,7 @@ def get_calendar_episodes_local():
                 if tid:
                     tmdb_to_taskinfo[int(tid)] = {
                         'task_name': t.get('taskname') or t.get('task_name') or '',
+                        'save_path': _task_save_path(t),
                         'content_type': extracted.get('content_type') or extracted.get('type') or 'other',
                         'progress': {}
                     }
@@ -10514,6 +10487,7 @@ def get_calendar_episodes_local():
                             extracted = ((tgt.get('calendar_info') or {}).get('extracted') or {})
                             tmdb_to_taskinfo[int(tid)] = {
                                 'task_name': tgt.get('taskname') or tgt.get('task_name') or '',
+                                'save_path': _task_save_path(tgt),
                                 'content_type': extracted.get('content_type') or extracted.get('type') or 'other',
                                 'progress': {}
                             }
@@ -10521,51 +10495,30 @@ def get_calendar_episodes_local():
                     pass
         except Exception:
             tmdb_to_taskinfo = {}
-        # 读取任务最新转存文件，构建 task_name -> 解析进度 映射
+        # 读取任务最新转存文件，构建 save_path -> 解析进度 映射。
+        # 同名多季任务不能再按 task_name 分组。
         progress_by_task = {}
         try:
             # 直接读取数据库，避免依赖登录校验的接口调用
             extractor = TaskExtractor()
             rdb = RecordDB()
             cursor = rdb.conn.cursor()
-            cursor.execute("""
-                SELECT task_name, MAX(transfer_time) as latest_transfer_time
-                FROM transfer_records
-                WHERE task_name NOT IN ('rename', 'undo_rename')
-                GROUP BY task_name
-            """)
-            latest_times = cursor.fetchall() or []
             latest_files = {}
-            for task_name, latest_time in latest_times:
-                if latest_time:
-                    time_window = 60000
-                    cursor.execute(
-                        """
-                        SELECT renamed_to, original_name, transfer_time, modify_date
-                        FROM transfer_records
-                        WHERE task_name = ? AND transfer_time >= ? AND transfer_time <= ?
-                        ORDER BY id DESC
-                        """,
-                        (task_name, latest_time - time_window, latest_time + time_window)
-                    )
-                    files = cursor.fetchall() or []
-                    best_file = None
-                    if files:
-                        if len(files) == 1:
-                            best_file = files[0][0]
-                        else:
-                            file_list = []
-                            for renamed_to, original_name, transfer_time, modify_date in files:
-                                file_list.append({'file_name': renamed_to, 'original_name': original_name, 'updated_at': transfer_time})
-                            try:
-                                sorted_files = sorted(file_list, key=sort_file_by_name)
-                                best_file = sorted_files[-1]['file_name']
-                            except Exception:
-                                best_file = files[0][0]
-                    if best_file:
-                        file_name_without_ext = os.path.splitext(best_file)[0]
-                        processed_name = process_season_episode_info(file_name_without_ext, task_name)
-                        latest_files[task_name] = processed_name
+            task_name_counts = {}
+            for configured_task in tasks:
+                configured_name = _task_name(configured_task)
+                if configured_name:
+                    task_name_counts[configured_name] = task_name_counts.get(configured_name, 0) + 1
+            for configured_task in tasks:
+                task_name = _task_name(configured_task)
+                latest_time, best_file = _latest_transfer_for_task(
+                    cursor, configured_task, task_name_counts.get(task_name, 1)
+                )
+                if latest_time and best_file:
+                    file_name_without_ext = os.path.splitext(best_file)[0]
+                    processed_name = process_season_episode_info(file_name_without_ext, task_name)
+                    task_path = _task_save_path(configured_task)
+                    latest_files[task_path or task_name] = processed_name
             rdb.close()
             for tname, latest in (latest_files or {}).items():
                 parsed = extractor.extract_progress_from_latest_file(latest)
@@ -10752,7 +10705,8 @@ def get_calendar_episodes_local():
                     e['task_info'] = info
                     # 合并标准化进度
                     tname = info.get('task_name') or ''
-                    p = progress_by_task.get(tname)
+                    task_path = info.get('save_path') or ''
+                    p = progress_by_task.get(task_path) or progress_by_task.get(tname)
                     if p:
                         e['task_info']['progress'] = p
             result_data = {'success': True, 'data': {'episodes': eps, 'total': len(eps), 'show': show}}
@@ -10779,7 +10733,8 @@ def get_calendar_episodes_local():
                 if info:
                     e['task_info'] = info
                     tname = info.get('task_name') or ''
-                    p = progress_by_task.get(tname)
+                    task_path = info.get('save_path') or ''
+                    p = progress_by_task.get(task_path) or progress_by_task.get(tname)
                     if p:
                         e['task_info']['progress'] = p
             result_data = {'success': True, 'data': {'episodes': eps, 'total': len(eps)}}
