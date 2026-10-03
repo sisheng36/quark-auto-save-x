@@ -1166,7 +1166,7 @@
                       </template>
                        <button v-else-if="key==='delete_task'" type="button" class="btn btn-outline-danger" :class="{'hover-only': formData.button_display.delete_task === 'hover'}" @click="removeTask(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="删除此任务"><i class="bi bi-trash3"></i></button>
                      </template>
-                     <button v-if="canOverrideTaskStatus(task)" type="button" class="btn btn-outline-secondary" @click.stop="toggleTaskStatusOverride(task)" :title="getTaskStatusOverrideLabel(task)"><i :class="getTaskManualStatus(task) === 'ended' ? 'bi bi-arrow-counterclockwise' : 'bi bi-check2-circle'"></i></button>
+                     <button v-if="canOverrideTaskStatus(task)" type="button" class="btn btn-outline-secondary" @click.stop="toggleTaskStatusOverride(task)" :title="getTaskStatusOverrideLabel(task)" :aria-label="getTaskStatusOverrideLabel(task)"><i :class="getTaskManualStatus(task) === 'ended' ? 'bi bi-arrow-counterclockwise' : 'bi bi-flag-fill'"></i></button>
                    </div>
                 </div>
                 <div v-if="taskExpandState[index]" class="task-card-body" :id="'collapse_'+index">
@@ -2205,10 +2205,15 @@
                       </div>
                       <div class="discovery-edit-metadata tasklist-edit-metadata-btn"
                            v-if="canOverrideTaskStatus(task)"
+                           role="button"
+                           tabindex="0"
                            :style="{ left: task.match_tmdb_id && task.content_type !== 'movie' ? '64px' : '36px' }"
                            @click.stop="toggleTaskStatusOverride(task)"
-                           :title="getTaskStatusOverrideLabel(task)">
-                        <i :class="getTaskManualStatus(task) === 'ended' ? 'bi bi-arrow-counterclockwise' : 'bi bi-check2-circle'"></i>
+                           @keydown.enter.stop="toggleTaskStatusOverride(task)"
+                           @keydown.space.prevent.stop="toggleTaskStatusOverride(task)"
+                           :title="getTaskStatusOverrideLabel(task)"
+                           :aria-label="getTaskStatusOverrideLabel(task)">
+                        <i :class="getTaskManualStatus(task) === 'ended' ? 'bi bi-arrow-counterclockwise' : 'bi bi-flag-fill'"></i>
                       </div>
                       
                       <!-- 转存进度徽标（复用评分样式） -->
