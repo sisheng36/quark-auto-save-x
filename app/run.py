@@ -392,6 +392,40 @@ def _latest_transfer_for_task(cursor, task, same_name_count=1):
     except Exception:
         return latest_time, latest_rows[0][0]
 
+
+def _task_display_source_version(tmdb_id, season_number, content_type, raw_status, total_count, season_name=''):
+    """生成任务列表稳定展示快照的来源版本，避免源数据变化后继续使用旧快照。"""
+    raw = '|'.join([
+        str(tmdb_id or ''),
+        str(season_number or ''),
+        str(content_type or ''),
+        str(raw_status or '').strip().lower(),
+        str(total_count or 0),
+        str(season_name or ''),
+    ])
+    return hashlib.sha1(raw.encode('utf-8', 'ignore')).hexdigest()[:20]
+
+
+def _valid_task_display_cache(cache, task, tmdb_id, season_number, content_type, raw_status, total_count, season_name=''):
+    """判断任务列表快照是否仍对应当前任务/节目来源。"""
+    if not cache or not int(cache.get('is_terminal') or 0):
+        return False
+    try:
+        if int(cache.get('tmdb_id')) != int(tmdb_id):
+            return False
+        if int(cache.get('season_number')) != int(season_number):
+            return False
+    except (TypeError, ValueError):
+        return False
+    cached_type = str(cache.get('content_type') or '').strip()
+    if cached_type and cached_type != str(content_type or '').strip():
+        return False
+    expected_version = _task_display_source_version(
+        tmdb_id, season_number, content_type, raw_status, total_count, season_name
+    )
+    return cache.get('source_version') == expected_version
+
+
 def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
     """为任务列表注入日历相关元数据：节目状态、最新季处理后名称、已转存/已播出/本季总集数。
     返回新的任务字典列表，增加以下字段：
@@ -491,6 +525,8 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             )
             for tid, sn in (cur.fetchall() or []):
                 try:
+                    if (int(tid), int(sn)) in terminal_cached_pairs:
+                        continue
                     aired_count = compute_aired_count_by_episode_check(int(tid), int(sn), now_local_dt)
                     aired_by_show_season[(int(tid), int(sn))] = aired_count
                 except Exception:
@@ -519,6 +555,48 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         except Exception:
             task_metrics_map = {}
 
+        # 批量读取任务列表稳定展示快照。终态任务可直接使用，不再逐集计算已播数。
+        try:
+            task_display_cache_map = db.get_task_display_cache_map()
+        except Exception:
+            task_display_cache_map = {}
+
+        # 只有某个节目/季下的所有任务都命中有效终态快照时，才跳过该节目/季的已播计算。
+        pair_task_keys = {}
+        pair_terminal_keys = {}
+        for task in tasks_info:
+            try:
+                task_tmdb_id = task.get('match_tmdb_id') or ((task.get('calendar_info') or {}).get('match') or {}).get('tmdb_id')
+                task_season = task.get('matched_latest_season_number')
+                task_name_key = _task_name(task)
+                task_path_key = _task_save_path(task)
+                if not task_tmdb_id or not task_season or not task_name_key:
+                    continue
+                pair = (int(task_tmdb_id), int(task_season))
+                task_key = (task_name_key, task_path_key)
+                pair_task_keys.setdefault(pair, set()).add(task_key)
+                cache = task_display_cache_map.get(task_key)
+                raw_status = (show_meta.get(int(task_tmdb_id), {}).get('status') or '')
+                season_row = season_meta.get(pair) or {}
+                task_content_type = 'movie' if is_movie_task(task) else (task.get('content_type') or (cache or {}).get('content_type') or '')
+                if _valid_task_display_cache(
+                    cache,
+                    task,
+                    task_tmdb_id,
+                    task_season,
+                    task_content_type,
+                    raw_status,
+                    season_row.get('episode_count') or 0,
+                    season_row.get('season_name') or '',
+                ):
+                    pair_terminal_keys.setdefault(pair, set()).add(task_key)
+            except Exception:
+                continue
+        terminal_cached_pairs = {
+            pair for pair, keys in pair_task_keys.items()
+            if keys and keys == pair_terminal_keys.get(pair, set())
+        }
+
         # 注入到任务
         enriched = []
         for t in tasks_info:
@@ -533,6 +611,31 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             aired_count = None
             _cached_transferred = None
             _updated_at = None
+            task_key = (_task_name(t), _task_save_path(t))
+            display_cache = task_display_cache_map.get(task_key)
+            cached_terminal = False
+            terminal_reason = ''
+
+            try:
+                cache_season = t.get('matched_latest_season_number') or (display_cache or {}).get('season_number')
+                cache_show_meta = show_meta.get(int(tmdb_id), {}) if tmdb_id else {}
+                cache_season_meta = {}
+                if tmdb_id and cache_season:
+                    cache_season_meta = season_meta.get((int(tmdb_id), int(cache_season))) or {}
+                cached_terminal = _valid_task_display_cache(
+                    display_cache,
+                    t,
+                    tmdb_id,
+                    cache_season,
+                    'movie' if movie_task else (t.get('content_type') or (display_cache or {}).get('content_type') or ''),
+                    cache_show_meta.get('status') or '',
+                    cache_season_meta.get('episode_count') or 0,
+                    cache_season_meta.get('season_name') or '',
+                )
+                if cached_terminal:
+                    terminal_reason = display_cache.get('terminal_reason') or 'terminal'
+            except Exception:
+                cached_terminal = False
 
             try:
                 if tmdb_id and int(tmdb_id) in show_meta:
@@ -658,8 +761,60 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
 
+            if cached_terminal:
+                # 终态快照已经包含稳定的节目状态和当前季统计，跳过本次请求的动态重算结果。
+                try:
+                    latest_sn = int(display_cache.get('season_number'))
+                except (TypeError, ValueError):
+                    latest_sn = latest_sn or 1
+                latest_season_name = display_cache.get('latest_season_name') or latest_season_name
+                status = display_cache.get('matched_status') or status
+                total_count = display_cache.get('total_count')
+                aired_count = display_cache.get('aired_count')
+
             t['matched_status'] = status
             t['latest_season_name'] = latest_season_name
+
+            # 仅在首次识别到终态时写入稳定展示快照；后续请求只读取快照。
+            if not cached_terminal and tmdb_id and latest_sn:
+                source_raw_status = (show_meta.get(int(tmdb_id), {}).get('status') or '')
+                status_key = str(source_raw_status or '').strip().lower().replace(' ', '_')
+                if movie_task:
+                    terminal_reason = 'movie'
+                elif status in ('已完结', '已取消') or status_key in ('ended', 'canceled', 'cancelled'):
+                    terminal_reason = 'ended' if status_key == 'ended' or status == '已完结' else 'cancelled'
+                elif status == '本季终':
+                    terminal_reason = 'season_final'
+                if terminal_reason:
+                    try:
+                        source_season_name = (season_meta.get((int(tmdb_id), int(latest_sn))) or {}).get('season_name') or ''
+                        db.upsert_task_display_cache(
+                            task_name,
+                            _task_save_path(t),
+                            tmdb_id=int(tmdb_id),
+                            season_number=int(latest_sn),
+                            content_type='movie' if movie_task else (t.get('content_type') or ''),
+                            matched_show_name=t.get('matched_show_name') or '',
+                            matched_year=t.get('matched_year') or '',
+                            latest_season_name=latest_season_name,
+                            matched_status=status,
+                            total_count=int(total_count or 0),
+                            aired_count=int(aired_count or 0),
+                            is_terminal=True,
+                            terminal_reason=terminal_reason,
+                            source_version=_task_display_source_version(
+                                tmdb_id,
+                                latest_sn,
+                                'movie' if movie_task else (t.get('content_type') or ''),
+                                source_raw_status,
+                                total_count,
+                                source_season_name,
+                            ),
+                            finalized_at=int(time.time()),
+                            updated_at=int(time.time()),
+                        )
+                    except Exception:
+                        pass
 
             # 后端兜底：当文件名无集序号但含日期时，尝试用 tmdb_id + season + air_date 推导已转存集数
             # 这样与前端展示口径一致，避免把 transferred_count 误写为 0
@@ -717,7 +872,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             }
             # 写回 season_metrics（以该任务自身匹配到的季号为键；无匹配则跳过）
             try:
-                if tmdb_id and latest_sn:
+                if (not cached_terminal) and tmdb_id and latest_sn:
                     from time import time as _now
                     # 计算进度百分比：以 min(aired, total) 为分母；分母<=0 则为 0
                     try:
@@ -732,7 +887,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
             try:
-                if task_name and tmdb_id and latest_sn:
+                if (not cached_terminal) and task_name and tmdb_id and latest_sn:
                     from time import time as _now
                     # 同一套百分比口径
                     try:
@@ -2190,6 +2345,41 @@ os.makedirs(CACHE_IMAGES_DIR, exist_ok=True)
 # --------- 追剧日历：SSE 事件中心，用于实时通知前端 DB 变化 ---------
 calendar_subscribers = set()
 
+_TASK_DISPLAY_CACHE_INVALIDATION_REASONS = {
+    'task_updated',
+    'edit_metadata',
+    'daily_aired_update',
+    'aired_on_demand',
+    'bootstrap',
+    'refresh_latest_season',
+    'refresh_episode',
+    'refresh_season',
+    'refresh_show',
+    'auto_refresh',
+    'status_updated',
+    'aired_refresh_time_changed',
+    'update_airtime',
+    'trakt_airtime_synced',
+    'purge_tmdb',
+    'purge_by_task',
+    'purge_orphans',
+}
+
+
+def invalidate_task_display_cache(reason='', task_name=None, save_path=None, tmdb_id=None):
+    """失效任务列表稳定展示快照；转存事件只更新动态 task_metrics，不清除终态快照。"""
+    try:
+        db = CalendarDB()
+        if task_name is not None:
+            db.delete_task_display_cache(task_name, save_path=save_path)
+        elif tmdb_id is not None:
+            db.delete_task_display_cache(tmdb_id=tmdb_id)
+        elif reason in _TASK_DISPLAY_CACHE_INVALIDATION_REASONS:
+            db.delete_task_display_cache()
+        db.close()
+    except Exception as e:
+        logging.debug(f'失效任务列表展示快照失败 reason={reason}: {e}')
+
 def notify_calendar_changed(reason: str = ""):
     try:
         # 如果是会影响任务列表数据或剧集数据的变更，清除所有缓存，确保数据实时更新
@@ -2199,12 +2389,14 @@ def notify_calendar_changed(reason: str = ""):
                      'edit_metadata', 'daily_aired_update', 'aired_on_demand', 'bootstrap', 
                      'refresh_latest_season', 'refresh_episode', 'refresh_season', 'refresh_show', 
                      'auto_refresh', 'status_updated', 'aired_refresh_time_changed', 'update_airtime',
-                     'trakt_airtime_synced', 'purge_tmdb', 'purge_by_task', 'purge_orphans',
-                     'delete_records', 'reset_folder'):
+                      'trakt_airtime_synced', 'purge_tmdb', 'purge_by_task', 'purge_orphans',
+                      'delete_records', 'reset_folder', 'task_updated'):
             try:
                 clear_all_calendar_cache()
             except Exception:
                 pass
+        if reason in _TASK_DISPLAY_CACHE_INVALIDATION_REASONS:
+            invalidate_task_display_cache(reason=reason)
         
         for q in list(calendar_subscribers):
             try:

@@ -580,6 +580,31 @@ class CalendarDB:
             )
             ''')
 
+        # task_display_cache（任务列表稳定展示快照）
+        # 终态电影/已完结/本季终任务不需要在每次任务列表请求时重复逐集计算。
+        # 使用任务名 + 保存路径作为自然键，避免同名多季任务共享快照。
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS task_display_cache (
+            task_name TEXT NOT NULL,
+            save_path TEXT NOT NULL DEFAULT '',
+            tmdb_id INTEGER,
+            season_number INTEGER,
+            content_type TEXT,
+            matched_show_name TEXT,
+            matched_year TEXT,
+            latest_season_name TEXT,
+            matched_status TEXT,
+            total_count INTEGER,
+            aired_count INTEGER,
+            is_terminal INTEGER NOT NULL DEFAULT 0,
+            terminal_reason TEXT,
+            source_version TEXT,
+            finalized_at INTEGER,
+            updated_at INTEGER,
+            PRIMARY KEY (task_name, save_path)
+        )
+        ''')
+
         # emby_items（Emby 媒体库本地缓存，用于影视发现入库状态匹配）
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS emby_items (
@@ -859,7 +884,7 @@ class CalendarDB:
                 result.append(item)
         return result
 
-    # --------- 孤儿数据清理（seasons / episodes / season_metrics / task_metrics / shows） ---------
+    # --------- 孤儿数据清理（seasons / episodes / season_metrics / task_metrics / task_display_cache / shows） ---------
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def cleanup_orphan_data(self, valid_task_pairs, valid_task_names):
         """清理不再与任何任务对应的数据
@@ -869,7 +894,7 @@ class CalendarDB:
             valid_task_names: 当前存在的任务名列表
 
         规则:
-        - task_metrics: 删除 task_name 不在当前任务列表中的记录
+        - task_metrics/task_display_cache: 删除 task_name 不在当前任务列表中的记录
         - seasons/episodes: 仅保留出现在 valid_task_pairs 内的季与对应所有集；其余删除
         - season_metrics: 仅保留出现在 valid_task_pairs 内的记录；其余删除
         - shows: 仅保留出现在 valid_task_pairs 内的 tmdb_id；其余删除（连带删除对应的 seasons/episodes）
@@ -881,9 +906,11 @@ class CalendarDB:
             try:
                 if not valid_task_names:
                     cursor.execute('DELETE FROM task_metrics')
+                    cursor.execute('DELETE FROM task_display_cache')
                 else:
                     placeholders = ','.join(['?'] * len(valid_task_names))
                     cursor.execute(f"DELETE FROM task_metrics WHERE task_name NOT IN ({placeholders})", valid_task_names)
+                    cursor.execute(f"DELETE FROM task_display_cache WHERE task_name NOT IN ({placeholders})", valid_task_names)
             except Exception:
                 pass
 
@@ -1343,6 +1370,112 @@ class CalendarDB:
             'tmdb_id': tmdb_id,
             'season_number': season_number,
         }
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_task_display_cache(self, task_name: str, save_path='', **values):
+        """写入任务列表稳定展示快照。"""
+        name = str(task_name or '').strip()
+        if not name:
+            return
+        path = normalize_save_path(save_path)
+        fields = {
+            'tmdb_id': values.get('tmdb_id'),
+            'season_number': values.get('season_number'),
+            'content_type': values.get('content_type') or '',
+            'matched_show_name': values.get('matched_show_name') or '',
+            'matched_year': values.get('matched_year') or '',
+            'latest_season_name': values.get('latest_season_name') or '',
+            'matched_status': values.get('matched_status') or '',
+            'total_count': values.get('total_count'),
+            'aired_count': values.get('aired_count'),
+            'is_terminal': 1 if values.get('is_terminal') else 0,
+            'terminal_reason': values.get('terminal_reason') or '',
+            'source_version': values.get('source_version') or '',
+            'finalized_at': values.get('finalized_at'),
+            'updated_at': values.get('updated_at'),
+        }
+        cursor = self.conn.cursor()
+        cursor.execute('''
+        INSERT INTO task_display_cache (
+            task_name, save_path, tmdb_id, season_number, content_type,
+            matched_show_name, matched_year, latest_season_name,
+            matched_status, total_count, aired_count, is_terminal,
+            terminal_reason, source_version, finalized_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_name, save_path) DO UPDATE SET
+            tmdb_id=excluded.tmdb_id,
+            season_number=excluded.season_number,
+            content_type=excluded.content_type,
+            matched_show_name=excluded.matched_show_name,
+            matched_year=excluded.matched_year,
+            latest_season_name=excluded.latest_season_name,
+            matched_status=excluded.matched_status,
+            total_count=excluded.total_count,
+            aired_count=excluded.aired_count,
+            is_terminal=excluded.is_terminal,
+            terminal_reason=excluded.terminal_reason,
+            source_version=excluded.source_version,
+            finalized_at=excluded.finalized_at,
+            updated_at=excluded.updated_at
+        ''', (
+            name, path, fields['tmdb_id'], fields['season_number'], fields['content_type'],
+            fields['matched_show_name'], fields['matched_year'], fields['latest_season_name'],
+            fields['matched_status'], fields['total_count'], fields['aired_count'], fields['is_terminal'],
+            fields['terminal_reason'], fields['source_version'], fields['finalized_at'], fields['updated_at'],
+        ))
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_task_display_cache(self, task_name: str, save_path=''):
+        """读取任务列表稳定展示快照。"""
+        name = str(task_name or '').strip()
+        if not name:
+            return None
+        path = normalize_save_path(save_path)
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT task_name, save_path, tmdb_id, season_number, content_type,
+                   matched_show_name, matched_year, latest_season_name,
+                   matched_status, total_count, aired_count, is_terminal,
+                   terminal_reason, source_version, finalized_at, updated_at
+            FROM task_display_cache
+            WHERE task_name=? AND save_path=?
+        ''', (name, path))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        columns = [column[0] for column in cursor.description]
+        return dict(zip(columns, row))
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_task_display_cache_map(self):
+        """批量读取任务展示快照，避免任务列表逐任务查询。"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM task_display_cache')
+        columns = [column[0] for column in cursor.description]
+        return {
+            (str(row[0] or '').strip(), normalize_save_path(row[1])): dict(zip(columns, row))
+            for row in (cursor.fetchall() or [])
+        }
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def delete_task_display_cache(self, task_name=None, save_path=None, tmdb_id=None):
+        """按任务或 TMDB 节目删除展示快照。"""
+        cursor = self.conn.cursor()
+        if tmdb_id is not None:
+            cursor.execute('DELETE FROM task_display_cache WHERE tmdb_id=?', (int(tmdb_id),))
+        elif task_name is not None:
+            name = str(task_name or '').strip()
+            if save_path is None:
+                cursor.execute('DELETE FROM task_display_cache WHERE task_name=?', (name,))
+            else:
+                cursor.execute(
+                    'DELETE FROM task_display_cache WHERE task_name=? AND save_path=?',
+                    (name, normalize_save_path(save_path)),
+                )
+        else:
+            cursor.execute('DELETE FROM task_display_cache')
+        self.conn.commit()
 
     # --------- 扩展：管理季与集清理/更新工具方法 ---------
     @retry_on_locked(max_retries=3, base_delay=0.1)
