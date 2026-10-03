@@ -656,14 +656,29 @@ class CalendarDB:
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def get_show_by_task_name(self, task_name:str):
-        """根据任务名查找绑定的节目"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM shows WHERE bound_task_names LIKE ?', (f'%{task_name}%',))
-        row = cursor.fetchone()
-        if not row:
+        """按任务名精确查找绑定的节目。
+
+        bound_task_names 是逗号分隔的任务名。必须整段相等，
+        避免「书虫侦探」命中「书虫侦探 第二季」。
+        """
+        name = (task_name or '').strip()
+        if not name:
             return None
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM shows WHERE bound_task_names IS NOT NULL AND bound_task_names != ''"
+        )
         columns = [c[0] for c in cursor.description]
-        return dict(zip(columns, row))
+        for row in cursor.fetchall() or []:
+            show = dict(zip(columns, row))
+            bound = [
+                part.strip()
+                for part in str(show.get('bound_task_names') or '').split(',')
+                if part.strip()
+            ]
+            if name in bound:
+                return show
+        return None
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def get_show(self, tmdb_id:int):
@@ -1271,14 +1286,51 @@ class CalendarDB:
 
     # --------- 扩展：管理季与集清理/更新工具方法 ---------
     @retry_on_locked(max_retries=3, base_delay=0.1)
-    def purge_other_seasons(self, tmdb_id: int, keep_season_number: int):
-        """清除除指定季之外的所有季与对应集数据"""
+    def purge_seasons_not_in(self, tmdb_id: int, keep_season_numbers):
+        """删除该节目中不在保留列表里的季、集和季指标。
+
+        保留列表为空时不删除，避免一次空清理把整部剧的季数据清掉。
+        """
+        keep = []
+        seen = set()
+        for value in keep_season_numbers or []:
+            try:
+                number = int(value)
+            except (TypeError, ValueError):
+                continue
+            if number <= 0 or number in seen:
+                continue
+            seen.add(number)
+            keep.append(number)
+        if not keep:
+            return
         cursor = self.conn.cursor()
-        # 删除其他季的 episodes
-        cursor.execute('DELETE FROM episodes WHERE tmdb_id=? AND season_number != ?', (tmdb_id, keep_season_number))
-        # 删除其他季的 seasons 行
-        cursor.execute('DELETE FROM seasons WHERE tmdb_id=? AND season_number != ?', (tmdb_id, keep_season_number))
+        placeholders = ','.join(['?'] * len(keep))
+        params = [int(tmdb_id)] + keep
+        cursor.execute(
+            f'DELETE FROM episodes WHERE tmdb_id=? AND season_number NOT IN ({placeholders})',
+            params,
+        )
+        cursor.execute(
+            f'DELETE FROM seasons WHERE tmdb_id=? AND season_number NOT IN ({placeholders})',
+            params,
+        )
+        try:
+            cursor.execute(
+                f'DELETE FROM season_metrics WHERE tmdb_id=? AND season_number NOT IN ({placeholders})',
+                params,
+            )
+        except Exception:
+            pass
         self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def purge_other_seasons(self, tmdb_id: int, keep_season_number: int):
+        """清除除指定季之外的所有季与对应集数据。
+
+        同一节目有多个任务季时不要调用这个方法，改用 purge_seasons_not_in。
+        """
+        self.purge_seasons_not_in(tmdb_id, [keep_season_number])
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def delete_season(self, tmdb_id: int, season_number: int):

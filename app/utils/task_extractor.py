@@ -54,6 +54,89 @@ class TaskExtractor:
             return True
         return False
 
+    @staticmethod
+    def _season_marker_to_int(raw: str) -> Optional[int]:
+        """把季标记里的数字或中文数字转成季号。第 0 季视为无效。"""
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        number = None
+        if text.isdigit():
+            number = int(text)
+        else:
+            try:
+                from quark_auto_save import chinese_to_arabic
+                number = chinese_to_arabic(text)
+            except Exception:
+                number = None
+        try:
+            number = int(number)
+        except (TypeError, ValueError):
+            return None
+        if number <= 0:
+            return None
+        return number
+
+    def extract_season_number_from_text(self, text: str) -> Optional[int]:
+        """
+        从一段文本提取季号。
+
+        覆盖：第一季 / 第1季 / Season 1 / S01 / S01E01 / S01E{}。
+        只认季标记，不把「第1集」当成季。
+        """
+        if not text:
+            return None
+        patterns = (
+            r'第\s*(\d{1,3})\s*季',
+            r'第\s*([一二三四五六七八九十百零两]{1,4})\s*季',
+            r'(?i)season[\s._-]*(\d{1,3})',
+            r'(?<![A-Za-z0-9])[Ss](\d{1,2})[Ee]',
+            r'(?<![A-Za-z0-9])[Ss](\d{1,2})(?!\d)',
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            number = self._season_marker_to_int(match.group(1))
+            if number:
+                return number
+        return None
+
+    def extract_season_number_from_path(self, save_path: str) -> Optional[int]:
+        """从保存路径提取季号，靠后的季目录优先（剧名/第一季）。"""
+        if not save_path:
+            return None
+        parts = [part for part in str(save_path).replace('\\', '/').split('/') if part]
+        for part in reversed(parts):
+            number = self.extract_season_number_from_text(part)
+            if number:
+                return number
+        return None
+
+    def extract_season_number_from_task(self, task: Dict) -> Optional[int]:
+        """
+        从任务配置提取该任务自己的季号。
+
+        优先级：任务名 > 保存路径 > 重命名模板。
+        任务名是用户给这一季的标签；路径和模板用于任务名不含季标记的情况。
+        """
+        if not isinstance(task, dict):
+            return None
+        for field in ('taskname', 'task_name'):
+            number = self.extract_season_number_from_text(task.get(field) or '')
+            if number:
+                return number
+        number = self.extract_season_number_from_path(task.get('savepath') or '')
+        if number:
+            return number
+        for field in ('replace', 'episode_naming'):
+            number = self.extract_season_number_from_text(task.get(field) or '')
+            if number:
+                return number
+        return None
+
     def extract_show_info_from_path(self, save_path: str) -> Dict:
         """
         从保存路径中提取剧名和年份信息

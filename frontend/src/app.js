@@ -3878,33 +3878,40 @@ export default {
             }
             this.calendar.refreshing = true;
             const tasklist = (this.formData && this.formData.tasklist) ? this.formData.tasklist : [];
-            // 收集 tmdb_id -> 匹配季号映射
-            const tmdbToSeason = {};
-            // 优先使用日历任务最新数据
+            // 同一节目的多个任务各有自己的季，按 (tmdb_id, season) 刷新，不能只留最后一个任务的季。
+            const seasonPairs = [];
+            const seenPairs = new Set();
+            const addSeasonPair = (tid, sn) => {
+              const id = Number(tid);
+              const season = Number(sn);
+              if (!id || !season) return;
+              const key = id + ':' + season;
+              if (seenPairs.has(key)) return;
+              seenPairs.add(key);
+              seasonPairs.push({ id, season });
+            };
             try {
               (this.calendar.tasks || []).forEach(t => {
-                const tid = t.match_tmdb_id;
-                const sn = t.matched_latest_season_number;
-                if (tid && sn) tmdbToSeason[tid] = sn;
+                addSeasonPair(t.match_tmdb_id, t.matched_latest_season_number);
               });
             } catch (e) {}
-            // 回退表单任务里的匹配季
             tasklist.forEach(t => {
               try {
                 const cal = (t && t.calendar_info) ? t.calendar_info : {};
                 const match = cal.match || {};
-                const tid = match.tmdb_id;
-                const sn = match.latest_season_number;
-                if (tid && sn && !tmdbToSeason[tid]) tmdbToSeason[tid] = sn;
+                addSeasonPair(match.tmdb_id, match.latest_season_number);
               } catch (e) {}
             });
 
-            const tmdbIds = Object.keys(tmdbToSeason).map(v => Number(v)).filter(Boolean);
-            const idsToRefresh = Array.isArray(onlyTmdbIds) && onlyTmdbIds.length
-              ? onlyTmdbIds
-              : (allowFullRefresh ? tmdbIds : []);
+            const requestedIds = Array.isArray(onlyTmdbIds) && onlyTmdbIds.length
+              ? onlyTmdbIds.map(v => Number(v)).filter(Boolean)
+              : null;
+            const refreshPairs = requestedIds
+              ? seasonPairs.filter(pair => requestedIds.includes(pair.id))
+              : (allowFullRefresh ? seasonPairs : []);
+            const idsToRefresh = Array.from(new Set(refreshPairs.map(pair => pair.id)));
 
-            if (!idsToRefresh || idsToRefresh.length === 0) {
+            if (!refreshPairs.length) {
               // 未授权全量且未指定节目，直接跳过
               if (!isAutoRefresh) {
                 this.showToast('没有可刷新的节目数据');
@@ -3930,29 +3937,28 @@ export default {
 
             let successCount = 0;
             let failCount = 0;
-            for (const id of idsToRefresh) {
-              const sn = tmdbToSeason[id];
-              if (!sn) {
-                console.warn('缺少匹配季，跳过刷新', id);
-                failCount++;
-                continue;
-              }
+            const failedShows = new Set();
+            const okShows = new Set();
+            for (const pair of refreshPairs) {
               try {
                 await axios.get('/api/calendar/refresh_season', { 
                   params: { 
-                    tmdb_id: id, 
-                    season_number: sn,
+                    tmdb_id: pair.id, 
+                    season_number: pair.season,
                     is_auto_refresh: isAutoRefresh ? 'true' : 'false',
                     is_batch_refresh: isBatchRefresh ? 'true' : 'false',
                     is_edit_metadata_refresh: isEditMetadataRefresh ? 'true' : 'false'
                   } 
                 });
-                successCount++;
+                if (!failedShows.has(pair.id)) okShows.add(pair.id);
               } catch (e) {
-                console.warn('refresh season 失败:', id, sn, e);
-                failCount++;
+                console.warn('refresh season 失败:', pair.id, pair.season, e);
+                failedShows.add(pair.id);
+                okShows.delete(pair.id);
               }
             }
+            successCount = okShows.size;
+            failCount = failedShows.size;
             
             // 批量刷新时输出整体结束日志
             if (isBatchRefresh) {
@@ -4135,8 +4141,12 @@ export default {
             const currentName = task.task_name || '';
             const currentType = this.getContentTypeCN(task.content_type) || '';
             const currentTmdbId = (task.match && task.match.tmdb_id) || task.match_tmdb_id || (task.calendar_info && task.calendar_info.match && task.calendar_info.match.tmdb_id) || '';
-            // 仅使用匹配季：若未匹配则为空，由界面表现为未匹配
-            const currentSeason = task.matched_latest_season_number || '';
+            // 只用这个任务自己的季。没有季号时表单默认 1，但不能据此判断用户改过季。
+            const currentSeason = task.matched_latest_season_number
+              || (task.match && task.match.latest_season_number)
+              || (task.calendar_info && task.calendar_info.match && task.calendar_info.match.latest_season_number)
+              || '';
+            const formSeason = currentSeason || 1;
             const matchedName = task.matched_show_name || '';
             const matchedYear = task.matched_year || '';
 
@@ -4154,14 +4164,14 @@ export default {
                 task_name: currentName,
                 content_type: task.content_type || '',
                 tmdb_id: currentTmdbId || '',
-                season_number: currentSeason || '',
+                season_number: formSeason,
                 local_air_time: airTimeDisplay
               },
               form: {
                 task_name: currentName,
                 content_type: task.content_type || '',
                 tmdb_id: '',
-                season_number: currentSeason || 1,
+                season_number: formSeason,
                 custom_poster_url: '',
                 local_air_time: airTimeDisplay
               },
@@ -4183,23 +4193,6 @@ export default {
                 this.editMetadata.display['seasonInputWidth'] = px + 'px';
               } catch (e) {}
             });
-            // 若已匹配但没有季数信息，则从后端获取最新季数用于展示
-            try {
-              const tid = this.editMetadata.display.matched_tmdb_id;
-              const hasSeason = !!this.editMetadata.display.matched_season_number;
-              if (tid && !hasSeason) {
-                axios.get('/api/calendar/show_info', { params: { tmdb_id: tid } })
-                  .then(res => {
-                    if (res.data && res.data.success && res.data.data) {
-                      const sn = res.data.data.latest_season_number;
-                      if (sn) {
-                        this.editMetadata.display['matched_season_number'] = sn;
-                      }
-                    }
-                  })
-                  .catch(() => {});
-              }
-            } catch (e) {}
           } catch (e) {
             this.showToast('打开编辑失败');
           }
@@ -4227,10 +4220,13 @@ export default {
               new_task_name: this.editMetadata.form.task_name,
               new_content_type: this.editMetadata.form.content_type,
               new_tmdb_id: this.editMetadata.form.tmdb_id,
-              new_season_number: this.editMetadata.form.season_number,
               custom_poster_url: this.editMetadata.form.custom_poster_url,
               local_air_time: this.editMetadata.form.local_air_time
             };
+            const seasonChanged = String(this.editMetadata.form.season_number ?? '') !== String(this.editMetadata.original.season_number ?? '');
+            if (seasonChanged) {
+              payload.new_season_number = this.editMetadata.form.season_number;
+            }
 
             // 验证播出时间格式（如果填写了的话）
             const airTimeStr = String(payload.local_air_time || '').trim();
@@ -4337,6 +4333,34 @@ export default {
                 const tasksResponse = await tasksPromise;
                 if (tasksResponse.data && tasksResponse.data.success) {
                   this.setCalendarTasks(tasksResponse.data.data.tasks);
+                  try {
+                    const savedSeason = parseInt(res.data && res.data.season_number, 10);
+                    const savedName = (res.data && res.data.season_name) || '';
+                    const names = [
+                      (this.editMetadata.form && this.editMetadata.form.task_name) || '',
+                      (this.editMetadata.original && this.editMetadata.original.task_name) || ''
+                    ].map(name => String(name || '').trim()).filter(Boolean);
+                    if (savedSeason) {
+                      const patchSeason = (task) => {
+                        if (!task) return;
+                        task.matched_latest_season_number = savedSeason;
+                        if (savedName) task.latest_season_name = savedName;
+                        if (!task.calendar_info) task.calendar_info = {};
+                        if (!task.calendar_info.match) task.calendar_info.match = {};
+                        task.calendar_info.match.latest_season_number = savedSeason;
+                        if (res.data && res.data.user_manual_season) {
+                          task.calendar_info.user_manual_season = true;
+                        }
+                      };
+                      names.forEach(name => {
+                        patchSeason(this.calendar.taskMapByName && this.calendar.taskMapByName[name]);
+                        ((this.formData && this.formData.tasklist) || []).forEach(task => {
+                          const taskName = String(task.taskname || task.task_name || '').trim();
+                          if (taskName === name) patchSeason(task);
+                        });
+                      });
+                    }
+                  } catch (e) {}
                   // 同步更新任务列表类型集合（热更新左上角类型按钮）
                   try {
                     let rawTypes = (tasksResponse.data && tasksResponse.data.data && tasksResponse.data.data.content_types) || [];
