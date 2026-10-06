@@ -3875,11 +3875,11 @@ export default {
         // 返回用于悬停提示的 文本：剧名 或 剧名 · 状态
         getEpisodeShowTitleWithStatus(episode) {
           try {
-            const name = (episode && episode.show_name) ? String(episode.show_name).trim() : '';
+            const name = this.getEpisodeShowName(episode);
             const status = this.getEpisodeFinaleStatus(episode);
             return status ? `${name} · ${status}` : name;
           } catch (e) {
-            return (episode && episode.show_name) || '';
+            return (episode && (episode.show_name || episode.name || episode.title)) || '';
           }
         },
         
@@ -5367,47 +5367,158 @@ export default {
 
         
         
-        // 获取剧集显示集数
-        getEpisodeDisplayNumber(episode) {
-          if (episode.is_merged) {
-            // 合并集直接使用格式化后的集数
-            return episode.episode_number;
-          } else {
-            // 普通集数按原格式显示
-            return `S${episode.season_number.toString().padStart(2, '0')}E${episode.episode_number.toString().padStart(2, '0')}`;
+        // 读取日历条目的媒体类型。电影的日历数据使用虚拟 S01E01，
+        // 因此必须优先依据明确的媒体类型判断是否显示季集编号。
+        getEpisodeMediaType(episode) {
+          try {
+            if (!episode || typeof episode !== 'object') return '';
+            const taskInfo = episode.task_info && typeof episode.task_info === 'object'
+              ? episode.task_info
+              : {};
+            const taskMatch = taskInfo.match && typeof taskInfo.match === 'object'
+              ? taskInfo.match
+              : {};
+            const match = episode.match && typeof episode.match === 'object'
+              ? episode.match
+              : {};
+            const values = [
+              episode.media_type,
+              episode.content_type,
+              match.media_type,
+              match.content_type,
+              taskInfo.media_type,
+              taskInfo.content_type,
+              taskMatch.media_type,
+              taskMatch.content_type,
+              episode.type,
+              episode.ep_type,
+              episode.episode_type
+            ];
+            const normalized = values
+              .map(value => value == null ? '' : String(value).trim().toLowerCase())
+              .filter(Boolean);
+
+            // 任一明确字段标记为 movie 即按电影处理。这样可以兼容旧任务中
+            // content_type 仍为 other、但单集 type 已保存为 movie 的数据。
+            if (normalized.includes('movie')) return 'movie';
+            return normalized.find(value => ['tv', 'anime', 'variety', 'documentary', 'other'].includes(value)) || '';
+          } catch (e) {
+            return '';
           }
         },
-        
+
+        isMovieEpisode(episode) {
+          return this.getEpisodeMediaType(episode) === 'movie';
+        },
+
+        // 获取条目的标题。电影优先使用影片/单集名称，电视剧在缺少节目名时
+        // 才回退到单集名称，避免把普通剧集的单集标题当成节目标题。
+        getEpisodeTitle(episode) {
+          try {
+            if (!episode || typeof episode !== 'object') return '';
+            const value = this.isMovieEpisode(episode)
+              ? (episode.name || episode.title || episode.show_name)
+              : (episode.show_name || episode.title || episode.name);
+            return String(value == null ? '' : value).trim();
+          } catch (e) {
+            return '';
+          }
+        },
+
+        // 获取节目名称（供卡片和月历标题使用）。
+        getEpisodeShowName(episode) {
+          return this.getEpisodeTitle(episode);
+        },
+
+        // 将季集字段转换成可用于格式化的整数。0 是合法的特别篇季/集号，
+        // 只有缺失或无法解析时才视为没有编号。
+        getEpisodeNumberValue(value) {
+          if (value === null || value === undefined || String(value).trim() === '') return null;
+          const number = Number(value);
+          return Number.isFinite(number) ? Math.trunc(number) : null;
+        },
+
+        // 获取剧集显示集数。电影使用虚拟的 S01E01，仅展示影片名称，不显示该编号；
+        // 历史数据没有媒体类型时，只有季号和集号都存在才生成 SxxExx。
+        getEpisodeDisplayNumber(episode) {
+          if (!episode || this.isMovieEpisode(episode)) return '';
+          if (episode.is_merged) {
+            const hasMergedNumbers = (
+              this.getEpisodeNumberValue(episode.season_number) !== null
+              && (
+                this.getEpisodeNumberValue(episode.episode_range && episode.episode_range.end) !== null
+                || (Array.isArray(episode.original_episodes) && episode.original_episodes.some(item => (
+                  this.getEpisodeNumberValue(item && item.season_number) !== null
+                  && this.getEpisodeNumberValue(item && item.episode_number) !== null
+                )))
+              )
+            );
+            if (!hasMergedNumbers) return '';
+            // 合并集直接使用格式化后的集数
+            return episode.episode_number == null ? '' : String(episode.episode_number);
+          }
+          const season = this.getEpisodeNumberValue(episode.season_number);
+          const episodeNumber = this.getEpisodeNumberValue(episode.episode_number);
+          if (season === null || episodeNumber === null) return '';
+          return `S${String(season).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
+        },
+
         // 获取仅集数格式（省略季）
         getEpisodeOnlyNumber(episode) {
+          if (!episode || this.isMovieEpisode(episode)) return '';
           if (episode.is_merged) {
+            if (!this.getEpisodeDisplayNumber(episode)) return '';
             // 合并集：S01E34-E38 -> E34-E38
-            return episode.episode_number.replace(/^S\d+/, '');
-          } else {
-            // 普通集数：S01E06 -> E06
-            return `E${episode.episode_number.toString().padStart(2, '0')}`;
+            return episode.episode_number == null ? '' : String(episode.episode_number).replace(/^S\d+/, '');
           }
+          const episodeNumber = this.getEpisodeNumberValue(episode.episode_number);
+          return episodeNumber === null ? '' : `E${String(episodeNumber).padStart(2, '0')}`;
         },
-        
+
         // 获取纯数字格式
         getNumberOnly(episode) {
+          if (!episode || this.isMovieEpisode(episode)) return '';
           if (episode.is_merged) {
+            if (!this.getEpisodeDisplayNumber(episode)) return '';
             // 合并集：S01E34-E38 -> 34-38
-            return episode.episode_number.replace(/^S\d+E/, '').replace(/E/g, '');
-          } else {
-            // 普通集数：S01E06 -> 06
-            return episode.episode_number.toString().padStart(2, '0');
+            return episode.episode_number == null
+              ? ''
+              : String(episode.episode_number).replace(/^S\d+E/, '').replace(/E/g, '');
           }
+          const episodeNumber = this.getEpisodeNumberValue(episode.episode_number);
+          return episodeNumber === null ? '' : String(episodeNumber).padStart(2, '0');
         },
-        
+
+        // 获取日历条目的完整显示标题。保留电视剧现有的“剧名 SxxExx”格式，
+        // 电影和缺少季集编号的历史条目只返回标题本身。
+        getEpisodeDisplayTitle(episode) {
+          const title = this.getEpisodeTitle(episode);
+          if (!title) return '';
+          const displayNumber = this.getEpisodeDisplayNumber(episode);
+          return displayNumber ? `${title} ${displayNumber}` : title;
+        },
+
         // 获取剧集提示信息
         getEpisodeTooltip(episode) {
           // 规范：集数悬停显示对应集在 TMDB 上的单集标题
           // 普通：SxxExx 标题
           // 合并：逐行列出每一集：SxxExx 标题
+          // 电影和缺少编号的历史条目只显示标题，不虚构 S01E01。
           // 扩展：若存在节目级播出时间（local_air_time），则在前面追加时间，例如：
           //       18:00 S01E17 标题
           //       18:00 S01E18 标题
+          const title = this.getEpisodeTitle(episode);
+          if (this.isMovieEpisode(episode)) return title;
+          const getEpisodeName = item => {
+            try {
+              if (!item || typeof item !== 'object') return '';
+              return String(item.name || item.title || item.show_name || '').trim();
+            } catch (e) {
+              return '';
+            }
+          };
+          const tooltipTitle = getEpisodeName(episode);
+
           const pad2 = n => String(n).padStart(2, '0');
           // 仅使用节目级播出时间（local_air_time），不使用全局刷新时间；
           // 未配置 local_air_time 时保持原有行为（不显示时间）
@@ -5424,19 +5535,29 @@ export default {
             timePrefix = '';
           }
 
-          if (episode.is_merged && Array.isArray(episode.original_episodes) && episode.original_episodes.length) {
-            const lines = episode.original_episodes.map(ep => {
-              const s = ep.season_number ? pad2(ep.season_number) : pad2(episode.season_number || 1);
-              const e = ep.episode_number ? pad2(ep.episode_number) : '';
-              const title = ep.name || '';
-              return `${timePrefix}S${s}E${e} ${title}`.trim();
-            });
-            return lines.join('\n');
+          const formatEpisodeLine = (item, fallbackSeason) => {
+            const season = this.getEpisodeNumberValue(item && item.season_number);
+            const episodeNumber = this.getEpisodeNumberValue(item && item.episode_number);
+            const effectiveSeason = season === null ? fallbackSeason : season;
+            if (effectiveSeason === null || episodeNumber === null) {
+              return { text: getEpisodeName(item) || tooltipTitle, numbered: false };
+            }
+            const itemTitle = getEpisodeName(item);
+            const prefix = `S${pad2(effectiveSeason)}E${pad2(episodeNumber)}`;
+            return { text: `${prefix}${itemTitle ? ` ${itemTitle}` : ''}`, numbered: true };
+          };
+
+          if (episode && episode.is_merged && Array.isArray(episode.original_episodes) && episode.original_episodes.length) {
+            const fallbackSeason = this.getEpisodeNumberValue(episode.season_number);
+            const lines = episode.original_episodes
+              .map(ep => formatEpisodeLine(ep, fallbackSeason))
+              .filter(line => line && line.text)
+              .map(line => `${line.numbered ? timePrefix : ''}${line.text}`.trim());
+            return lines.length ? lines.join('\n') : tooltipTitle;
           }
-          const s = episode.season_number ? pad2(episode.season_number) : '01';
-          const e = episode.episode_number ? pad2(episode.episode_number) : '01';
-          const title = episode.name || '';
-          return `${timePrefix}S${s}E${e} ${title}`.trim();
+
+          const line = formatEpisodeLine(episode, null);
+          return line.numbered ? `${timePrefix}${line.text}`.trim() : line.text;
         },
 
         // 打开剧的TMDB页面
@@ -5444,7 +5565,7 @@ export default {
           try {
             const tmdbId = episode.tmdb_id || (episode.task_info && episode.task_info.match && episode.task_info.match.tmdb_id) || (episode.task_info && episode.task_info.tmdb_id);
             if (tmdbId) {
-              const mediaType = episode.type === 'movie' || (episode.task_info && episode.task_info.content_type === 'movie') ? 'movie' : 'tv';
+              const mediaType = this.isMovieEpisode(episode) ? 'movie' : 'tv';
               const url = `https://www.themoviedb.org/${mediaType}/${tmdbId}`;
               window.open(url, '_blank');
             }

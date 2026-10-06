@@ -2317,7 +2317,7 @@
                       
                       <div class="calendar-episode-info">
                         <div class="calendar-show-name" :title="getEpisodeShowTitleWithStatus(episode)" @click="openShowTmdbPage(episode)">
-                          {{ episode.show_name }}
+                          {{ getEpisodeShowName(episode) }}
                           <span v-if="getEpisodeFinaleStatus(episode)"> · {{ getEpisodeFinaleStatus(episode) }}</span>
                           <span v-if="isEpisodeUpdatedToday(episode) && shouldShowTodayIndicator()"
                                 class="task-today-indicator"
@@ -2325,7 +2325,7 @@
                             <i class="bi bi-stars"></i>
                           </span>
                         </div>
-                        <div class="calendar-episode-number"
+                        <div v-if="!isMovieEpisode(episode)" class="calendar-episode-number"
                              :class="{ 'episode-number-reached': isEpisodeReachedProgress(episode) }"
                              :title="getEpisodeTooltip(episode)"
                              @click="openEpisodeTmdbPage(episode)">
@@ -2374,7 +2374,7 @@
                                v-for="episode in day.episodes" 
                                :key="episode.id">
                             <span class="episode-title" :title="getEpisodeShowTitleWithStatus(episode)" @click.stop="openShowTmdbPage(episode)">
-                              {{ episode.show_name }}
+                              {{ getEpisodeShowName(episode) }}
                               <span v-if="getEpisodeFinaleStatus(episode)"> · {{ getEpisodeFinaleStatus(episode) }}</span>
                               <span v-if="isEpisodeUpdatedToday(episode) && shouldShowTodayIndicator()"
                                     class="task-today-indicator"
@@ -2382,7 +2382,7 @@
                                 <i class="bi bi-stars"></i>
                               </span>
                             </span>
-                            <span :class="['episode-number', { 'episode-number-reached': isEpisodeReachedProgress(episode), 'episode-number-aired': !isEpisodeReachedProgress(episode) && isEpisodeAiredForDisplay(episode) }]"
+                            <span v-if="!isMovieEpisode(episode)" :class="['episode-number', { 'episode-number-reached': isEpisodeReachedProgress(episode), 'episode-number-aired': !isEpisodeReachedProgress(episode) && isEpisodeAiredForDisplay(episode) }]"
                                   :title="getEpisodeTooltip(episode)"
                                   :data-full="getEpisodeDisplayNumber(episode)"
                                   :data-episode-only="getEpisodeOnlyNumber(episode)"
@@ -2404,7 +2404,7 @@
                            v-for="episode in getEpisodesByDate(calendar.selectedDate)" 
                            :key="episode.id">
                         <span class="episode-title" :title="getEpisodeShowTitleWithStatus(episode)" @click.stop="openShowTmdbPage(episode)">
-                          {{ episode.show_name }}
+                          {{ getEpisodeShowName(episode) }}
                           <span v-if="getEpisodeFinaleStatus(episode)"> · {{ getEpisodeFinaleStatus(episode) }}</span>
                           <span v-if="isEpisodeUpdatedToday(episode) && shouldShowTodayIndicator()"
                                 class="task-today-indicator"
@@ -2412,7 +2412,7 @@
                             <i class="bi bi-stars"></i>
                           </span>
                         </span>
-                        <span :class="['episode-number', { 'episode-number-reached': isEpisodeReachedProgress(episode), 'episode-number-aired': !isEpisodeReachedProgress(episode) && isEpisodeAiredForDisplay(episode) }]"
+                        <span v-if="!isMovieEpisode(episode)" :class="['episode-number', { 'episode-number-reached': isEpisodeReachedProgress(episode), 'episode-number-aired': !isEpisodeReachedProgress(episode) && isEpisodeAiredForDisplay(episode) }]"
                               :title="getEpisodeTooltip(episode)"
                               :data-full="getEpisodeDisplayNumber(episode)"
                               :data-episode-only="getEpisodeOnlyNumber(episode)"
