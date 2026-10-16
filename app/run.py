@@ -5017,7 +5017,11 @@ def get_share_detail():
         def mark_filtered_files(file_list, set_name_re_x=False):
             kept = apply_task_file_filters(
                 file_list,
-                {"filterwords": regex.get("filterwords", "")},
+                {
+                    "filterwords": regex.get("filterwords", ""),
+                    # 任务级「正则规则」：只转存匹配项，预览里同样标 ×
+                    "keep_regex": regex.get("keep_regex", ""),
+                },
                 config_data.get("task_settings") or {},
             )
             for item in file_list:

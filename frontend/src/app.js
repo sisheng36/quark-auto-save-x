@@ -390,6 +390,7 @@ export default {
           addition: {},
           ignore_extension: false,
           filterwords: "",
+          keep_regex: "", // 正则规则：只转存文件名匹配该正则的文件（过滤规则的反向规则）
           runweek: [1, 2, 3, 4, 5, 6, 7],
           sequence_naming: "",
           use_sequence_naming: false,
@@ -858,6 +859,7 @@ export default {
             addition: {},
             ignore_extension: false,
             filterwords: "",
+            keep_regex: "", // 正则规则：只转存文件名匹配该正则的文件（过滤规则的反向规则）
             runweek: [1, 2, 3, 4, 5, 6, 7],
             sequence_naming: "",
             use_sequence_naming: false,
@@ -9400,6 +9402,7 @@ export default {
               replace: task.replace,
               taskname: task.taskname,
               filterwords: task.filterwords,
+              keep_regex: task.keep_regex,
               magic_regex: this.formData.magic_regex,
               use_sequence_naming: task.use_sequence_naming,
               sequence_naming: task.sequence_naming,
@@ -9414,6 +9417,7 @@ export default {
               replace: task.replace,
               taskname: task.taskname,
               filterwords: task.filterwords,
+              keep_regex: task.keep_regex,
               magic_regex: this.formData.magic_regex,
               use_sequence_naming: task.use_sequence_naming,
               sequence_naming: task.sequence_naming,
@@ -9428,6 +9432,7 @@ export default {
               replace: '',
               taskname: '',
               filterwords: '',
+              keep_regex: '',
               magic_regex: this.formData.magic_regex,
               use_sequence_naming: false,
               sequence_naming: '',
@@ -14474,6 +14479,7 @@ export default {
             this.createTask.taskData.enddate = "";
             this.createTask.taskData.runweek = [1, 2, 3, 4, 5, 6, 7];
             this.createTask.taskData.filterwords = "";
+            this.createTask.taskData.keep_regex = "";
             this.createTask.taskData.startfid = "";
             this.createTask.taskData.update_subdir = "";
 
@@ -14571,6 +14577,7 @@ export default {
           this.createTask.taskData.enddate = "";
           this.createTask.taskData.runweek = [1, 2, 3, 4, 5, 6, 7];
           this.createTask.taskData.filterwords = "";
+          this.createTask.taskData.keep_regex = "";
           this.createTask.taskData.startfid = "";
           this.createTask.taskData.update_subdir = "";
 

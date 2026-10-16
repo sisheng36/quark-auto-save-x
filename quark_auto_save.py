@@ -236,14 +236,55 @@ def advanced_filter_files(file_list, filterwords):
     return file_list
 
 
-def apply_task_file_filters(file_list, task=None, task_settings=None):
+def filter_files_by_keep_regex(file_list, keep_regex):
     """
-    先应用全局过滤规则，再应用任务级过滤规则（叠加，不合并字符串）。
+    任务级「正则规则」：只保留文件名匹配该正则的文件（过滤规则的反向规则）。
+
+    用于同一部资源分享了好几种规格（1080p/4K/mkv/mp4 等）时只转存其中一个。
+
+    - 文件：file_name 命中（re.search，部分匹配即可）则保留，否则剔除；
+    - 文件夹：一律保留，是否递归由单文件夹分享 / 更新目录逻辑决定；
+    - 正则非法或留空：打印提示并原样返回，不影响原有转存行为。
+
+    Args:
+        file_list: 文件列表（分享文件或解压产物）
+        keep_regex: 正则表达式字符串，留空表示不启用
+
+    Returns:
+        过滤后的文件列表
+    """
+    if not file_list or not keep_regex or not str(keep_regex).strip():
+        return file_list
+    rule = str(keep_regex).strip()
+    try:
+        pattern = re.compile(rule)
+    except re.error as exc:
+        print(f"[正则规则] 正则表达式无效，本次不启用：{rule}（{exc}）")
+        return file_list
+    kept = []
+    for item in file_list:
+        if not isinstance(item, dict):
+            kept.append(item)
+            continue
+        if item.get("dir"):
+            kept.append(item)
+            continue
+        if pattern.search(str(item.get("file_name", "") or "")):
+            kept.append(item)
+    return kept
+
+
+def apply_task_file_filters(file_list, task=None, task_settings=None, apply_keep_regex=True):
+    """
+    先应用全局过滤规则，再应用任务级过滤规则（叠加，不合并字符串），
+    最后应用任务级「正则规则」只保留匹配项（优先级最低：过滤规则先剔除的不再回来）。
 
     Args:
         file_list: 文件列表
-        task: 任务配置，读取 task["filterwords"]
+        task: 任务配置，读取 task["filterwords"] 与 task["keep_regex"]
         task_settings: 全局任务设置；缺省时使用 CONFIG_DATA["task_settings"]
+        apply_keep_regex: 是否应用「正则规则」。本地保存目录的文件列表传 False：
+            正则规则只决定"转存哪些分享文件"，不应影响本地已有文件的重命名。
     """
     settings = task_settings if task_settings is not None else CONFIG_DATA.get("task_settings", {})
     global_fw = (settings or {}).get("filterwords") or ""
@@ -252,7 +293,9 @@ def apply_task_file_filters(file_list, task=None, task_settings=None):
         file_list = advanced_filter_files(file_list, global_fw)
     if task_fw:
         file_list = advanced_filter_files(file_list, task_fw)
-    return file_list
+    if not apply_keep_regex:
+        return file_list
+    return filter_files_by_keep_regex(file_list, (task or {}).get("keep_regex"))
 
 
 def filter_files_by_episode_range(share_file_list, task):
@@ -4761,8 +4804,8 @@ class Quark:
             non_dir_files = [f for f in dir_file_list if not f.get("dir", False)]
             is_empty_dir = len(non_dir_files) == 0
 
-            # 应用过滤词过滤（全局 + 任务级）
-            dir_file_list = apply_task_file_filters(dir_file_list, task)
+            # 应用过滤词过滤（全局 + 任务级）；本地目录列表不套用「正则规则」
+            dir_file_list = apply_task_file_filters(dir_file_list, task, apply_keep_regex=False)
             dir_file_name_list = [item["file_name"] for item in dir_file_list]
 
             # 找出当前最大序号
@@ -5484,8 +5527,8 @@ class Quark:
             # 对本地已有文件进行重命名（即使没有分享链接或处理失败也执行）
             renamed_files = {}
             
-            # 应用过滤词过滤（全局 + 任务级）
-            dir_file_list = apply_task_file_filters(dir_file_list, task)
+            # 应用过滤词过滤（全局 + 任务级）；本地目录列表不套用「正则规则」
+            dir_file_list = apply_task_file_filters(dir_file_list, task, apply_keep_regex=False)
             
             # 使用一个列表收集所有需要重命名的操作（rename_logs 已在分支开头初始化，此处只追加）
             rename_operations = []
@@ -5623,8 +5666,8 @@ class Quark:
             # 获取目录中的文件列表
             dir_file_list = self.ls_dir(self.savepath_fid[savepath])
             
-            # 应用过滤词过滤（全局 + 任务级）
-            dir_file_list = apply_task_file_filters(dir_file_list, task)
+            # 应用过滤词过滤（全局 + 任务级）；本地目录列表不套用「正则规则」
+            dir_file_list = apply_task_file_filters(dir_file_list, task, apply_keep_regex=False)
             
             # 使用一个列表收集所有需要重命名的操作
             rename_operations = []
@@ -5996,6 +6039,8 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
             print(f"全局过滤规则: {global_fw}")
         if task.get("filterwords"):
             print(f"过滤规则: {task['filterwords']}")
+        if task.get("keep_regex"):
+            print(f"正则规则: {task['keep_regex']}")
         # 集数范围（任务级打印一次，避免子目录递归重复打印）
         try:
             _log_range_start = int(task.get("episode_start"))
