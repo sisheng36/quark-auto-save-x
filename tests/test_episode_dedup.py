@@ -219,6 +219,49 @@ def test_intra_batch_dedup():
     )
 
 
+def test_mixed_marker_dir_newest_raw():
+    """
+    回归：目录里「前几集已重命名成带季标记的规范名 + 最新几集仍是原始名（无季标记）」时，
+    无季标记的原始名同集文件不能因为「目录出现过季标记」就被漏掉，否则重复转存。
+
+    对应用户日志（美人余）：目录已有 E01-E14 = 美人余.S01E01-E14.mp4（带季标记），
+    E15/E16 还是 15-4K.mp4 / 16.mp4（无季标记）；
+    新链接里同两集叫 "15 4K.mp4" / "16-4K.mkv" → 必须跳过。
+    """
+    print("\n[10] 回归：规范名+原始名混排目录（seasons 非空）也要认出无季标记的同集文件")
+    task = {
+        "taskname": "美人余",
+        "pattern": "美人余.S01E[]",
+        "replace": "美人余.S01E[]",
+        "episode_naming": "美人余.S01E[]",
+        "use_episode_naming": True,
+        "ignore_extension": True,
+    }
+    mixed_dir = [f"美人余.S01E{ep:02d}.mp4" for ep in range(1, 15)] + ["15-4K.mp4", "16.mp4"]
+
+    check("E01-E14 已重命名 → seasons 非空时 E01 仍跳过", decide(mixed_dir, "01.mp4", task), True)
+    check("新链接 '15 4K.mp4'（无季标记）应跳过", decide(mixed_dir, "15 4K.mp4", task), True)
+    check("新链接 '16-4K.mkv'（无季标记）应跳过", decide(mixed_dir, "16-4K.mkv", task), True)
+    check("目录里的原始名 '15-4K.mp4' 自身也跳过", decide(mixed_dir, "15-4K.mp4", task), True)
+    check("E17 未转存，仍应转存", decide(mixed_dir, "17.mp4", task), False)
+    check("字幕不挡视频：E16.srt 仍应转存", decide(mixed_dir, "16.srt", task), False)
+    check("跨季不误杀：S02E15 应转存", decide(mixed_dir, "美人余.S02E15.mp4", task), False)
+    check("同季精确命中：S01E15 应跳过", decide(mixed_dir, "美人余.S01E15.mp4", task), True)
+
+    # 多季标记目录：与推断季冲突时保持保守（识别不了就不跳过）
+    multi_label_dir = ["美人余.S01E01.mp4", "美人余.S02E01.mp4", "15-4K.mp4"]
+    check(
+        "多季标记目录 + 无季标记分享（季冲突）→ 不误跳，保守转存",
+        decide(multi_label_dir, "15 4K.mp4", task),
+        False,
+    )
+    check(
+        "多季标记目录 + 无季上下文 → 只与无季标记文件比对（命中 → 跳过）",
+        decide(multi_label_dir, "15 4K.mp4", {"taskname": "美人余"}),
+        True,
+    )
+
+
 if __name__ == "__main__":
     test_user_main_scenario()
     test_task_season_context()
@@ -229,5 +272,6 @@ if __name__ == "__main__":
     test_extractors()
     test_index_shape()
     test_intra_batch_dedup()
+    test_mixed_marker_dir_newest_raw()
     print(f"\n结果：{PASSED} 通过, {FAILED} 失败")
     sys.exit(1 if FAILED else 0)

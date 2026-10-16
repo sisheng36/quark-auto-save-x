@@ -1234,8 +1234,10 @@ def is_episode_already_saved(share_filename, existing_index, task=None):
         # 分享文件带季标记：优先精确匹配 (季, 集)
         if _hit(existing_index["se"], (season, episode)):
             return True
-        # 目录全是无季标记命名（单季"第xx集"式目录）时，退化为按集数比对
-        if not existing_index["seasons"]:
+        # 目录里的同集文件可能没有季标记（如 15-4K.mp4、第15集.mp4）。
+        # 只有当目录中的季标记不与本文件的季冲突（目录无季标记，或只有同一季）时，
+        # 才退化为按集数比对；否则保持"识别不了就不跳过"，避免跨季误杀。
+        if existing_index["seasons"] <= {season}:
             return _hit(existing_index["ep"], episode)
         return False
 
@@ -1246,7 +1248,11 @@ def is_episode_already_saved(share_filename, existing_index, task=None):
     if resolved_season is not None:
         if _hit(existing_index["se"], (resolved_season, episode)):
             return True
-        if not existing_index["seasons"]:
+        # 关键：目录中前面几集已被重命名成带季标记的规范名（seasons 非空）时，
+        # 未重命名的原始命名同集文件会落在 ep 桶里。此处若因为"目录出现过季标记"
+        # 就直接返回 False，会漏掉这些同集文件 → 重复转存。
+        # 只有目录季标记与本文件推断的季不冲突时才退化比对。
+        if existing_index["seasons"] <= {resolved_season}:
             return _hit(existing_index["ep"], episode)
         return False
     # 季无法确定（多季目录且无任务上下文）：只与目录中无季标记的文件比对，避免误跳
