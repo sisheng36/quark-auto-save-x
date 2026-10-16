@@ -40,7 +40,7 @@ import random
 import time
 import treelib
 from functools import lru_cache
-from threading import Lock, Thread, Semaphore
+from threading import Lock, Thread, Semaphore, Timer, local as _thread_local
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
@@ -121,6 +121,48 @@ def _get_local_timezone() -> str:
         pass
     return "Asia/Shanghai"
 
+# —— 热路径 DB 复用与播出时间缓存 ——
+# is_episode_aired / _build_episode_local_air_dt 在一次保存或任务列表刷新里会被调用上千次
+# （实测一次保存 1488 次），每次都 new CalendarDB() 会反复建连接，故这里按线程复用一个连接。
+# sqlite 连接不跨线程共享，避免游标与事务互相干扰。
+_TLS_LOCAL = _thread_local()
+_AIR_SCHEDULE_CACHE = {}
+_AIR_SCHEDULE_CACHE_TTL = 60  # 秒；节目级播出时间变更时会主动清理
+
+
+def _get_shared_calendar_db():
+    """按线程复用 CalendarDB 连接（建表/迁移已在进程内只执行一次）。"""
+    db = getattr(_TLS_LOCAL, "calendar_db", None)
+    if db is not None:
+        return db
+    db = CalendarDB()
+    _TLS_LOCAL.calendar_db = db
+    return db
+
+
+def clear_air_schedule_cache():
+    """节目级播出时间（local_air_time / air_date_offset 等）变更后清理缓存。"""
+    _AIR_SCHEDULE_CACHE.clear()
+
+
+def _get_show_air_schedule_cached(tmdb_id, db=None):
+    """带短 TTL 缓存的 get_show_air_schedule：播出时间重排会按节目重复查询同一行。"""
+    try:
+        key = int(tmdb_id)
+    except Exception:
+        return {}
+    now = time.time()
+    cached = _AIR_SCHEDULE_CACHE.get(key)
+    if cached and now - cached[0] < _AIR_SCHEDULE_CACHE_TTL:
+        return cached[1]
+    try:
+        value = (db or _get_shared_calendar_db()).get_show_air_schedule(key) or {}
+    except Exception:
+        value = {}
+    _AIR_SCHEDULE_CACHE[key] = (now, value)
+    return value
+
+
 def is_episode_aired(tmdb_id: int, season_number: int, episode_number: int, now_local_dt) -> bool:
     """
     单集是否已播出判定：
@@ -137,7 +179,7 @@ def is_episode_aired(tmdb_id: int, season_number: int, episode_number: int, now_
 
     # 从数据库获取集的播出时间信息
     try:
-        cal_db = CalendarDB()
+        cal_db = _get_shared_calendar_db()
         cur = cal_db.conn.cursor()
         cur.execute(
             """
@@ -158,12 +200,8 @@ def is_episode_aired(tmdb_id: int, season_number: int, episode_number: int, now_
     if not air_date_local:
         return False
 
-    # 获取节目级播出时间配置
-    schedule = {}
-    try:
-        schedule = CalendarDB().get_show_air_schedule(tmdb_id) or {}
-    except Exception:
-        schedule = {}
+    # 获取节目级播出时间配置（带短 TTL 缓存，避免逐集查库）
+    schedule = _get_show_air_schedule_cached(tmdb_id)
     
     # 优先使用 local_air_time，如果不存在（为空或 None）则使用全局播出集数刷新时间
     local_air_time = (schedule.get("local_air_time") or "").strip() or None
@@ -2138,10 +2176,12 @@ def recompute_show_aired_progress(tmdb_id: int, now_local_dt=None, season_number
             pass
 
 
-def _build_episode_local_air_dt(tmdb_id, air_datetime_local, air_date_local, air_date):
+def _build_episode_local_air_dt(tmdb_id, air_datetime_local, air_date_local, air_date, db=None):
     """
     根据本地播出时间字段和兜底配置生成本地播出 datetime
     返回 (datetime_or_none, used_time_str_or_none)，用于上层判断是否与全局刷新时间重叠
+
+    db: 可复用的 CalendarDB 连接（调用方若已持有则传入，避免每集新建连接）
     """
     try:
         from zoneinfo import ZoneInfo as _ZoneInfo
@@ -2166,11 +2206,7 @@ def _build_episode_local_air_dt(tmdb_id, air_datetime_local, air_date_local, air
     except Exception:
         return None, None
 
-    schedule = {}
-    try:
-        schedule = CalendarDB().get_show_air_schedule(int(tmdb_id)) or {}
-    except Exception:
-        schedule = {}
+    schedule = _get_show_air_schedule_cached(tmdb_id, db)
     perf = config_data.get('performance', {}) if isinstance(config_data, dict) else {}
     fallback_time = (schedule.get("local_air_time") or perf.get("aired_refresh_time") or "00:00").strip()
     try:
@@ -2260,7 +2296,9 @@ def schedule_airtime_based_refresh_jobs(days_back: int = 2, days_forward: int = 
             pass
         
         for tmdb_id, season_number, episode_number, air_dt_local, air_date_local, air_date in rows:
-            target_dt, used_time = _build_episode_local_air_dt(tmdb_id, air_dt_local, air_date_local, air_date)
+            target_dt, used_time = _build_episode_local_air_dt(
+                tmdb_id, air_dt_local, air_date_local, air_date, db=cal_db
+            )
             if not target_dt:
                 continue
             # 若使用的播出时间与全局刷新时间相同，则交由全局任务处理，避免重复调度
@@ -2466,6 +2504,39 @@ def invalidate_task_display_cache(reason='', task_name=None, save_path=None, tmd
         db.close()
     except Exception as e:
         logging.debug(f'失效任务列表展示快照失败 reason={reason}: {e}')
+
+# 上次通过 /update 保存进来的任务列表指纹（只取决于客户端提交的数据，
+# 不受服务端元数据增强影响），用于判断本次保存是否真的改了任务数据
+_LAST_SAVED_TASKLIST_SIGNATURE = None
+
+
+def _tasklist_signature(tasks):
+    """任务列表的轻量指纹。
+
+    保存配置时用它判断「任务数据是否真的变了」：没变就不清日历/任务列表缓存，
+    避免每次点保存都把前端逼到 3~4 秒的冷启动路径。
+    """
+    try:
+        items = []
+        for t in tasks or []:
+            t = t or {}
+            cal = t.get('calendar_info') or {}
+            match = cal.get('match') or {}
+            extracted = cal.get('extracted') or {}
+            items.append((
+                t.get('taskname') or t.get('task_name') or '',
+                t.get('savepath') or '',
+                t.get('shareurl') or '',
+                t.get('content_type') or '',
+                match.get('tmdb_id'),
+                match.get('latest_season_number'),
+                extracted.get('content_type') or '',
+                bool(t.get('skip_calendar')),
+            ))
+        return hashlib.md5(json.dumps(items, ensure_ascii=False, sort_keys=True).encode('utf-8')).hexdigest()
+    except Exception:
+        return None
+
 
 def notify_calendar_changed(reason: str = ""):
     try:
@@ -3205,6 +3276,14 @@ def update():
     global config_data
     if not is_login():
         return jsonify({"success": False, "message": "未登录"})
+    # 只比较"客户端提交的任务数据"：只有用户真的改了任务才清缓存，
+    # 服务端补元数据造成的差异不会误判（否则每次保存前端刷新都会走冷启动）
+    global _LAST_SAVED_TASKLIST_SIGNATURE
+    try:
+        _incoming_tasks = request.json.get("tasklist")
+    except Exception:
+        _incoming_tasks = None
+    incoming_tasklist_signature = _tasklist_signature(_incoming_tasks) if _incoming_tasks is not None else None
     # 保存前先记录旧任务名与其 tmdb 绑定，用于自动清理
     old_tasks = config_data.get("tasklist", [])
     old_task_map = {}
@@ -3296,6 +3375,8 @@ def update():
 
     import threading
     def _post_update_tasks(old_task_map_snapshot, prev_tmdb_value, new_tmdb_value, old_poster_lang, old_aired_refresh_time_value, prev_trakt_client_id_value, new_trakt_client_id_value):
+        # 记录本次保存是否真的产生了数据变更（决定要不要清日历缓存）
+        changed_in_thread = False
         # 检查海报语言设置是否改变
         new_poster_language = config_data.get('poster_language', 'zh-CN')
         if old_poster_lang != new_poster_language:
@@ -3304,6 +3385,7 @@ def update():
                 clear_all_posters()
                 # 重新下载所有海报
                 redownload_all_posters()
+                changed_in_thread = True
             except Exception as e:
                 logging.error(f"重新下载海报失败: {e}")
         
@@ -3314,27 +3396,30 @@ def update():
             try:
                 # 立即重新计算所有已播出集数，使用新的刷新时间设置
                 recompute_all_seasons_aired_daily()
+                changed_in_thread = True
                 # 通知前端日历数据已更新
                 notify_calendar_changed('aired_refresh_time_changed')
                 logging.info(f"播出集数刷新时间已更改 ({old_aired_refresh_time_value} -> {new_aired_refresh_time})，已重新计算已播出集数")
             except Exception as e:
                 logging.warning(f"重新计算已播出集数失败: {e}")
         
-        # 在保存配置时自动进行任务信息提取与TMDB匹配（若缺失则补齐）
+        # 保存配置后补任务元数据：延后几秒再跑，避免和保存响应、前端刷任务列表抢资源
         try:
-            changed = ensure_calendar_info_for_tasks()
+            schedule_calendar_info_ensure('config_updated')
         except Exception as e:
-            logging.warning(f"ensure_calendar_info_for_tasks 发生异常: {e}")
+            logging.warning(f"调度日历元数据补全失败: {e}")
 
         # 在清理逻辑之前，先同步数据库绑定关系到任务配置
         try:
-            sync_task_config_with_database_bindings()
+            if sync_task_config_with_database_bindings():
+                changed_in_thread = True
         except Exception as e:
             logging.warning(f"同步任务配置失败: {e}")
         
         # 同步内容类型数据
         try:
-            sync_content_type_between_config_and_database()
+            if sync_content_type_between_config_and_database():
+                changed_in_thread = True
         except Exception as e:
             logging.warning(f"同步内容类型失败: {e}")
 
@@ -3356,6 +3441,7 @@ def update():
                     tid = info.get('tmdb_id')
                     if tid:
                         purge_calendar_by_tmdb_id_internal(int(tid))
+                        changed_in_thread = True
             # 绑定变更：旧与新 tmdb_id 不同，清理旧的
             for name, info in (old_task_map_snapshot or {}).items():
                 if name in current_map:
@@ -3363,6 +3449,7 @@ def update():
                     new_tid = current_map[name].get('tmdb_id')
                     if old_tid and old_tid != new_tid:
                         purge_calendar_by_tmdb_id_internal(int(old_tid))
+                        changed_in_thread = True
         except Exception as e:
             logging.warning(f"自动清理本地日历缓存失败: {e}")
 
@@ -3386,7 +3473,8 @@ def update():
                         pass
             try:
                 from app.sdk.db import CalendarDB as _CalDB
-                _CalDB().cleanup_orphan_data(valid_pairs, valid_names)
+                if _CalDB().cleanup_orphan_data(valid_pairs, valid_names):
+                    changed_in_thread = True
                 # 清理孤立数据后，也清理可能残留的孤立海报文件
                 try:
                     cleanup_orphaned_posters()
@@ -3398,11 +3486,15 @@ def update():
             logging.warning(f"自动清理孤儿季与指标失败: {e}")
 
 
-        # 清除所有追剧日历缓存，确保下次请求获取最新数据
-        try:
-            clear_all_calendar_cache()
-        except Exception as e:
-            logging.debug(f"清除缓存失败（不影响功能）: {e}")
+        # 只有本次保存真的改动了数据才清缓存；没有变化时保持缓存热态，
+        # 前端保存后的任务列表刷新就不必再走一次 3~4 秒的冷启动
+        if changed_in_thread:
+            try:
+                clear_all_calendar_cache()
+            except Exception as e:
+                logging.debug(f"清除缓存失败（不影响功能）: {e}")
+        else:
+            logging.debug("本次保存未产生日历数据变更，跳过缓存清理")
 
         # 根据最新性能配置重启自动刷新任务
         try:
@@ -3469,9 +3561,15 @@ def update():
     session["token"] = get_login_token()
     # 重新加载任务
     if reload_tasks():
-        # 通知前端任务数据已更新，触发内容管理页面热更新
+        # 通知前端热更新：任务数据有变化才清日历/任务列表缓存，
+        # 没变化时只推送轻量通知（避免每次保存都把前端打进冷启动）
         try:
-            notify_calendar_changed('task_updated')
+            tasklist_changed = (
+                incoming_tasklist_signature is None
+                or incoming_tasklist_signature != _LAST_SAVED_TASKLIST_SIGNATURE
+            )
+            notify_calendar_changed('task_updated' if tasklist_changed else 'config_saved')
+            _LAST_SAVED_TASKLIST_SIGNATURE = incoming_tasklist_signature
         except Exception:
             pass
         
@@ -4037,10 +4135,107 @@ def sync_task_config_with_database_bindings() -> bool:
         logging.debug(f"TMDB 匹配信息同步失败: {e}")
         return False
 
-def ensure_calendar_info_for_tasks() -> bool:
+# —— 日历元数据补全：延后 + 单飞 + 限流 ——
+# 保存配置后补 TMDB 匹配是纯后台工作，没必要和「保存响应 + 前端刷任务列表」抢资源：
+# 延后几秒再跑、同一时刻只跑一个、单次有时间/请求预算；失败的任务短期不再重试。
+_CALENDAR_ENSURE_LOCK = Lock()
+_CALENDAR_ENSURE_TIMER = None
+_CALENDAR_ENSURE_RUNNING = False
+_CALENDAR_ENSURE_PENDING = False
+_CALENDAR_ENSURE_DELAY_SECONDS = 6
+_CALENDAR_ENSURE_BUDGET_SECONDS = 25
+_CALENDAR_ENSURE_MAX_NETWORK_TASKS = 30
+_MATCH_RETRY_BLOCK = {}
+_MATCH_RETRY_BLOCK_SECONDS = 6 * 3600
+
+
+def _match_retry_key(task):
+    cal = (task or {}).get('calendar_info') or {}
+    extracted = cal.get('extracted') or {}
+    return (
+        (task or {}).get('taskname') or (task or {}).get('task_name') or '',
+        (task or {}).get('savepath') or '',
+        extracted.get('show_name') or '',
+    )
+
+
+def _match_retry_blocked(task, force=False):
+    """拉取失败的任务在冷却期内不再重复请求 TMDB（原来每次保存都会重试一遍）。"""
+    if force:
+        return False
+    expire = _MATCH_RETRY_BLOCK.get(_match_retry_key(task))
+    return bool(expire and expire > time.time())
+
+
+def _mark_match_retry(task, failed):
+    key = _match_retry_key(task)
+    if failed:
+        _MATCH_RETRY_BLOCK[key] = time.time() + _MATCH_RETRY_BLOCK_SECONDS
+    else:
+        _MATCH_RETRY_BLOCK.pop(key, None)
+
+
+def schedule_calendar_info_ensure(reason='update', delay=None):
+    """延后 + 单飞地执行日历元数据补全；重复调用只会排队一次。
+
+    Returns:
+        bool: 本次是否成功排队（已有任务在跑或已排队时返回 False）
+    """
+    global _CALENDAR_ENSURE_TIMER, _CALENDAR_ENSURE_PENDING, _CALENDAR_ENSURE_RUNNING
+    wait = _CALENDAR_ENSURE_DELAY_SECONDS if delay is None else delay
+    with _CALENDAR_ENSURE_LOCK:
+        if _CALENDAR_ENSURE_RUNNING:
+            _CALENDAR_ENSURE_PENDING = True
+            return False
+        if _CALENDAR_ENSURE_TIMER is not None:
+            return False
+
+        def _fire():
+            global _CALENDAR_ENSURE_TIMER, _CALENDAR_ENSURE_PENDING, _CALENDAR_ENSURE_RUNNING
+            with _CALENDAR_ENSURE_LOCK:
+                _CALENDAR_ENSURE_TIMER = None
+                _CALENDAR_ENSURE_RUNNING = True
+            try:
+                ensure_calendar_info_for_tasks(
+                    budget_seconds=_CALENDAR_ENSURE_BUDGET_SECONDS,
+                    max_network_tasks=_CALENDAR_ENSURE_MAX_NETWORK_TASKS,
+                )
+            except Exception as e:
+                logging.warning(f"日历元数据补全失败({reason}): {e}")
+            finally:
+                with _CALENDAR_ENSURE_LOCK:
+                    _CALENDAR_ENSURE_RUNNING = False
+                    rerun = _CALENDAR_ENSURE_PENDING
+                    _CALENDAR_ENSURE_PENDING = False
+            if rerun:
+                schedule_calendar_info_ensure(reason=f'{reason}-rerun')
+
+        timer = Timer(wait, _fire)
+        timer.daemon = True
+        _CALENDAR_ENSURE_TIMER = timer
+        timer.start()
+        return True
+
+
+def _calendar_ensure_budget_exhausted(deadline, network_used, max_network_tasks):
+    """单次元数据补全是否已超出时间/请求预算（超出则本轮停止，剩余任务下次继续）。"""
+    if deadline and time.time() > deadline:
+        logging.info("日历元数据补全达到时间预算，剩余任务下次继续")
+        return True
+    if max_network_tasks is not None and network_used >= max_network_tasks:
+        logging.info("日历元数据补全达到单次请求预算，剩余任务下次继续")
+        return True
+    return False
+
+
+def ensure_calendar_info_for_tasks(force: bool = False, budget_seconds=None, max_network_tasks=None) -> bool:
     """为所有任务确保存在 calendar_info.extracted 与 calendar_info.match 信息。
     - extracted: 从任务保存路径/名称提取的剧名、年份、类型（只在缺失时提取）
     - match: 使用 TMDB 进行匹配（只在缺失时匹配）
+
+    force: 忽略「已匹配 / 冷却期」限制做全量刷新（bootstrap、手动刷新元数据用）
+    budget_seconds: 单次运行的时间预算（None = 不限制），到点即停、剩余任务下次继续
+    max_network_tasks: 单次运行最多处理多少个需要联网（TMDB）的任务
     """
     tasks = config_data.get('tasklist', [])
     if not tasks:
@@ -4056,6 +4251,9 @@ def ensure_calendar_info_for_tasks() -> bool:
     # 简单去重缓存，避免同一名称/年份重复请求 TMDB
     search_cache = {}
     details_cache = {}
+    # 单次运行的预算：到点或超出请求数就停，剩余任务留给下一次（避免一次后台补全跑几分钟）
+    deadline = (time.time() + budget_seconds) if budget_seconds else None
+    network_used = 0
     for task in tasks:
         # 跳过标记为无需参与日历匹配的任务
         if task.get('skip_calendar') is True:
@@ -4090,10 +4288,26 @@ def ensure_calendar_info_for_tasks() -> bool:
             task['calendar_info'] = cal
 
             if tmdb_service and movie_name:
-                if movie_db is None:
-                    movie_db = CalendarDB()
-                if process_movie_task_async(task, tmdb_service, movie_db):
-                    changed = True
+                # 已匹配的电影不再每次保存都重跑 TMDB（一次保存 54 部电影 ≈ 60 秒）；
+                # 只有缺匹配或显式 force 时才请求，并遵守冷却期与单次预算。
+                movie_match = (cal.get('match') or {}).get('tmdb_id')
+                if force or not movie_match:
+                    if _match_retry_blocked(task, force):
+                        continue
+                    if _calendar_ensure_budget_exhausted(deadline, network_used, max_network_tasks):
+                        break
+                    network_used += 1
+                    if movie_db is None:
+                        movie_db = CalendarDB()
+                    try:
+                        ok = process_movie_task_async(task, tmdb_service, movie_db)
+                    except Exception as e:
+                        ok = False
+                        logging.warning(f"电影元数据补全失败: task={task_name}, err={e}")
+                    matched_now = bool(((task.get('calendar_info') or {}).get('match') or {}).get('tmdb_id'))
+                    _mark_match_retry(task, failed=not matched_now)
+                    if ok:
+                        changed = True
             continue
 
         # 提取 extracted（仅在缺失时）
@@ -4115,9 +4329,13 @@ def ensure_calendar_info_for_tasks() -> bool:
             cal['extracted'] = extracted
             changed = True
 
-        # 匹配 TMDB（仅在缺失时）
+        # 匹配 TMDB（仅在缺失时）；命中冷却期或超出单次预算则跳过，剩余任务下次继续
         match = cal.get('match') or {}
-        if tmdb_service and not match.get('tmdb_id') and extracted.get('show_name'):
+        if (tmdb_service and not match.get('tmdb_id') and extracted.get('show_name')
+                and not _match_retry_blocked(task, force)):
+            if _calendar_ensure_budget_exhausted(deadline, network_used, max_network_tasks):
+                break
+            network_used += 1
             try:
                 key = (extracted.get('show_name') or '', extracted.get('year') or '')
                 if key in search_cache:
@@ -4148,6 +4366,7 @@ def ensure_calendar_info_for_tasks() -> bool:
                         'latest_season_fetch_url': f"/tv/{tmdb_id}/season/{latest_season_number}",
                     }
                     changed = True
+                    _mark_match_retry(task, failed=False)
                 else:
                     # 未匹配到任何 TMDB 节目时，将类型矫正为 other
                     # 但如果用户手动设置了类型（user_manual_content_type），则保留用户设置，不进行自动矫正
@@ -4157,9 +4376,9 @@ def ensure_calendar_info_for_tasks() -> bool:
                         cal['extracted'] = extracted
                         task['content_type'] = 'other'
                         changed = True
-                        # 清除缓存，确保前端能获取到最新的类型信息
-                        clear_calendar_tasks_cache()
+                    _mark_match_retry(task, failed=True)
             except Exception as e:
+                _mark_match_retry(task, failed=True)
                 logging.warning(f"TMDB 匹配失败: task={task_name}, err={e}")
 
         if cal and task.get('calendar_info') != cal:
@@ -7329,7 +7548,8 @@ def get_calendar_tasks():
             for task in (config_data.get('tasklist', []) or [])
         )
         if legacy_movie_tasks:
-            ensure_calendar_info_for_tasks()
+            # 请求线程不做全量 TMDB 补全（会阻塞几十秒），交给后台延后执行
+            schedule_calendar_info_ensure('legacy_movie_tasks')
 
         # 检查缓存是否有效
         current_time = time.time()
@@ -8362,6 +8582,7 @@ def process_single_task_async(task, tmdb_service, cal_db):
                                                 air_time_source=airtime.get("aired_time") or "",
                                                 air_timezone=airtime.get("timezone") or "",
                                             )
+                                            clear_air_schedule_cache()  # 播出时间已变更，失效缓存
                                             logging.debug(f"成功写入播出时间到数据库 tmdb_id={tmdb_id}")
                                         except Exception as _db_err:
                                             logging.warning(f"写入播出时间到数据库失败 tmdb_id={tmdb_id}: {_db_err}")
@@ -8407,7 +8628,8 @@ def process_single_task_async(task, tmdb_service, cal_db):
 def do_calendar_bootstrap() -> tuple:
     """内部方法：执行日历初始化。返回 (success: bool, message: str)"""
     try:
-        ensure_calendar_info_for_tasks()
+        # 显式初始化：全量刷新（忽略冷却期与预算）
+        ensure_calendar_info_for_tasks(force=True)
 
         tmdb_api_key = config_data.get('tmdb_api_key', '')
         if not tmdb_api_key:
@@ -8711,6 +8933,7 @@ def update_episodes_air_date_local(cal_db: CalendarDB, tmdb_id: int, season_numb
                         int(tmdb_id),
                         air_date_offset=date_offset
                     )
+                    clear_air_schedule_cache()  # 播出时间已变更，失效缓存
                 except Exception as _offset_err:
                     logging.debug(f"存储日期偏移失败 tmdb_id={tmdb_id}: {_offset_err}")
         except Exception as _e_batch:
@@ -8773,6 +8996,7 @@ def sync_trakt_airtime_for_all_shows():
                     air_time_source=airtime.get("aired_time") or "",
                     air_timezone=airtime.get("timezone") or "",
                 )
+                clear_air_schedule_cache()  # 播出时间已变更，失效缓存
 
                 # 同步已有集的本地播出日期
                 try:
@@ -9930,6 +10154,7 @@ def calendar_edit_metadata():
                             air_date_offset=air_date_offset,
                             air_date_offset_manually_set=True if should_mark_manually_set else None,
                         )
+                        clear_air_schedule_cache()  # 播出时间已变更，失效缓存
                         # 如果日期偏移发生变化，重新计算所有集的 air_date_local
                         if air_date_offset != old_offset:
                             try:

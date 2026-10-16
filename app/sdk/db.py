@@ -2,10 +2,35 @@ import os
 import json
 import sqlite3
 import time
+import threading
 import re
 from datetime import datetime
 from functools import wraps
 
+
+
+# 建表/迁移（DDL）每进程每库只执行一次的登记表。
+# 保存配置、任务列表等热路径会反复 new RecordDB()/CalendarDB()（实测一次保存上千次），
+# 每次都跑一遍建表语句 + 字段迁移会带来秒级开销，因此 DDL 只做一次。
+# key = (类名, 绝对路径, 文件 inode)：数据库文件被替换/重建（inode 变化）时会重新建表。
+_SCHEMA_READY = {}
+_SCHEMA_READY_LOCK = threading.Lock()
+
+
+def _schema_key(instance, db_path):
+    try:
+        inode = os.stat(db_path).st_ino
+    except OSError:
+        inode = None
+    return (type(instance).__qualname__, os.path.abspath(db_path), inode)
+
+
+def _schema_is_ready(instance, db_path):
+    return _schema_key(instance, db_path) in _SCHEMA_READY
+
+
+def _mark_schema_ready(instance, db_path):
+    _SCHEMA_READY[_schema_key(instance, db_path)] = True
 
 def normalize_save_path(path):
     """规范化任务保存路径，避免前导/重复/尾部斜杠造成任务串计。"""
@@ -91,22 +116,29 @@ class RecordDB:
         self.init_db()
     
     def init_db(self):
-        # 确保目录存在
+        # 连接与 PRAGMA 每次都要执行
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
         # 创建数据库连接，设置超时时间为5秒
         self.conn = sqlite3.connect(
-            self.db_path, 
+            self.db_path,
             check_same_thread=False,
             timeout=5.0
         )
         cursor = self.conn.cursor()
-        
-        # 启用 WAL 模式，提高并发性能
-        cursor.execute('PRAGMA journal_mode=WAL')
-        cursor.execute('PRAGMA synchronous=NORMAL')  # 平衡性能和安全性
+        cursor.execute('PRAGMA synchronous=NORMAL')  # 每连接设置，开销极小
         cursor.execute('PRAGMA busy_timeout=5000')  # 设置忙等待超时为5秒
-        
+        # 建表/迁移只做一次：热路径会 new 上千次 DB 对象，重复跑 DDL 会带来秒级开销
+        if _schema_is_ready(self, self.db_path):
+            return
+        with _SCHEMA_READY_LOCK:
+            if _schema_is_ready(self, self.db_path):
+                return
+            cursor.execute('PRAGMA journal_mode=WAL')  # 库级设置，只需一次
+            self._init_db_schema(cursor)
+            self.conn.commit()
+            _mark_schema_ready(self, self.db_path)
+
+    def _init_db_schema(self, cursor):
         # 创建表，如果不存在
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS transfer_records (
@@ -130,9 +162,6 @@ class RecordDB:
         columns = [column[1] for column in cursor.fetchall()]
         if 'save_path' not in columns:
             cursor.execute('ALTER TABLE transfer_records ADD COLUMN save_path TEXT')
-            
-        self.conn.commit()
-    
     def close(self):
         if self.conn:
             try:
@@ -400,20 +429,29 @@ class CalendarDB:
         self.init_db()
 
     def init_db(self):
+        # 连接与 PRAGMA 每次都要执行
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         # 创建数据库连接，设置超时时间为5秒
         self.conn = sqlite3.connect(
-            self.db_path, 
+            self.db_path,
             check_same_thread=False,
             timeout=5.0
         )
         cursor = self.conn.cursor()
-        
-        # 启用 WAL 模式，提高并发性能
-        cursor.execute('PRAGMA journal_mode=WAL')
-        cursor.execute('PRAGMA synchronous=NORMAL')  # 平衡性能和安全性
+        cursor.execute('PRAGMA synchronous=NORMAL')  # 每连接设置，开销极小
         cursor.execute('PRAGMA busy_timeout=5000')  # 设置忙等待超时为5秒
+        # 建表/迁移只做一次：热路径会 new 上千次 DB 对象，重复跑 DDL 会带来秒级开销
+        if _schema_is_ready(self, self.db_path):
+            return
+        with _SCHEMA_READY_LOCK:
+            if _schema_is_ready(self, self.db_path):
+                return
+            cursor.execute('PRAGMA journal_mode=WAL')  # 库级设置，只需一次
+            self._init_db_schema(cursor)
+            self.conn.commit()
+            _mark_schema_ready(self, self.db_path)
 
+    def _init_db_schema(self, cursor):
         # shows
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS shows (
@@ -656,9 +694,6 @@ class CalendarDB:
             value TEXT
         )
         ''')
-
-        self.conn.commit()
-
     def close(self):
         if self.conn:
             try:
