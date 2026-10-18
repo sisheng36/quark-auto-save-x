@@ -401,7 +401,6 @@ python3 -m http.server 4173
 ## 版权
 
 - **原项目**：Copyright (C) Cp0204 - [Cp0204/quark-auto-save](https://github.com/Cp0204/quark-auto-save)
-- **本项目**：Copyright (C) 2025-2026 x1ao4 - [x1ao4/quark-auto-save-x](https://github.com/x1ao4/quark-auto-save-x)
 
 本项目基于 [Cp0204/quark-auto-save:0.5.3.1](https://github.com/Cp0204/quark-auto-save/releases/tag/v0.5.3.1) 进行二次开发，包含大量功能扩展与代码重构，新增和修改部分的版权归 x1ao4 所有。
 
@@ -411,14 +410,4 @@ python3 -m http.server 4173
 
 ## 致谢
 
-本项目基于 [Cp0204/quark-auto-save:0.5.3.1](https://github.com/Cp0204/quark-auto-save/releases/tag/v0.5.3.1) 进行二次开发，感谢 [Cp0204](https://github.com/Cp0204) 的开源贡献。
-
-## 交流
-
-你可以凭借赞赏（金额不限）截图加入 QASX 的微信交流群（我的微信 x1ao-4，备注 QASX），讨论与 QASX 相关的话题，领取与夸克网盘相关的福利。该群主要用于交流 QASX 相关话题与经验分享，我也会在时间和精力允许的情况下参与讨论，适当解答一些问题。
-
-## 赞赏
-
-如果你觉得这个项目对你有用，可以考虑请我喝杯咖啡或者给我一个⭐️。谢谢你的支持！
-
-<img width="383" alt="赞赏" src="https://github.com/user-attachments/assets/bdd2226b-6282-439d-be92-5311b6e9d29c">
+本项目基于 [Cp0204/quark-auto-save:0.5.3.1](https://github.com/Cp0204/quark-auto-save/releases/tag/v0.5.3.1) \x1ao4 - [x1ao4/quark-auto-save-x](https://github.com/x1ao4/quark-auto-save-x)进行二次开发，感谢 [Cp0204](https://github.com/Cp0204) 的开源贡献。
