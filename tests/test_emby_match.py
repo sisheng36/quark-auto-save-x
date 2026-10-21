@@ -226,6 +226,88 @@ def test_tmdb_id_path():
     check("tmdb id 匹配名", by_id.get("matched_name"), "末日地堡")
 
 
+def test_imdb_id_path():
+    print("\n[9] IMDb ID 路径（豆瓣与 TMDB 译名不一致）")
+    # 豆瓣叫「沙丘2」，Emby/TMDB 里叫「沙丘：第二部」，只有 IMDb 一致
+    library = [movie_item(
+        name="沙丘：第二部", original_title="Dune: Part Two",
+        year="2024", provider_tmdb="693134", provider_imdb="tt15239678",
+    )]
+    by_imdb = match_one(library, {
+        "title": "沙丘2",
+        "year": "2024",
+        "imdb_id": "tt15239678",
+        "content_type": "movie",
+        "media_type": "movie",
+    })
+    check("译名不同但 IMDb 一致 → 已入库", by_imdb.get("in_library"), True)
+    check("IMDb 命中方式", by_imdb.get("match_by"), "imdb")
+    check("IMDb 命中名称", by_imdb.get("matched_name"), "沙丘：第二部")
+
+    # IMDb 大小写/前后空格应被规范化
+    loose = match_one(library, {
+        "title": "沙丘2", "year": "2024",
+        "imdb_id": " TT15239678 ", "content_type": "movie",
+    })
+    check("IMDb 大小写与空格规范化", loose.get("in_library"), True)
+
+    # 豆瓣没有 IMDb 时回落到标题匹配
+    fallback = match_one(library, {
+        "title": "沙丘：第二部", "year": "2024", "content_type": "movie",
+    })
+    check("无 IMDb 回落标题匹配", fallback.get("in_library"), True)
+    check("标题命中方式", fallback.get("match_by"), "title")
+
+
+def test_imdb_conflict():
+    print("\n[10] 同名不同片：IMDb 冲突时不能误判已入库")
+    library = [movie_item(
+        name="沙丘", original_title="Dune",
+        year="1984", provider_imdb="tt0087182",
+    )]
+    conflict = match_one(library, {
+        "title": "沙丘", "year": "1984",
+        "imdb_id": "tt1160419",   # 2021 版
+        "content_type": "movie",
+    })
+    check("IMDb 不同 → 未入库", conflict.get("in_library"), False)
+
+    # Emby 侧没有 IMDb 时，标题命中仍然算已入库（不能因为缺信息就误报红）
+    library_no_imdb = [movie_item(name="沙丘", original_title="Dune", year="1984", provider_imdb="")]
+    allowed = match_one(library_no_imdb, {
+        "title": "沙丘", "year": "1984", "imdb_id": "tt1160419", "content_type": "movie",
+    })
+    check("Emby 无 IMDb → 标题命中已入库", allowed.get("in_library"), True)
+
+
+def test_imdb_tv_season():
+    print("\n[11] 剧集 IMDb 命中后仍比对季数")
+    library = [silo_series(provider_imdb="tt14688458")]
+    s3 = match_one(library, {
+        "title": "末日地堡 第三季", "year": "2025",
+        "imdb_id": "tt14688458", "content_type": "tv",
+    })
+    check("IMDb 命中 + 第三季在库", s3.get("in_library"), True)
+    check("IMDb 命中季列表", s3.get("seasons"), "1,2,3")
+
+    s5 = match_one(library, {
+        "title": "末日地堡 第五季", "year": "2027",
+        "imdb_id": "tt14688458", "content_type": "tv",
+    })
+    check("IMDb 命中但第五季未入库", s5.get("in_library"), False)
+
+    # 剧集类型偏好：Series 优先于同 IMDb 的 Movie 条目
+    mixed = [movie_item(provider_imdb="tt14688458"), silo_series(provider_imdb="tt14688458")]
+    tv_hit = match_one(mixed, {
+        "title": "末日地堡", "year": "2023", "imdb_id": "tt14688458", "content_type": "tv",
+    })
+    check("剧集命中 Series 而非 Movie", tv_hit.get("matched_name"), "末日地堡")
+    movie_hit = match_one(mixed, {
+        "title": "末日地堡", "year": "2023", "imdb_id": "tt14688458", "content_type": "movie",
+    })
+    check("电影命中 Movie", movie_hit.get("matched_name"), "沙丘")
+
+
 if __name__ == "__main__":
     test_split_season_suffix()
     test_chinese_numeral()
@@ -235,5 +317,8 @@ if __name__ == "__main__":
     test_exact_season_named_series()
     test_movie_not_stripped()
     test_tmdb_id_path()
+    test_imdb_id_path()
+    test_imdb_conflict()
+    test_imdb_tv_season()
     print(f"\n结果: {PASSED} 通过, {FAILED} 失败")
     sys.exit(1 if FAILED else 0)

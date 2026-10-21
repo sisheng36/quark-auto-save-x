@@ -687,6 +687,23 @@ class CalendarDB:
         )
         ''')
 
+        # 豆瓣条目 IMDb 缓存（影视发现页按豆瓣 subject id 查 IMDb ID，用于入库比对）
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS douban_imdb_cache (
+            subject_id TEXT PRIMARY KEY,
+            title TEXT,
+            year TEXT,
+            imdb_id TEXT,
+            is_tv INTEGER DEFAULT 0,
+            status TEXT,
+            last_updated INTEGER
+        )
+        ''')
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_douban_imdb_cache_imdb
+        ON douban_imdb_cache (imdb_id)
+        ''')
+
         # 日历任务级元数据（例如上次全量 TMDB 刷新时间）
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS calendar_meta (
@@ -1848,4 +1865,65 @@ class CalendarDB:
         """获取 Emby 媒体条目数量"""
         cursor = self.conn.cursor()
         cursor.execute('SELECT COUNT(*) FROM emby_items')
+        return cursor.fetchone()[0]
+
+    # ==================== douban_imdb_cache ====================
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_douban_imdb_cache(self, items: list):
+        """批量写入豆瓣 IMDb 缓存，items 为 dict 列表"""
+        if not items:
+            return
+        cursor = self.conn.cursor()
+        rows = [(
+            str(it.get('subject_id', '') or ''),
+            it.get('title', '') or '',
+            str(it.get('year', '') or ''),
+            it.get('imdb_id', '') or '',
+            1 if it.get('is_tv') else 0,
+            it.get('status', '') or '',
+            int(it.get('last_updated', 0) or 0),
+        ) for it in items if str(it.get('subject_id', '') or '').strip()]
+        if not rows:
+            return
+        cursor.executemany('''
+        INSERT INTO douban_imdb_cache (subject_id, title, year, imdb_id, is_tv, status, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(subject_id) DO UPDATE SET
+            title=excluded.title,
+            year=excluded.year,
+            imdb_id=excluded.imdb_id,
+            is_tv=excluded.is_tv,
+            status=excluded.status,
+            last_updated=excluded.last_updated
+        ''', rows)
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_douban_imdb_cache(self, subject_ids: list):
+        """按豆瓣 subject id 批量取缓存，返回 {subject_id: row_dict}"""
+        ids = [str(s).strip() for s in (subject_ids or []) if str(s).strip()]
+        if not ids:
+            return {}
+        cursor = self.conn.cursor()
+        result = {}
+        # SQLite 变量上限通常为 999，分批查询
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            placeholders = ','.join('?' for _ in chunk)
+            cursor.execute(
+                f'SELECT * FROM douban_imdb_cache WHERE subject_id IN ({placeholders})',
+                chunk
+            )
+            columns = [description[0] for description in cursor.description]
+            for row in cursor.fetchall():
+                record = dict(zip(columns, row))
+                result[str(record.get('subject_id'))] = record
+        return result
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_douban_imdb_cache_count(self):
+        """获取豆瓣 IMDb 缓存条目数量"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM douban_imdb_cache')
         return cursor.fetchone()[0]

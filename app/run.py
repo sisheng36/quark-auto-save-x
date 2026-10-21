@@ -65,7 +65,7 @@ from quark_auto_save import (
 )
 
 # 导入豆瓣服务
-from sdk.douban_service import douban_service
+from sdk.douban_service import douban_service, DoubanService
 
 # 导入追剧日历相关模块
 from utils.task_extractor import TaskExtractor
@@ -11939,6 +11939,33 @@ def proxy_douban_image():
 
 # ==================== Emby 媒体库联动 API ====================
 
+def _attach_douban_imdb_ids(item_list, cal_db):
+    """给豆瓣榜单卡补上 IMDb ID（带缓存），供 Emby 入库比对绕开译名差异。"""
+    entries = []
+    for item in item_list or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get('tmdb_id'):
+            # TMDB 卡片本身就有精确 ID，不需要再查豆瓣
+            continue
+        subject_id = DoubanService._subject_id_of(item)
+        if not subject_id:
+            continue
+        entries.append({
+            'id': subject_id,
+            'title': item.get('title', ''),
+            'year': item.get('year', ''),
+            'is_tv': not EmbyService._is_movie_item(item),
+        })
+    if not entries:
+        return {}
+    try:
+        return douban_service.resolve_imdb_ids(entries, cal_db)
+    except Exception as e:
+        logging.warning(f"补全豆瓣 IMDb ID 失败: {e}")
+        return {}
+
+
 @app.route("/api/emby/check_items", methods=["POST"])
 def emby_check_items():
     """批量检查影视发现页 items 在 Emby 媒体库中的入库状态"""
@@ -11954,6 +11981,16 @@ def emby_check_items():
             return jsonify({'success': True, 'data': {'status_map': {}, 'configured': False}})
         cal_db = CalendarDB()
         try:
+            # 豆瓣卡先补 IMDb ID，再交给匹配器做 IMDb 优先比对
+            imdb_map = _attach_douban_imdb_ids(item_list, cal_db)
+            if imdb_map:
+                for item in item_list:
+                    if not isinstance(item, dict):
+                        continue
+                    subject_id = DoubanService._subject_id_of(item)
+                    info = imdb_map.get(subject_id) if subject_id else None
+                    if info and info.get('imdb_id'):
+                        item['imdb_id'] = info['imdb_id']
             status_map = emby_svc.match_items(item_list, cal_db)
         finally:
             try:
@@ -12008,6 +12045,42 @@ def emby_cache_status():
         return jsonify({'success': True, 'data': {'configured': configured, 'count': count}})
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route("/api/douban/imdb_map", methods=["POST"])
+def douban_imdb_map():
+    """为豆瓣条目批量解析 IMDb ID（带本地缓存），供入库比对使用。
+
+    请求体: {"items": [{id, title, year, is_tv}, ...]}
+    返回: {"success": true, "data": {"imdb_map": {subject_id: {imdb_id, status, cached}}}}
+    """
+    if not is_login():
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    try:
+        payload = request.get_json(silent=True) or {}
+        entries = payload.get('items', []) if isinstance(payload, dict) else payload
+        if not isinstance(entries, list) or not entries:
+            return jsonify({'success': True, 'data': {'imdb_map': {}}})
+        # 单次最多解析 60 条，避免请求体过大
+        entries = [e for e in entries if isinstance(e, dict)][:60]
+        try:
+            max_fetch = int(payload.get('max_fetch', 40)) if isinstance(payload, dict) else 40
+        except (TypeError, ValueError):
+            max_fetch = 40
+        cal_db = CalendarDB()
+        try:
+            imdb_map = douban_service.resolve_imdb_ids(
+                entries, cal_db, max_fetch=max(0, min(max_fetch, 60))
+            )
+        finally:
+            try:
+                cal_db.close()
+            except Exception:
+                pass
+        return jsonify({'success': True, 'data': {'imdb_map': imdb_map}})
+    except Exception as e:
+        logging.error(f"解析豆瓣 IMDb ID 失败: {str(e)}")
+        return jsonify({'success': False, 'message': f'解析失败: {str(e)}'})
 
 
 @app.route("/api/calendar/update_content_type", methods=["POST"])

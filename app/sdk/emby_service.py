@@ -270,18 +270,75 @@ class EmbyService:
         return int(season_number) in seasons
 
     @staticmethod
-    def _result_from_match(matched: dict, in_library: bool) -> dict:
+    def _result_from_match(matched: dict, in_library: bool, match_by: str = "title") -> dict:
         return {
             "in_library": in_library,
             "seasons": matched.get("season_numbers", "") or "",
             "matched_name": matched.get("name", "") or "",
+            "match_by": match_by,
         }
+
+    @classmethod
+    def _title_candidate_allowed(cls, candidate: dict, imdb_id: str) -> bool:
+        """标题命中但双方都有 IMDb 且不一致时，说明是同名不同片，不能算已入库。"""
+        if not imdb_id:
+            return True
+        candidate_imdb = cls._normalize_imdb_id(candidate.get("provider_imdb", ""))
+        if not candidate_imdb:
+            # Emby 没刮到 IMDb，标题命中仍然可信
+            return True
+        return candidate_imdb == imdb_id
+
+    @staticmethod
+    def _normalize_imdb_id(imdb_id) -> str:
+        """IMDb ID 规范化：去空格转小写，只保留 tt 开头的编号"""
+        if not imdb_id:
+            return ""
+        value = str(imdb_id).strip().lower()
+        if not value:
+            return ""
+        if not value.startswith("tt"):
+            value = f"tt{value}" if value.isdigit() else value
+        if not re.match(r'^tt\d{5,10}$', value):
+            return ""
+        return value
+
+    def _pick_imdb_candidate(self, candidates: List[dict], di: dict) -> Optional[dict]:
+        """
+        IMDb 命中后的候选挑选：类型优先（电影对 Movie、剧集对 Series），
+        再按年份接近程度排序。剧集命中的是整部 Series，季数仍由调用方比对。
+        """
+        if not candidates:
+            return None
+        want_movie = self._is_movie_item(di)
+        want_type = "Movie" if want_movie else "Series"
+        typed = [item for item in candidates if item.get("item_type") == want_type]
+        pool = typed or candidates
+        if len(pool) == 1:
+            return pool[0]
+        year = str(di.get("year", "") or "")
+        try:
+            target_year = int(year)
+        except (TypeError, ValueError):
+            return pool[0]
+        best = pool[0]
+        best_diff = 999
+        for item in pool:
+            try:
+                item_year = int(item.get("year", "") or "")
+            except (TypeError, ValueError):
+                continue
+            diff = abs(item_year - target_year)
+            if diff < best_diff:
+                best = item
+                best_diff = diff
+        return best
 
     def match_items(self, discovery_items: List[dict], cal_db) -> dict:
         """
         批量匹配 discovery items 的入库状态。
-        discovery_items: [{title, year, tmdb_id, media_type, content_type}, ...]
-        返回 {status_key: {in_library, seasons, matched_name}}
+        discovery_items: [{title, year, tmdb_id, imdb_id, media_type, content_type}, ...]
+        返回 {status_key: {in_library, seasons, matched_name, match_by}}
         """
         if not discovery_items:
             return {}
@@ -292,6 +349,8 @@ class EmbyService:
 
         # 构建 TMDB 索引: {(tmdb_id, item_type): item}
         tmdb_index = {}
+        # 构建 IMDb 索引: {imdb_id: [item, ...]}（豆瓣与 TMDB 译名不一致时靠它兜底）
+        imdb_index = {}
         # 构建标题索引: {normalized_title: [item, ...]}
         title_index = {}
         for item in all_emby:
@@ -299,6 +358,9 @@ class EmbyService:
             item_type = item.get("item_type", "")
             if tmdb:
                 tmdb_index[(tmdb, item_type)] = item
+            imdb = self._normalize_imdb_id(item.get("provider_imdb", ""))
+            if imdb:
+                imdb_index.setdefault(imdb, []).append(item)
             for key in (item.get("name", ""), item.get("original_title", "")):
                 if key:
                     norm = self._normalize_title(key)
@@ -333,33 +395,53 @@ class EmbyService:
                     result["in_library"] = True
                     result["seasons"] = matched.get("season_numbers", "")
                     result["matched_name"] = matched.get("name", "")
+                    result["match_by"] = "tmdb"
                     status_map[status_key] = result
                     continue
-            # 2. 标题+年份模糊匹配（豆瓣榜单卡无 tmdb_id）
+            # 2. IMDb ID 精确匹配（豆瓣条目自带 IMDb，可绕开译名差异）
+            imdb_id = self._normalize_imdb_id(di.get("imdb_id", ""))
+            if imdb_id:
+                candidates = imdb_index.get(imdb_id, [])
+                matched = self._pick_imdb_candidate(candidates, di)
+                if matched:
+                    # 剧集仍按季比对：IMDb ID 指向整部 Series，卡片带季号时要看该季是否入库
+                    in_library = True
+                    if not self._is_movie_item(di):
+                        _, season_number = self._split_season_suffix(di.get("title", "") or "")
+                        in_library = self._is_season_in_library(matched, season_number)
+                    status_map[status_key] = self._result_from_match(matched, in_library, "imdb")
+                    continue
+            # 3. 标题+年份模糊匹配（豆瓣榜单卡无 tmdb_id）
             title = di.get("title", "")
             year = di.get("year", "")
             if title:
                 norm_title = self._normalize_title(title)
-                candidates = title_index.get(norm_title, [])
+                candidates = [
+                    c for c in title_index.get(norm_title, [])
+                    if self._title_candidate_allowed(c, imdb_id)
+                ]
                 if candidates:
                     best = self._pick_best_candidate(candidates, year)
                     if best:
-                        status_map[status_key] = self._result_from_match(best, True)
+                        status_map[status_key] = self._result_from_match(best, True, "title")
                         continue
-                # 3. 剥掉末尾季后缀后再匹配（豆瓣「末日地堡 第三季」对 Emby Series「末日地堡」）
+                # 4. 剥掉末尾季后缀后再匹配（豆瓣「末日地堡 第三季」对 Emby Series「末日地堡」）
                 if not self._is_movie_item(di):
                     base_title, season_number = self._split_season_suffix(title)
                     if season_number is not None:
                         norm_base = self._normalize_title(base_title)
                         if norm_base and norm_base != norm_title:
-                            base_candidates = title_index.get(norm_base, [])
+                            base_candidates = [
+                                c for c in title_index.get(norm_base, [])
+                                if self._title_candidate_allowed(c, imdb_id)
+                            ]
                             if base_candidates:
                                 best = self._pick_series_candidate(base_candidates)
                                 if best:
                                     in_library = self._is_season_in_library(best, season_number)
-                                    status_map[status_key] = self._result_from_match(best, in_library)
+                                    status_map[status_key] = self._result_from_match(best, in_library, "title")
                                     continue
-            # 4. 未匹配
+            # 5. 未匹配
             status_map[status_key] = result
         return status_map
 

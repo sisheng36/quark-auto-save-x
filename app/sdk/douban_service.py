@@ -4,8 +4,32 @@
 用于获取豆瓣影视榜单数据
 """
 
+import re
+import time
+import logging
 import requests
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List, Iterable
+
+logger = logging.getLogger(__name__)
+
+# 豆瓣 App 的「影片信息」H5 页面，条目信息里带 IMDb ID（rexxar 详情接口不含此字段）。
+_DOUBAN_DESC_URL = "https://www.douban.com/doubanapp/h5/movie/{subject_id}/desc"
+_IMDB_ROW_RE = re.compile(
+    r'<td>\s*IMDb\s*</td>\s*<td>\s*(tt\d{5,10})\s*</td>', re.IGNORECASE
+)
+_TITLE_RE = re.compile(r'<title>(.*?)</title>', re.IGNORECASE | re.DOTALL)
+
+# 缓存状态：ok=已取到 IMDb；missing=豆瓣页面本身没有 IMDb 字段；
+# failed=请求失败（下次仍会重试）；not_found=豆瓣没有该条目
+DOUBAN_IMDB_STATUS_OK = 'ok'
+DOUBAN_IMDB_STATUS_MISSING = 'missing'
+DOUBAN_IMDB_STATUS_FAILED = 'failed'
+DOUBAN_IMDB_STATUS_NOT_FOUND = 'not_found'
+
+# 缓存有效期：命中过 IMDb 的条目长期有效；未命中的隔一段时间重试
+DOUBAN_IMDB_CACHE_TTL_OK = 30 * 24 * 3600
+DOUBAN_IMDB_CACHE_TTL_MISS = 7 * 24 * 3600
+DOUBAN_IMDB_CACHE_TTL_FAILED = 3600
 
 
 class DoubanService:
@@ -372,6 +396,223 @@ class DoubanService:
                     'mock_reason': f'获取失败: {str(e)}'
                 }
             }
+
+    # ==================== IMDb ID 抓取与缓存 ====================
+
+    @staticmethod
+    def _subject_id_of(item: Dict[str, Any]) -> str:
+        """从榜单条目中取出豆瓣 subject id（部分接口放在 uri/url 里）"""
+        subject_id = str((item or {}).get('id', '') or '').strip()
+        if subject_id:
+            return subject_id
+        raw = str((item or {}).get('uri', '') or (item or {}).get('url', '') or '')
+        match = re.search(r'/(?:movie|tv|subject)/(\d+)', raw)
+        return match.group(1) if match else ''
+
+    def fetch_imdb_id(self, subject_id: str) -> Dict[str, Any]:
+        """
+        抓取单个豆瓣条目的 IMDb ID。
+
+        数据源是豆瓣 App 的「影片信息」H5 页（电影和剧集都走 /movie/ 路径）。
+        返回 {imdb_id, status, title}
+        status: ok / missing / failed / not_found
+        """
+        subject_id = str(subject_id or '').strip()
+        if not subject_id.isdigit():
+            return {'imdb_id': '', 'status': DOUBAN_IMDB_STATUS_NOT_FOUND, 'title': ''}
+
+        result = {'imdb_id': '', 'status': DOUBAN_IMDB_STATUS_FAILED, 'title': ''}
+        try:
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                    '(KHTML, like Gecko) Chrome/120.0 Safari/537.36'
+                ),
+                'Referer': 'https://movie.douban.com/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            })
+            response = session.get(_DOUBAN_DESC_URL.format(subject_id=subject_id), timeout=15)
+            if response.status_code == 404:
+                result['status'] = DOUBAN_IMDB_STATUS_NOT_FOUND
+                return result
+            if response.status_code != 200:
+                logger.warning(f"豆瓣条目 {subject_id} 影片信息请求失败: HTTP {response.status_code}")
+                return result
+
+            html = response.text or ''
+            title_match = _TITLE_RE.search(html)
+            if title_match:
+                result['title'] = re.sub(r'\s+', ' ', title_match.group(1)).strip()
+
+            imdb_match = _IMDB_ROW_RE.search(html)
+            if imdb_match:
+                result['imdb_id'] = imdb_match.group(1)
+                result['status'] = DOUBAN_IMDB_STATUS_OK
+            else:
+                # 页面正常返回但没有 IMDb 行：豆瓣自身就没有这条信息
+                result['status'] = DOUBAN_IMDB_STATUS_MISSING
+        except Exception as e:
+            logger.warning(f"豆瓣条目 {subject_id} 影片信息抓取失败: {e}")
+            result['status'] = DOUBAN_IMDB_STATUS_FAILED
+        return result
+
+    @staticmethod
+    def _cache_ttl(status: str) -> int:
+        if status == DOUBAN_IMDB_STATUS_OK:
+            return DOUBAN_IMDB_CACHE_TTL_OK
+        if status in (DOUBAN_IMDB_STATUS_MISSING, DOUBAN_IMDB_STATUS_NOT_FOUND):
+            return DOUBAN_IMDB_CACHE_TTL_MISS
+        return DOUBAN_IMDB_CACHE_TTL_FAILED
+
+    def resolve_imdb_ids(self, entries: Iterable[Dict[str, Any]], cal_db,
+                         max_fetch: int = 40, concurrency: int = 4,
+                         time_budget: float = 12.0) -> Dict[str, Dict[str, Any]]:
+        """
+        批量解析豆瓣条目的 IMDb ID，优先读缓存，缺的再抓取并写回缓存。
+
+        entries: [{id/subject_id, title, year, is_tv}, ...]
+        max_fetch: 本轮最多补抓多少条（其余留到下次刷新）
+        time_budget: 本轮补抓的总耗时上限（秒），避免页面加载被拖住
+        返回 {subject_id: {imdb_id, status, cached}}
+        """
+        now = int(time.time())
+        normalized = []
+        for entry in entries or []:
+            subject_id = self._subject_id_of(entry)
+            if not subject_id:
+                continue
+            normalized.append({
+                'subject_id': subject_id,
+                'title': str((entry or {}).get('title', '') or ''),
+                'year': str((entry or {}).get('year', '') or ''),
+                'is_tv': bool((entry or {}).get('is_tv')),
+            })
+        if not normalized:
+            return {}
+
+        cached = {}
+        if cal_db is not None:
+            try:
+                cached = cal_db.get_douban_imdb_cache([e['subject_id'] for e in normalized])
+            except Exception as e:
+                logger.warning(f"读取豆瓣 IMDb 缓存失败: {e}")
+                cached = {}
+
+        resolved = {}
+        pending = []
+        for entry in normalized:
+            subject_id = entry['subject_id']
+            row = cached.get(subject_id)
+            if row:
+                status = str(row.get('status', '') or '')
+                try:
+                    last_updated = int(row.get('last_updated', 0) or 0)
+                except (TypeError, ValueError):
+                    last_updated = 0
+                fresh = last_updated > 0 and (now - last_updated) < self._cache_ttl(status)
+                if fresh:
+                    resolved[subject_id] = {
+                        'imdb_id': str(row.get('imdb_id', '') or ''),
+                        'status': status or DOUBAN_IMDB_STATUS_MISSING,
+                        'cached': True,
+                    }
+                    continue
+            pending.append(entry)
+
+        if not pending:
+            return resolved
+
+        # 只补抓有限条，避免一次榜单刷新把豆瓣请求打爆；
+        # 同时限制总耗时，超时未抓完的条目不落缓存，留到下次刷新再试。
+        to_fetch = pending[:max(0, int(max_fetch))]
+        fetched_rows = []
+        if to_fetch:
+            results = {}
+            deadline = time.time() + max(1.0, float(time_budget))
+            workers = max(1, min(int(concurrency or 1), len(to_fetch)))
+            executor = None
+            try:
+                from concurrent.futures import ThreadPoolExecutor
+                executor = ThreadPoolExecutor(max_workers=workers)
+                future_map = {
+                    executor.submit(self.fetch_imdb_id, entry['subject_id']): entry
+                    for entry in to_fetch
+                }
+                for future, entry in future_map.items():
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        future.cancel()
+                        continue
+                    try:
+                        info = future.result(timeout=remaining)
+                    except Exception as e:
+                        logger.warning(f"豆瓣 IMDb 抓取超时/失败 {entry['subject_id']}: {e}")
+                        continue
+                    if info:
+                        results[entry['subject_id']] = info
+            except Exception as e:
+                logger.warning(f"豆瓣 IMDb 并发抓取不可用，改为串行: {e}")
+                for entry in to_fetch:
+                    if time.time() >= deadline:
+                        break
+                    try:
+                        results[entry['subject_id']] = self.fetch_imdb_id(entry['subject_id'])
+                    except Exception:
+                        continue
+            finally:
+                if executor is not None:
+                    try:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                    except TypeError:
+                        executor.shutdown(wait=False)
+                    except Exception:
+                        pass
+
+            for entry in to_fetch:
+                info = results.get(entry['subject_id'])
+                if not info:
+                    # 本轮超时/并发中断：不落缓存，下次刷新重试
+                    resolved[entry['subject_id']] = {
+                        'imdb_id': '', 'status': DOUBAN_IMDB_STATUS_FAILED, 'cached': False,
+                    }
+                    continue
+                status = str(info.get('status', DOUBAN_IMDB_STATUS_FAILED) or DOUBAN_IMDB_STATUS_FAILED)
+                imdb_id = str(info.get('imdb_id', '') or '')
+                resolved[entry['subject_id']] = {
+                    'imdb_id': imdb_id,
+                    'status': status,
+                    'cached': False,
+                }
+                # 请求失败的条目按短 TTL 缓存，避免反复打豆瓣；成功后自然覆盖
+                fetched_rows.append({
+                    'subject_id': entry['subject_id'],
+                    'title': entry.get('title') or info.get('title', ''),
+                    'year': entry.get('year', ''),
+                    'imdb_id': imdb_id,
+                    'is_tv': 1 if entry.get('is_tv') else 0,
+                    'status': status,
+                    'last_updated': now,
+                })
+
+        # 超出本轮抓取额度的条目先返回空值，等下次刷新继续补
+        for entry in pending[len(to_fetch):]:
+            subject_id = entry['subject_id']
+            row = cached.get(subject_id) or {}
+            resolved[subject_id] = {
+                'imdb_id': str(row.get('imdb_id', '') or ''),
+                'status': str(row.get('status', '') or DOUBAN_IMDB_STATUS_MISSING),
+                'cached': True,
+            }
+
+        if fetched_rows and cal_db is not None:
+            try:
+                cal_db.upsert_douban_imdb_cache(fetched_rows)
+            except Exception as e:
+                logger.warning(f"写入豆瓣 IMDb 缓存失败: {e}")
+
+        return resolved
 
     def _process_item(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

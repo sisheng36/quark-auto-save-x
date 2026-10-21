@@ -714,6 +714,8 @@ export default {
         embyStatusLoaded: false,
         embyStatusConfigured: true,
         embyRefreshing: false,
+        // 豆瓣侧拿不到 IMDb ID 的条目（用于 tooltip 说明比对依据）
+        discoveryImdbMissing: [],
         // 追剧日历相关数据
         calendar: {
           hasLoaded: false,
@@ -13949,10 +13951,16 @@ export default {
           const currentId = this.discovery[trackId];
           if (requestId !== currentId) return;
           try {
+            // 先补豆瓣 IMDb ID（后端带缓存，命中缓存时几乎零开销），
+            // 这样即便豆瓣与 TMDB 译名不同，也能凭 IMDb 判断是否已入库
+            await this.ensureDiscoveryImdbIds(requestId, trackId);
+            if (this.discovery[trackId] !== requestId) return;
             const payload = this.discovery.items.map(item => ({
+              id: item.id,
               title: item.title,
               year: item.year,
               tmdb_id: item.tmdb_id,
+              imdb_id: item.imdb_id,
               media_type: item.media_type,
               content_type: item.content_type || this.getDiscoveryContentType(item)
             }));
@@ -13965,6 +13973,39 @@ export default {
             }
           } catch (e) {
             console.error('Emby 入库状态检查失败:', e);
+          }
+        },
+        // 为豆瓣榜单卡批量补齐 IMDb ID，并把结果写回卡片（后续比对/重绘直接复用）
+        async ensureDiscoveryImdbIds(requestId, trackId) {
+          const pending = (this.discovery.items || []).filter(item =>
+            !item.tmdb_id && !item.imdb_id && item.id && /^\d+$/.test(String(item.id))
+          );
+          if (!pending.length) return;
+          const subjectIds = pending.map(item => String(item.id));
+          try {
+            const res = await axios.post('/api/douban/imdb_map', {
+              items: pending.map(item => ({
+                id: String(item.id),
+                title: item.title,
+                year: item.year,
+                is_tv: (item.content_type || this.getDiscoveryContentType(item)) !== 'movie'
+              }))
+            });
+            if (this.discovery[trackId] !== requestId) return;
+            const imdbMap = (res.data && res.data.success && res.data.data && res.data.data.imdb_map) || {};
+            this.discovery.items.forEach(item => {
+              const info = imdbMap[String(item.id)];
+              if (info && info.imdb_id) {
+                item.imdb_id = info.imdb_id;
+              }
+            });
+            // 记录本轮豆瓣侧仍拿不到 IMDb 的条目，tooltip 里如实说明
+            this.discoveryImdbMissing = subjectIds.filter(id => {
+              const info = imdbMap[id];
+              return !info || !info.imdb_id;
+            });
+          } catch (e) {
+            console.warn('补全豆瓣 IMDb ID 失败:', e);
           }
         },
         getEmbyStatusKey(item) {
@@ -13994,11 +14035,16 @@ export default {
           const status = this.getEmbyStatus(item);
           if (status && status.in_library) {
             const seasons = status.seasons;
+            const matchBy = status.match_by || '';
+            const via = matchBy === 'imdb' ? '（IMDb 匹配）' : '';
             if (seasons) {
               const seasonList = seasons.split(',').filter(Boolean).map(s => '第' + s + '季').join('、');
-              return seasonList ? `已在 Emby 入库: ${seasonList}` : '已在 Emby 入库';
+              return seasonList ? `已在 Emby 入库: ${seasonList}${via}` : `已在 Emby 入库${via}`;
             }
-            return '已在 Emby 入库';
+            return `已在 Emby 入库${via}`;
+          }
+          if (!item.tmdb_id && !item.imdb_id && this.discoveryImdbMissing.includes(String(item.id))) {
+            return '未在 Emby 入库（豆瓣无 IMDb，按名称比对）';
           }
           return '未在 Emby 入库';
         },
