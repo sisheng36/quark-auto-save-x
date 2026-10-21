@@ -38,25 +38,22 @@ import os
 import re
 import random
 import time
-import treelib
-from functools import lru_cache
 from threading import Lock, Thread, Semaphore, Timer, local as _thread_local
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
-from quark_auto_save import Quark
-from quark_auto_save import Config, format_bytes
-
-# 添加导入全局extract_episode_number和sort_file_by_name函数
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 复用脚本内的公共实现（文件过滤、电影判定等），避免同一份逻辑在 Web 端再抄一遍
 from quark_auto_save import (
+    Quark,
+    Config,
+    format_bytes,
+    advanced_filter_files,
+    is_movie_task,
     extract_episode_number,
     sort_file_by_name,
-    chinese_to_arabic,
     is_date_format,
     apply_subtitle_naming_rule,
     apply_task_file_filters,
-    parse_naming_pattern_extension,
     build_sequence_naming_filename,
     build_episode_naming_filename,
     build_sequence_regex_pattern,
@@ -93,7 +90,6 @@ from sdk.trakt_service import TraktService
 from sdk.emby_service import EmbyService
 from sdk.db import CalendarDB, compute_calendar_refresh_schedule
 from sdk.db import RecordDB, normalize_save_path, save_path_matches
-from utils.task_extractor import TaskExtractor
 
 
 def get_cloud_unarchive_timeout_seconds():
@@ -276,7 +272,7 @@ def get_localized_show_status(tmdb_id, latest_season_number, raw_status):
     """
     将 TMDB 原始节目状态本地化为中文展示状态，并对 returning_series 场景做本季终/播出中判断。
 
-    - 非 returning_series：走 TMDBService.map_show_status_cn 的单表映射（已完结/已取消/制作中等）。
+    - 非 returning_series：走 utils.overview_task_stats.localize_show_status 的静态映射（已完结/已取消/制作中等）。
     - returning_series：按本地 episodes/seasons 数据判断本季是否已播完：
         存在 finale 类型集，且已播出集数 >= 本季总集数 => 本季终；否则 播出中。
 
@@ -289,8 +285,8 @@ def get_localized_show_status(tmdb_id, latest_season_number, raw_status):
             return ''
         key = str(raw_status).strip().lower().replace(' ', '_')
         if key != 'returning_series':
-            _svc = TMDBService(config_data.get('tmdb_api_key', ''), get_poster_language_setting())
-            return _svc.map_show_status_cn(raw_status)
+            # 静态状态映射，直接用本地表，无需构造 TMDBService
+            return localize_show_status(raw_status)
 
         # returning_series：判断本季是否已播完（有 finale 集且已播出集数 >= 本季总集数）
         has_finale = False
@@ -344,34 +340,11 @@ def get_localized_show_status(tmdb_id, latest_season_number, raw_status):
 
         return '本季终' if (has_finale and total > 0 and aired >= total) else '播出中'
     except Exception:
-        try:
-            _svc = TMDBService(config_data.get('tmdb_api_key', ''), get_poster_language_setting())
-            return _svc.map_show_status_cn(raw_status)
-        except Exception:
-            return raw_status
+        return localize_show_status(raw_status)
 
 
-def is_movie_task(task: dict) -> bool:
-    """判断任务是否是电影，并兼容曾被错误标记为 other 的旧任务。"""
-    try:
-        task = task or {}
-        cal = task.get('calendar_info') or {}
-        extracted = cal.get('extracted') or {}
-        match = cal.get('match') or {}
-        if match.get('media_type') == 'movie':
-            return True
-
-        content_type = task.get('content_type') or extracted.get('content_type')
-        if content_type == 'movie':
-            return True
-
-        # 旧版本对电影使用 TV 元数据匹配，失败后会写入 other。保存路径仍可
-        # 作为可靠的迁移信号，避免旧任务永久停留在“其他”。
-        if content_type in (None, '', 'other'):
-            return TaskExtractor().determine_content_type(task.get('savepath', '')) == 'movie'
-    except Exception:
-        pass
-    return False
+# 电影判定复用 quark_auto_save.is_movie_task（顶部已导入）：优先看 match.media_type / content_type，
+# 缺失时按保存路径关键词兜底。原先 Web 端另有一份近乎相同的实现，两边判定口径容易走偏，已删除。
 
 
 def _task_name(task):
@@ -494,8 +467,13 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         if not tasks_info:
             return tasks_info
         db = CalendarDB()
-        # 预取 shows 与 seasons 数据
         cur = db.conn.cursor()
+
+        # 是否已过"播出集数刷新时间"：刷新前一律用有效日期口径，刷新后才允许用 metrics 缓存回填
+        allow_refresh = _is_after_refresh_time(datetime.now())
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # 预取 shows 与 seasons 数据
         cur.execute('SELECT tmdb_id, status, latest_season_number FROM shows')
         rows = cur.fetchall() or []
         show_meta = {int(r[0]): {'status': r[1], 'latest_season_number': int(r[2])} for r in rows}
@@ -614,7 +592,6 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
 
         # 统计"已播出集数"：使用 is_episode_aired 逐集判断（考虑播出时间）
         # 修复：不再使用简单的日期比较，而是逐集调用 is_episode_aired 判断是否已播出
-        from datetime import datetime as _dt
         try:
             from zoneinfo import ZoneInfo as _ZoneInfo
             local_tz = _ZoneInfo(_get_local_timezone())
@@ -763,7 +740,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                                     # 刷新时间之后：若缓存为非当日或缺失，则采用有效日期口径回填
                                     _ua_date = None
                                     if _updated_at:
-                                        _ua_date = _dt.fromtimestamp(int(_updated_at)).strftime('%Y-%m-%d')
+                                        _ua_date = datetime.fromtimestamp(int(_updated_at)).strftime('%Y-%m-%d')
                                     if ((_ua_date is None) or (_ua_date != today)):
                                         aired_count = _aired_effective
                         except Exception:
@@ -791,7 +768,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             if task_key in transferred_by_task:
                 transferred_count = transferred_by_task[task_key]
 
-            # 将状态本地化：returning_series 用本地已播/总集数判断；其余通过 TMDBService 的单表映射
+            # 将状态本地化：returning_series 用本地已播/总集数判断；其余走静态状态映射表
             try:
                 raw = (status or '').strip()
                 key = raw.lower().replace(' ', '_')
@@ -822,12 +799,8 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
 
                     status = '本季终' if (has_finale and total > 0 and aired >= total) else '播出中'
                 else:
-                    try:
-                        # 仅用到静态映射，不触发网络请求
-                        _svc = TMDBService(config_data.get('tmdb_api_key', ''), get_poster_language_setting())
-                        status = _svc.map_show_status_cn(raw)
-                    except Exception:
-                        status = raw
+                    # 纯静态映射，不构造 TMDBService（热路径上每个任务都会走到这里）
+                    status = localize_show_status(raw)
             except Exception:
                 pass
 
@@ -1208,107 +1181,6 @@ def register_metrics_sync_routes(app):
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)})
 
-def advanced_filter_files(file_list, filterwords):
-    """
-    高级过滤函数，支持保留词和过滤词
-    
-    Args:
-        file_list: 文件列表
-        filterwords: 过滤规则字符串，支持以下格式：
-            - "加更，企划，超前，(1)，mkv，nfo"  # 只有过滤词
-            - "期|加更，企划，超前，(1)，mkv，nfo"  # 保留词|过滤词
-            - "期，2160P|加更，企划，超前，(1)，mkv，nfo"  # 多个保留词(或关系)|过滤词
-            - "期|2160P|加更，企划，超前，(1)，mkv，nfo"  # 多个保留词(并关系)|过滤词
-            - "期，2160P|"  # 只有保留词，无过滤词
-    
-    Returns:
-        过滤后的文件列表
-    """
-    if not filterwords or not filterwords.strip():
-        return file_list
-    
-    # 检查是否包含分隔符 |
-    if '|' not in filterwords:
-        # 只有过滤词的情况
-        filterwords = filterwords.replace("，", ",")
-        filterwords_list = [word.strip().lower() for word in filterwords.split(',') if word.strip()]
-        
-        filtered_files = []
-        for file in file_list:
-            file_name = file['file_name'].lower()
-            file_ext = os.path.splitext(file_name)[1].lower().lstrip('.')
-            
-            # 检查过滤词是否存在于文件名中，或者过滤词等于扩展名
-            if not any(word in file_name for word in filterwords_list) and not any(word == file_ext for word in filterwords_list):
-                filtered_files.append(file)
-        
-        return filtered_files
-    
-    # 包含分隔符的情况，需要解析保留词和过滤词
-    parts = filterwords.split('|')
-    if len(parts) < 2:
-        # 格式错误，返回原列表
-        return file_list
-    
-    # 最后一个|后面的是过滤词
-    filter_part = parts[-1].strip()
-    # 前面的都是保留词
-    keep_parts = [part.strip() for part in parts[:-1] if part.strip()]
-    
-    # 解析过滤词
-    filterwords_list = []
-    if filter_part:
-        filter_part = filter_part.replace("，", ",")
-        filterwords_list = [word.strip().lower() for word in filter_part.split(',') if word.strip()]
-    
-    # 解析保留词：每个|分隔的部分都是一个独立的筛选条件
-    # 这些条件需要按顺序依次应用，形成链式筛选
-    keep_conditions = []
-    for part in keep_parts:
-        if part.strip():
-            if ',' in part or '，' in part:
-                # 包含逗号，表示或关系
-                part = part.replace("，", ",")
-                or_words = [word.strip().lower() for word in part.split(',') if word.strip()]
-                keep_conditions.append(("or", or_words))
-            else:
-                # 不包含逗号，表示单个词
-                keep_conditions.append(("single", [part.strip().lower()]))
-    
-    # 第一步：应用保留词筛选（链式筛选）
-    if keep_conditions:
-        for condition_type, words in keep_conditions:
-            filtered_by_keep = []
-            for file in file_list:
-                file_name = file['file_name'].lower()
-                
-                if condition_type == "or":
-                    # 或关系：包含任意一个词即可
-                    if any(word in file_name for word in words):
-                        filtered_by_keep.append(file)
-                elif condition_type == "single":
-                    # 单个词：必须包含
-                    if words[0] in file_name:
-                        filtered_by_keep.append(file)
-            
-            file_list = filtered_by_keep
-    
-    # 第二步：应用过滤词过滤
-    if filterwords_list:
-        filtered_files = []
-        for file in file_list:
-            file_name = file['file_name'].lower()
-            file_ext = os.path.splitext(file_name)[1].lower().lstrip('.')
-            
-            # 检查过滤词是否存在于文件名中，或者过滤词等于扩展名
-            if not any(word in file_name for word in filterwords_list) and not any(word == file_ext for word in filterwords_list):
-                filtered_files.append(file)
-        
-        return filtered_files
-    
-    return file_list
-
-
 def process_season_episode_info(filename, task_name=None):
     """
     处理文件名中的季数和集数信息
@@ -1436,46 +1308,7 @@ def process_season_episode_info(filename, task_name=None):
     return filename
 
 # 导入拼音排序工具
-try:
-    from utils.pinyin_sort import get_filename_pinyin_sort_key
-except ImportError:
-    # 如果导入失败，使用简单的小写排序作为备用
-    def get_filename_pinyin_sort_key(filename):
-        return filename.lower()
-
-# 导入数据库模块
-try:
-    # 先尝试相对导入
-    from sdk.db import RecordDB
-except ImportError:
-    try:
-        # 如果相对导入失败，尝试从app包导入
-        from app.sdk.db import RecordDB
-    except ImportError:
-        # 如果没有数据库模块，定义一个空类
-        class RecordDB:
-            def __init__(self, *args, **kwargs):
-                pass
-            
-            def get_records(self, *args, **kwargs):
-                return {"records": [], "pagination": {"total_records": 0, "total_pages": 0, "current_page": 1, "page_size": 20}}
-
-# 导入工具函数
-try:
-    # 先尝试相对导入
-    from sdk.utils import format_bytes, get_file_icon, format_file_display
-except ImportError:
-    try:
-        # 如果相对导入失败，尝试从app包导入
-        from app.sdk.utils import format_bytes, get_file_icon, format_file_display
-    except ImportError:
-        # 如果导入失败，使用默认实现或从quark_auto_save导入
-        # format_bytes已从quark_auto_save导入
-        def get_file_icon(file_name, is_dir=False):
-            return "📄" if not is_dir else "📁"
-            
-        def format_file_display(prefix, icon, name):
-            return f"{prefix}{icon} {name}"
+from utils.pinyin_sort import get_filename_pinyin_sort_key
 
 
 def get_app_ver():
@@ -1967,7 +1800,7 @@ def get_recent_runtime_logs(limit: int = None, days: float = None) -> list:
 
 # --------- 每日任务：在用户设置的刷新时间重算所有季的已播出集数并更新进度 ---------
 def recompute_all_seasons_aired_daily():
-    logging.info(f">>> 开始执行播出集数自动刷新")
+    logging.info(">>> 开始执行播出集数自动刷新")
     try:
         from time import time as _now
         now_ts = int(_now())
@@ -2055,7 +1888,7 @@ def recompute_all_seasons_aired_daily():
                 _schedule_aired_retry_in(10)
         except Exception:
             pass
-        logging.info(f">>> 播出集数自动刷新执行成功")
+        logging.info(">>> 播出集数自动刷新执行成功")
     except Exception as e:
         logging.warning(f">>> 播出集数自动刷新执行异常: {e}")
         # 发生异常也安排一次补偿重试
@@ -2669,7 +2502,7 @@ def calendar_stream():
         calendar_subscribers.add(q)
         try:
             # 连接建立后立即发一条心跳，便于前端立刻触发一次检查
-            yield f"event: ping\n" f"data: connected\n\n"
+            yield "event: ping\n" "data: connected\n\n"
             import time as _t
             last_heartbeat = _t.time()
             while True:
@@ -2681,7 +2514,7 @@ def calendar_stream():
                     now = _t.time()
                     if now - last_heartbeat >= 15:
                         last_heartbeat = now
-                        yield f"event: ping\n" f"data: keepalive\n\n"
+                        yield "event: ping\n" "data: keepalive\n\n"
         except GeneratorExit:
             pass
         finally:
@@ -3523,18 +3356,12 @@ def update():
             logging.warning(f"首次配置 Trakt 播出时间同步失败: {e}")
 
         # 如果 TMDB API 从无到有，自动执行一次 bootstrap
+        # 其余情况下新增任务的处理由保存流程末尾统一触发（见下方 process_new_tasks_async 线程），
+        # 这里不再重复调用，避免同一批任务被处理两次。
         try:
             if (prev_tmdb_value == '' or prev_tmdb_value is None) and new_tmdb_value and new_tmdb_value != '':
                 success, msg = do_calendar_bootstrap()
                 logging.info(f"首次配置 TMDB API，自动初始化: {success}, {msg}")
-            else:
-                # 若此次更新产生了新的匹配绑定，也执行一次轻量初始化，确保前端能立刻读到本地数据
-                try:
-                    if 'changed' in locals() and changed:
-                        # 只处理新增的任务，不处理所有任务
-                        process_new_tasks_async()
-                except Exception as _e:
-                    logging.warning(f"配置更新触发日历初始化失败: {_e}")
         except Exception as e:
             logging.warning(f"自动初始化 bootstrap 失败: {e}")
 
@@ -3576,10 +3403,10 @@ def update():
         # 立即启动新任务的异步处理，不等待
         threading.Thread(target=process_new_tasks_async, daemon=True).start()
         
-        logging.info(f">>> 配置更新成功")
+        logging.info(">>> 配置更新成功")
         return jsonify({"success": True, "message": "配置更新成功"})
     else:
-        logging.info(f">>> 配置更新失败")
+        logging.info(">>> 配置更新失败")
         return jsonify({"success": False, "message": "配置更新失败"})
 
 
@@ -3795,7 +3622,6 @@ def sync_content_type_between_config_and_database() -> bool:
         
         tasks = config_data.get('tasklist', [])
         changed = False
-        local_air_time_changed = False
         synced_count = 0
         
         for task in tasks:
@@ -4548,10 +4374,7 @@ def refresh_filemanager_alist_directory():
     if not alist.is_active:
         return jsonify({"success": False, "message": "AList 插件未正确配置"})
 
-    # 获取夸克账号信息
     try:
-        account = Quark(config_data["cookie"][account_index], account_index)
-
         # 将文件夹路径转换为实际的保存路径
         # folder_path是相对于夸克网盘根目录的路径，如 "/" 或 "/测试/文件夹"
         # 根据账号索引获取对应的存储配置
@@ -5727,7 +5550,7 @@ def add_task():
 def run_python(args):
     global _crontab_task_process
     
-    logging.info(f">>> 开始执行定时运行全部任务")
+    logging.info(">>> 开始执行定时运行全部任务")
     
     # 检查上一次任务是否还在运行，如果是则强制终止
     if _crontab_task_process is not None:
@@ -5735,15 +5558,15 @@ def run_python(args):
             # 检查进程是否还在运行（poll() 返回 None 表示还在运行，返回退出码表示已结束）
             poll_result = _crontab_task_process.poll()
             if poll_result is None:  # 进程还在运行
-                logging.warning(f">>> 检测到上一次定时运行全部任务仍在运行，正在强制终止...")
+                logging.warning(">>> 检测到上一次定时运行全部任务仍在运行，正在强制终止...")
                 _crontab_task_process.kill()
                 _crontab_task_process.wait(timeout=10)
-                logging.warning(f">>> 已强制终止上一次定时运行全部任务")
+                logging.warning(">>> 已强制终止上一次定时运行全部任务")
             else:  # 进程已结束（正常或异常退出）
                 logging.debug(f">>> 上一次定时运行全部任务已结束（退出码: {poll_result}）")
         except ProcessLookupError:
             # 进程不存在（可能已被系统清理）
-            logging.debug(f">>> 上一次定时运行全部任务进程已不存在/已自动清理")
+            logging.debug(">>> 上一次定时运行全部任务进程已不存在/已自动清理")
         except Exception as e:
             logging.warning(f">>> 检查/终止上一次定时运行全部任务时出错: {e}")
         finally:
@@ -5836,22 +5659,22 @@ def run_python(args):
         returncode = execute_task()
         
         if returncode == 0:
-            logging.info(f">>> 定时运行全部任务执行成功")
+            logging.info(">>> 定时运行全部任务执行成功")
         else:
             logging.warning(f">>> 定时运行全部任务执行完成但返回非零退出码: {returncode}")
             
             # 如果返回非零退出码，进行重试
             if retry_count < max_retries:
                 retry_count += 1
-                logging.warning(f">>> 检测到非零退出码，将在 5 秒后自动重试一次定时运行全部任务...")
+                logging.warning(">>> 检测到非零退出码，将在 5 秒后自动重试一次定时运行全部任务...")
                 time.sleep(5)  # 重试前等待5秒，避免立即重试
-                logging.info(f">>> 开始重试定时运行全部任务")
+                logging.info(">>> 开始重试定时运行全部任务")
                 
                 # 重试执行
                 returncode = execute_task()
                 
                 if returncode == 0:
-                    logging.info(f">>> 定时运行全部任务重试成功")
+                    logging.info(">>> 定时运行全部任务重试成功")
                 else:
                     logging.warning(f">>> 定时运行全部任务重试完成但返回非零退出码: {returncode}")
         
@@ -5860,7 +5683,7 @@ def run_python(args):
         # 这里只需要发送一个总体的完成通知，让前端知道定时任务已完成，可以统一刷新数据
         try:
             notify_calendar_changed('crontab_task_completed')
-            logging.debug(f">>> 已通知前端更新已转存集数和当日更新标识（定时任务执行完毕）")
+            logging.debug(">>> 已通知前端更新已转存集数和当日更新标识（定时任务执行完毕）")
         except Exception as e:
             logging.warning(f">>> 通知前端更新已转存集数和当日更新标识失败: {e}")
     except Exception as e:
@@ -5954,7 +5777,7 @@ def reload_tasks():
 
 def init():
     global config_data, task_plugins_config_default
-    logging.info(f">>> 初始化配置")
+    logging.info(">>> 初始化配置")
     # 检查配置文件是否存在
     if not os.path.exists(CONFIG_PATH):
         if not os.path.exists(os.path.dirname(CONFIG_PATH)):
@@ -7594,11 +7417,8 @@ def get_calendar_tasks():
         
         db.close()
         
-        try:
-            extractor = TaskExtractor()
-            tasks_info = extractor.extract_all_tasks_info(tasks, task_latest_files)
-        except Exception as e:
-            raise
+        extractor = TaskExtractor()
+        tasks_info = extractor.extract_all_tasks_info(tasks, task_latest_files)
         
         # 优化：减少同步操作频率，只在必要时执行（每5分钟最多执行一次）
         # 这样可以避免每次请求都执行耗时的同步操作
@@ -7629,12 +7449,6 @@ def get_calendar_tasks():
             from app.sdk.db import CalendarDB
             cal_db = CalendarDB()
             enriched = []
-            # 先获取所有 shows 数据，用于按名称匹配
-            cursor = cal_db.conn.cursor()
-            cursor.execute('SELECT tmdb_id, name, year, poster_local_path, bound_task_names FROM shows')
-            all_shows = cursor.fetchall()
-            shows_by_name = {s[1]: {'tmdb_id': s[0], 'name': s[1], 'year': s[2], 'poster_local_path': s[3], 'bound_task_names': s[4]} for s in all_shows}
-
             # 计算有效“最新季”：若第一集未定档或在未来，则回退到已播季
             def determine_effective_latest_season(tmdb_id, fallback_latest):
                 try:
@@ -7727,8 +7541,7 @@ def get_calendar_tasks():
                 cal = (raw or {}).get('calendar_info') or {}
                 match = cal.get('match') or {}
                 tmdb_id = match.get('tmdb_id') or (cal.get('tmdb_id') if isinstance(cal, dict) else None)
-                legacy_match = raw.get('match') if isinstance(raw, dict) and isinstance(raw.get('match'), dict) else {}
-                
+
                 task_name = t.get('task_name', '').strip()
                 matched_show = None
                 
@@ -7738,9 +7551,9 @@ def get_calendar_tasks():
                         show = cal_db.get_show(int(tmdb_id)) or {}
                         if show:
                             matched_show = show
-                    except Exception as e:
+                    except Exception:
                         pass
-                
+
                 # 2) 如果找到匹配的节目，检查是否需要建立绑定关系
                 if matched_show:
                     # 检查任务是否已经绑定到该节目，避免重复绑定
@@ -7819,7 +7632,7 @@ def get_calendar_tasks():
                             t['matched_year'] = ''
                             t['matched_poster_local_path'] = ''
                             t['matched_content_type'] = t.get('content_type', '')
-                    except Exception as e:
+                    except Exception:
                         t['match_tmdb_id'] = None
                         t['matched_show_name'] = ''
                         t['matched_year'] = ''
@@ -7965,7 +7778,6 @@ def process_new_tasks_async():
             # 只处理没有完整元数据的任务
             cal = (task or {}).get('calendar_info') or {}
             match = cal.get('match') or {}
-            extracted = cal.get('extracted') or {}
             tmdb_id = match.get('tmdb_id')
             
             # 如果已经有完整的元数据，跳过
@@ -8173,7 +7985,6 @@ def process_single_task_async(task, tmdb_service, cal_db):
                 show_name = extracted.get('show_name', '')
                 year = extracted.get('year') or None
                 search_result = None
-                match_type = None  # 'exact' 或 'name_only'
                 
                 # 优先级匹配逻辑：先尝试精准匹配（名称+年份），无结果时再按名称匹配
                 if year:
@@ -8192,7 +8003,6 @@ def process_single_task_async(task, tmdb_service, cal_db):
                             
                             if result_year == year and result.get('id'):
                                 search_result = result
-                                match_type = 'exact'
                                 logging.debug(f"TMDB 匹配成功: 任务名称={task.get('taskname', '')}, 节目名称={show_name}, 年份={year}")
                                 break
                 
@@ -8226,18 +8036,15 @@ def process_single_task_async(task, tmdb_service, cal_db):
                                 
                                 if best_match:
                                     search_result = best_match
-                                    match_type = 'name_only'
                                     matched_year = best_match.get('first_air_date', '')[:4] if best_match.get('first_air_date') else '未知'
                                     logging.debug(f"TMDB 匹配成功（年份不一致）: 任务名称={task.get('taskname', '')}, 节目名称={show_name}, 期望年份={year}, 匹配年份={matched_year}, 年份差异={min_year_diff}")
                             except (ValueError, TypeError) as e:
                                 # 年份解析失败，使用第一个结果
                                 search_result = search_results[0] if search_results else None
-                                match_type = 'name_only'
                                 logging.debug(f"TMDB 匹配成功（年份解析失败）: 任务名称={task.get('taskname', '')}, 节目名称={show_name}, 错误={e}")
                         else:
                             # 没有年份信息，直接使用第一个结果
                             search_result = search_results[0] if search_results else None
-                            match_type = 'name_only'
                             logging.debug(f"TMDB 匹配成功（无年份信息）: 任务名称={task.get('taskname', '')}, 节目名称={show_name}")
                 
                 # 如果找到了匹配结果，继续处理
@@ -8277,7 +8084,6 @@ def process_single_task_async(task, tmdb_service, cal_db):
                         backup_show_name = task_name_extracted
                         backup_year = year  # 复用保存路径提取的年份
                         backup_search_result = None
-                        backup_match_type = None
                         
                         # 优先级匹配逻辑：先尝试精准匹配（名称+年份），无结果时再按名称匹配
                         if backup_year:
@@ -8296,7 +8102,6 @@ def process_single_task_async(task, tmdb_service, cal_db):
                                     
                                     if result_year == backup_year and result.get('id'):
                                         backup_search_result = result
-                                        backup_match_type = 'exact'
                                         logging.debug(f"TMDB 备用匹配成功（从任务名称）: 任务名称={task_name}, 节目名称={backup_show_name}, 年份={backup_year}")
                                         break
                         
@@ -8330,24 +8135,20 @@ def process_single_task_async(task, tmdb_service, cal_db):
                                         
                                         if best_match:
                                             backup_search_result = best_match
-                                            backup_match_type = 'name_only'
                                             matched_year = best_match.get('first_air_date', '')[:4] if best_match.get('first_air_date') else '未知'
                                             logging.debug(f"TMDB 备用匹配成功（从任务名称，年份不一致）: 任务名称={task_name}, 节目名称={backup_show_name}, 期望年份={backup_year}, 匹配年份={matched_year}, 年份差异={min_year_diff}")
                                     except (ValueError, TypeError) as e:
                                         # 年份解析失败，使用第一个结果
                                         backup_search_result = backup_search_results[0] if backup_search_results else None
-                                        backup_match_type = 'name_only'
                                         logging.debug(f"TMDB 备用匹配成功（从任务名称，年份解析失败）: 任务名称={task_name}, 节目名称={backup_show_name}, 错误={e}")
                                 else:
                                     # 没有年份信息，直接使用第一个结果
                                     backup_search_result = backup_search_results[0] if backup_search_results else None
-                                    backup_match_type = 'name_only'
                                     logging.debug(f"TMDB 备用匹配成功（从任务名称，无年份信息）: 任务名称={task_name}, 节目名称={backup_show_name}")
                         
                         # 如果备用匹配找到了结果，使用备用匹配的结果并执行处理逻辑
                         if backup_search_result and backup_search_result.get('id'):
                             search_result = backup_search_result
-                            match_type = backup_match_type
                             show_name = backup_show_name  # 更新为从任务名称提取的剧名
                             
                             # 执行处理逻辑（复用第6150-6198行的逻辑）
@@ -8787,7 +8588,6 @@ def update_episodes_air_date_local(cal_db: CalendarDB, tmdb_id: int, season_numb
         # 获取用户手动设置的日期偏移值（如果存在）
         schedule = cal_db.get_show_air_schedule(int(tmdb_id)) or {}
         manual_air_date_offset = schedule.get('air_date_offset')
-        local_air_time = schedule.get('local_air_time') or ''
         # 获取是否手动设置的标记（只有用户在 WebUI 编辑元数据页面修改并保存后才为 True）
         air_date_offset_manually_set = schedule.get('air_date_offset_manually_set', False)
         
@@ -9119,8 +8919,7 @@ def redownload_all_posters():
         tmdb_service = TMDBService(tmdb_api_key, poster_language)
         
         success_count = 0
-        total_count = len(shows)
-        
+
         for show in shows:
             try:
                 tmdb_id = show.get('tmdb_id')
@@ -9537,7 +9336,7 @@ def calendar_refresh_episode():
         except Exception:
             pass
 
-        target_episode = _refresh_single_episode(cal_db, int(tmdb_id), int(season_number), int(episode_number), tmdb_service)
+        _refresh_single_episode(cal_db, int(tmdb_id), int(season_number), int(episode_number), tmdb_service)
 
         try:
             notify_calendar_changed('refresh_episode')
@@ -10947,17 +10746,17 @@ def run_calendar_refresh_all_internal_wrapper():
     """
     global _calendar_refresh_thread
     
-    logging.info(f">>> 开始执行追剧日历自动刷新")
+    logging.info(">>> 开始执行追剧日历自动刷新")
     
     # 检查上一次任务是否还在运行
     if _calendar_refresh_thread is not None:
         try:
             if _calendar_refresh_thread.is_alive():  # 线程还在运行
-                logging.warning(f">>> 检测到上一次追剧日历自动刷新仍在运行，将忽略并继续执行新任务")
+                logging.warning(">>> 检测到上一次追剧日历自动刷新仍在运行，将忽略并继续执行新任务")
                 # 注意：Python 线程无法强制终止，只能记录警告
                 # 但由于调度器会继续执行，不会阻塞后续任务
             else:  # 线程已结束（正常或异常退出）
-                logging.debug(f">>> 上一次追剧日历自动刷新已结束")
+                logging.debug(">>> 上一次追剧日历自动刷新已结束")
         except Exception as e:
             logging.warning(f">>> 检查上一次追剧日历自动刷新任务状态时出错: {e}")
         finally:
@@ -10969,7 +10768,7 @@ def run_calendar_refresh_all_internal_wrapper():
         global _calendar_refresh_thread
         try:
             run_calendar_refresh_all_internal()
-            logging.info(f">>> 追剧日历自动刷新执行成功")
+            logging.info(">>> 追剧日历自动刷新执行成功")
         except Exception as e:
             logging.error(f">>> 追剧日历自动刷新执行异常: {str(e)}")
             import traceback
@@ -11207,11 +11006,11 @@ def restart_emby_refresh_job():
 def run_emby_refresh_wrapper():
     """Emby 媒体库缓存自动拉取的包装函数"""
     global _emby_refresh_thread
-    logging.info(f">>> 开始执行 Emby 媒体库自动拉取")
+    logging.info(">>> 开始执行 Emby 媒体库自动拉取")
     if _emby_refresh_thread is not None:
         try:
             if _emby_refresh_thread.is_alive():
-                logging.warning(f">>> 检测到上一次 Emby 媒体库自动拉取仍在运行，将忽略本次执行")
+                logging.warning(">>> 检测到上一次 Emby 媒体库自动拉取仍在运行，将忽略本次执行")
                 return
         except Exception as e:
             logging.warning(f">>> 检查上一次 Emby 媒体库自动拉取状态时出错: {e}")
@@ -11222,7 +11021,7 @@ def run_emby_refresh_wrapper():
         global _emby_refresh_thread
         try:
             run_emby_refresh_internal()
-            logging.info(f">>> Emby 媒体库自动拉取执行成功")
+            logging.info(">>> Emby 媒体库自动拉取执行成功")
         except Exception as e:
             logging.error(f">>> Emby 媒体库自动拉取执行异常: {str(e)}")
             import traceback
@@ -12162,7 +11961,6 @@ def cleanup_episode_patterns_config(config_data):
         ]
         
         cleaned_tasks = 0
-        cleaned_global = False
         
         # 1. 清理任务级别的 config_data.episode_patterns
         if 'tasklist' in config_data:
@@ -12210,7 +12008,6 @@ def cleanup_episode_patterns_config(config_data):
                 else:
                     # 如果没有剩余规则，清空配置
                     config_data['episode_patterns'] = []
-                    cleaned_global = True
         
         # 静默执行清理操作，不输出日志
         

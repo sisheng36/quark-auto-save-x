@@ -93,9 +93,9 @@ class Alist:
                 if any(self.storage_mount_paths):
                     self.is_active = True
                 else:
-                    print(f"AList 刷新: 所有存储ID解析失败")
+                    print("AList 刷新: 所有存储ID解析失败")
             else:
-                print(f"AList 刷新: 服务器连接失败")
+                print("AList 刷新: 服务器连接失败")
 
     def get_storage_config(self, account_index=0):
         """根据账号索引获取对应的存储配置"""
@@ -183,7 +183,7 @@ class Alist:
             storage_mount_path, quark_root_dir = match.group(1), match.group(2)
             file_list = self.get_file_list(storage_mount_path)
             if file_list.get("code") != 200:
-                print(f"AList 刷新: 挂载路径无效")
+                print("AList 刷新: 挂载路径无效")
                 return False, (None, None)
                 
         # 2. 检查是否数字，调用 Alist API 获取存储信息
@@ -200,10 +200,10 @@ class Alist:
                 else:
                     print(f"AList 刷新: 不支持 [{storage_info['driver']}] 驱动")
             else:
-                print(f"AList 刷新: 获取存储信息失败")
+                print("AList 刷新: 获取存储信息失败")
                 return False, (None, None)
         else:
-            print(f"AList 刷新: storage_id 格式错误")
+            print("AList 刷新: storage_id 格式错误")
             return False, (None, None)
             
         # 返回结果
@@ -251,7 +251,7 @@ class Alist:
             elif "object not found" in data.get("message", ""):
                 # 如果是根目录就不再往上查找
                 if path == "/" or path == self.storage_mount_path:
-                    print(f"📁 AList 刷新: 根目录不存在，请检查配置")
+                    print("📁 AList 刷新: 根目录不存在，请检查配置")
                     return False
                 
                 # 自动获取父目录并尝试刷新

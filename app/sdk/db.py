@@ -1,10 +1,8 @@
 import os
-import json
 import sqlite3
 import time
 import threading
 import re
-from datetime import datetime
 from functools import wraps
 
 
@@ -31,6 +29,33 @@ def _schema_is_ready(instance, db_path):
 
 def _mark_schema_ready(instance, db_path):
     _SCHEMA_READY[_schema_key(instance, db_path)] = True
+
+
+def _open_and_migrate(instance, db_path, init_schema):
+    """建立连接并设置 PRAGMA；需要建表/迁移时在锁内执行一次 init_schema(cursor)。
+
+    RecordDB / CalendarDB 的连接与建表流程完全一致，这里合并成一处，避免两份实现走偏。
+    """
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    # 创建数据库连接，设置超时时间为5秒
+    instance.conn = sqlite3.connect(
+        db_path,
+        check_same_thread=False,
+        timeout=5.0
+    )
+    cursor = instance.conn.cursor()
+    cursor.execute('PRAGMA synchronous=NORMAL')  # 每连接设置，开销极小
+    cursor.execute('PRAGMA busy_timeout=5000')  # 设置忙等待超时为5秒
+    # 建表/迁移只做一次：热路径会 new 上千次 DB 对象，重复跑 DDL 会带来秒级开销
+    if _schema_is_ready(instance, db_path):
+        return
+    with _SCHEMA_READY_LOCK:
+        if _schema_is_ready(instance, db_path):
+            return
+        cursor.execute('PRAGMA journal_mode=WAL')  # 库级设置，只需一次
+        init_schema(cursor)
+        instance.conn.commit()
+        _mark_schema_ready(instance, db_path)
 
 def normalize_save_path(path):
     """规范化任务保存路径，避免前导/重复/尾部斜杠造成任务串计。"""
@@ -116,27 +141,8 @@ class RecordDB:
         self.init_db()
     
     def init_db(self):
-        # 连接与 PRAGMA 每次都要执行
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        # 创建数据库连接，设置超时时间为5秒
-        self.conn = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            timeout=5.0
-        )
-        cursor = self.conn.cursor()
-        cursor.execute('PRAGMA synchronous=NORMAL')  # 每连接设置，开销极小
-        cursor.execute('PRAGMA busy_timeout=5000')  # 设置忙等待超时为5秒
-        # 建表/迁移只做一次：热路径会 new 上千次 DB 对象，重复跑 DDL 会带来秒级开销
-        if _schema_is_ready(self, self.db_path):
-            return
-        with _SCHEMA_READY_LOCK:
-            if _schema_is_ready(self, self.db_path):
-                return
-            cursor.execute('PRAGMA journal_mode=WAL')  # 库级设置，只需一次
-            self._init_db_schema(cursor)
-            self.conn.commit()
-            _mark_schema_ready(self, self.db_path)
+        # 连接/PRAGMA 每次执行，建表迁移每进程每库只做一次（见 _open_and_migrate）
+        _open_and_migrate(self, self.db_path, self._init_db_schema)
 
     def _init_db_schema(self, cursor):
         # 创建表，如果不存在
@@ -429,27 +435,8 @@ class CalendarDB:
         self.init_db()
 
     def init_db(self):
-        # 连接与 PRAGMA 每次都要执行
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        # 创建数据库连接，设置超时时间为5秒
-        self.conn = sqlite3.connect(
-            self.db_path,
-            check_same_thread=False,
-            timeout=5.0
-        )
-        cursor = self.conn.cursor()
-        cursor.execute('PRAGMA synchronous=NORMAL')  # 每连接设置，开销极小
-        cursor.execute('PRAGMA busy_timeout=5000')  # 设置忙等待超时为5秒
-        # 建表/迁移只做一次：热路径会 new 上千次 DB 对象，重复跑 DDL 会带来秒级开销
-        if _schema_is_ready(self, self.db_path):
-            return
-        with _SCHEMA_READY_LOCK:
-            if _schema_is_ready(self, self.db_path):
-                return
-            cursor.execute('PRAGMA journal_mode=WAL')  # 库级设置，只需一次
-            self._init_db_schema(cursor)
-            self.conn.commit()
-            _mark_schema_ready(self, self.db_path)
+        # 连接/PRAGMA 每次执行，建表迁移每进程每库只做一次（见 _open_and_migrate）
+        _open_and_migrate(self, self.db_path, self._init_db_schema)
 
     def _init_db_schema(self, cursor):
         # shows

@@ -81,7 +81,7 @@ class Emby:
                 "POST", url, headers=headers, params=querystring
             )
             if response.text == "":
-                print(f"🎞️ 刷新 Emby 媒体库: 成功 ✅")
+                print("🎞️ 刷新 Emby 媒体库: 成功 ✅")
                 return True
             else:
                 print(f"🎞️ 刷新 Emby 媒体库: {response.text} ❌")

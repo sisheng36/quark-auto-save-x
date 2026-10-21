@@ -500,7 +500,6 @@ def sort_file_by_name(file):
     if episode_value == float('inf'):
         match_s_e = re.search(r'[Ss](\d+)[Ee](\d+)', filename)
         if match_s_e:
-            season = int(match_s_e.group(1))
             episode = int(match_s_e.group(2))
             # 使用季*1000+集作为期数值
             episode_value = episode  # 只用集数作为排序键
@@ -912,7 +911,6 @@ def extract_episode_number(filename, episode_patterns=None, config_data=None):
                     # 处理两位数年份的情况（如25.03.21）
                     try:
                         # 假设第一个是年份，第二个是月，第三个是日
-                        year = int(match.group(1))
                         month = int(match.group(2))
                         day = int(match.group(3))
                         
@@ -1337,7 +1335,6 @@ def is_date_format(number_str):
     """
     # 判断YYYYMMDD格式 (8位数字)
     if len(number_str) == 8 and number_str.startswith('20'):
-        year = int(number_str[:4])
         month = int(number_str[4:6])
         day = int(number_str[6:8])
         
@@ -1348,7 +1345,6 @@ def is_date_format(number_str):
     
     # 判断YYMMDD格式 (6位数字)
     elif len(number_str) == 6:
-        year_str = number_str[:2]
         month = int(number_str[2:4])
         day = int(number_str[4:6])
         
@@ -2688,7 +2684,6 @@ class Quark:
         返回:
             dict: 包含解压结果信息
         """
-        task_name = task.get("taskname", "未知任务") if task else "未知任务"
         
         # 校验解压模式有效性，无效时按失败处理
         if not extract_mode or extract_mode not in self.VALID_EXTRACT_MODES:
@@ -2703,7 +2698,7 @@ class Quark:
         
         if unarchive_result.get("code") == 23008:
             # 文件正在处理中，等待后重试
-            print(f"⏳ 文件正在处理中，等待 15 秒后重试...")
+            print("⏳ 文件正在处理中，等待 15 秒后重试...")
             time.sleep(15)
             unarchive_result = self.cloud_unarchive(archive_fid, "0")
         
@@ -2716,7 +2711,7 @@ class Quark:
         # 获取解压任务 ID
         unarchive_task_id = unarchive_result.get("data", {}).get("task_id")
         if not unarchive_task_id:
-            print(f"❌ 未获取到解压任务 ID")
+            print("❌ 未获取到解压任务 ID")
             return {"success": False, "message": "未获取到解压任务 ID"}
         
         # 第二步：等待解压任务完成（由配置控制超时时间，默认100秒，超时则放弃解压，按无法解压处理）
@@ -2745,7 +2740,7 @@ class Quark:
         extracted_list = unarchive_result_info.get("list", [])
         
         if not extracted_list:
-            print(f"⚠️ 未获取到解压结果")
+            print("⚠️ 未获取到解压结果")
             return {"success": False, "message": "未获取到解压结果"}
         
         # 解压后的文件夹（在根目录）
@@ -2878,7 +2873,7 @@ class Quark:
                     except Exception:
                         pass
                     if not archive_deleted:
-                        print(f"❌ 重试删除仍然失败")
+                        print("❌ 重试删除仍然失败")
 
         # 记录本次已解压的压缩包文件名，供 do_rename_task 根目录跳过再次转存（扁平化不写 _auto_extract_subdirs，需单独标记）
         if task is not None:
@@ -3551,8 +3546,8 @@ class Quark:
         # 提取链接参数
         pwd_id, passcode, pdir_fid, paths = self.extract_url(task["shareurl"])
         if not pwd_id:
-            task["shareurl_ban"] = f"提取链接参数失败，请检查分享链接是否有效"
-            print(f"提取链接参数失败，请检查分享链接是否有效")
+            task["shareurl_ban"] = "提取链接参数失败，请检查分享链接是否有效"
+            print("提取链接参数失败，请检查分享链接是否有效")
             return
         # 获取分享详情
         is_sharing, stoken, _ = self.get_stoken(pwd_id, passcode)
@@ -4800,10 +4795,6 @@ class Quark:
             dir_file_list = self.ls_dir(self.savepath_fid[savepath])
             dir_file_name_list = [item["file_name"] for item in dir_file_list]
             
-            # 判断目录是否为空（只包含非目录文件）
-            non_dir_files = [f for f in dir_file_list if not f.get("dir", False)]
-            is_empty_dir = len(non_dir_files) == 0
-
             # 应用过滤词过滤（全局 + 任务级）；本地目录列表不套用「正则规则」
             dir_file_list = apply_task_file_filters(dir_file_list, task, apply_keep_regex=False)
             dir_file_name_list = [item["file_name"] for item in dir_file_list]
@@ -4875,7 +4866,7 @@ class Quark:
                     # 使用记录中的最大序号
                     max_sequence = max_sequence_from_records
                     db.close()
-                except Exception as e:
+                except Exception:
                     max_sequence = 0
             
             # 实现高级排序算法
@@ -5067,7 +5058,7 @@ class Quark:
                     # 提取链接参数
                     pwd_id, passcode, pdir_fid, paths = self.extract_url(task["shareurl"])
                     if not pwd_id:
-                        print(f"提取链接参数失败，请检查分享链接是否有效")
+                        print("提取链接参数失败，请检查分享链接是否有效")
                         return False, []
                     
                     # 获取分享详情
@@ -5525,8 +5516,6 @@ class Quark:
                     add_notify(f"❌《{task['taskname']}》处理分享链接时发生错误: {str(e)}\n")
 
             # 对本地已有文件进行重命名（即使没有分享链接或处理失败也执行）
-            renamed_files = {}
-            
             # 应用过滤词过滤（全局 + 任务级）；本地目录列表不套用「正则规则」
             dir_file_list = apply_task_file_filters(dir_file_list, task, apply_keep_regex=False)
             
@@ -5612,7 +5601,7 @@ class Quark:
                                 # 注释掉错误消息记录
                                 # rename_logs.append(f"重命名: {dir_file['file_name']} → {new_name} 失败，{error_msg}")
                                 pass
-                    except Exception as e:
+                    except Exception:
                         # 收集错误日志但不打印
                         # 注释掉异常信息记录
                         # rename_logs.append(f"重命名出错: {dir_file['file_name']} → {new_name}，错误：{str(e)}")
@@ -5958,7 +5947,7 @@ def do_sign(account):
 
 
 def do_save(account, tasklist=[], ignore_execution_rules=False):
-    print(f"🧩 载入插件")
+    print("🧩 载入插件")
     plugins, CONFIG_DATA["plugins"], task_plugins_config = Config.load_plugins(
         CONFIG_DATA.get("plugins", {})
     )
@@ -5966,9 +5955,6 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
     # 获取全部保存目录fid
     account.update_savepath_fid(tasklist)
     
-    # 创建已发送通知跟踪集合，避免重复显示通知
-    sent_notices = set()
-
     def is_time(task):
         # 若为手动单任务运行并明确要求忽略执行周期/进度限制，则始终执行
         if ignore_execution_rules:
@@ -5986,7 +5972,7 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                     return True
                 # 没有任务进度数据，退回按自选周期执行的逻辑
                 execution_mode = "manual"
-            except Exception as e:
+            except Exception:
                 # 获取任务进度失败，退回按自选周期执行的逻辑
                 execution_mode = "manual"
         
@@ -6071,7 +6057,7 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                     )
                     if metrics and metrics.get("progress_pct") is not None:
                         # 有任务进度数据，显示自动模式
-                        print(f"执行周期: 自动")
+                        print("执行周期: 自动")
                     else:
                         # 没有任务进度数据，退回按自选周期执行，显示自选周期信息
                         if task.get("runweek") or task.get("enddate"):
@@ -6079,7 +6065,7 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                                 f"执行周期: WK{task.get('runweek',[])} ~ {task.get('enddate','forever')} (自动模式，无进度数据，退回自选周期)"
                             )
                         else:
-                            print(f"执行周期: 自动 (无进度数据，退回自选周期)")
+                            print("执行周期: 自动 (无进度数据，退回自选周期)")
                 else:
                     # 没有任务名称，退回按自选周期执行
                     if task.get("runweek") or task.get("enddate"):
@@ -6087,7 +6073,7 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                             f"执行周期: WK{task.get('runweek',[])} ~ {task.get('enddate','forever')} (自动模式，无任务名称，退回自选周期)"
                         )
                     else:
-                        print(f"执行周期: 自动 (无任务名称，退回自选周期)")
+                        print("执行周期: 自动 (无任务名称，退回自选周期)")
             except Exception:
                 # 获取任务进度失败，退回按自选周期执行
                 if task.get("runweek") or task.get("enddate"):
@@ -6095,7 +6081,7 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                         f"执行周期: WK{task.get('runweek',[])} ~ {task.get('enddate','forever')} (自动模式，获取进度失败，退回自选周期)"
                     )
                 else:
-                    print(f"执行周期: 自动 (获取进度失败，退回自选周期)")
+                    print("执行周期: 自动 (获取进度失败，退回自选周期)")
         else:
             # 按自选周期执行（自选）- 原有逻辑
             if task.get("runweek") or task.get("enddate"):
@@ -6120,16 +6106,14 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                         else:
                             print("任务已转存完成，跳过")
                     else:
-                        print(f"任务不在执行周期内，跳过")
+                        print("任务不在执行周期内，跳过")
                 except Exception:
-                    print(f"任务不在执行周期内，跳过")
+                    print("任务不在执行周期内，跳过")
             else:
                 # 按自选周期执行时的跳过提示（原有逻辑）
-                print(f"任务不在执行周期内，跳过")
+                print("任务不在执行周期内，跳过")
         else:
-            # 保存之前的通知信息
             global NOTIFYS
-            notifys_before = NOTIFYS.copy()
             
             # 将全局的自动解压设置添加到任务中
             # 任务级明确为 disabled 时保持禁用；任务级为空或无效时继承全局设置
@@ -6163,9 +6147,7 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
             # 检查是否需要清除重复的通知
             # 由于在修改顺序，现在不需要特殊处理通知
             is_special_sequence = (task.get("use_sequence_naming") and task.get("sequence_naming")) or (task.get("use_episode_naming") and task.get("episode_naming"))
-            # 对于正则命名模式，也将其视为特殊序列
-            is_regex_mode = not is_special_sequence and task.get("pattern") is not None
-            
+                        
             # 执行重命名任务，但收集日志而不是立即打印
             is_rename, rename_logs = account.do_rename_task(task)
 
@@ -6391,22 +6373,18 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                             
                             # 检查这个文件是否是当次转存的文件
                             is_transferred_file = False
-                            check_method = None
 
                             # 方法1：检查文件名是否在实际重命名结果中
                             if file["file_name"] in actual_file_names.values():
                                 is_transferred_file = True
-                                check_method = "method1_actual_names"
 
                             # 方法2：检查文件名是否在预期重命名结果中（用于重命名失败的情况）
                             elif file["file_name"] in expected_renamed_files.values():
                                 is_transferred_file = True
-                                check_method = "method2_expected_values"
 
                             # 方法3：检查文件名是否是原始文件名（重命名失败保持原名）
                             elif file["file_name"] in expected_renamed_files.keys():
                                 is_transferred_file = True
-                                check_method = "method3_expected_keys"
                             
                             # 方法4：扁平化模式下，检查文件是否是最近创建的（可能是转存的文件）
                             elif flat_mode:
@@ -6418,7 +6396,6 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                                     time_diff = current_time - int(file_updated_at)
                                     if time_diff < time_threshold:
                                         is_transferred_file = True
-                                        check_method = "method4_recent_file"
 
                             if is_transferred_file:
                                 new_tree.create_node(
@@ -6579,9 +6556,6 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                                     old_name = match.group(1).strip()
                                     new_name = match.group(2).strip()
                                     renamed_files[old_name] = new_name
-                            
-                            # 使用已知的剧集命名模式来生成新文件名
-                            episode_pattern = task["episode_naming"]
                             
                             # 创建剧集号提取函数
                             def extract_episode_number_local(filename):
@@ -6905,8 +6879,6 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                 if auto_extract_subdirs:
                     savepath = re.sub(r"/{2,}", "/", f"/{task['savepath']}")
                     if savepath in account.savepath_fid:
-                        savepath_fid = account.savepath_fid[savepath]
-                        
                         # 递归获取文件夹内容的辅助函数
                         def get_extracted_folder_contents(folder_fid, folder_name, relative_path=""):
                             """递归获取解压文件夹内的所有文件和子目录"""
@@ -7412,7 +7384,6 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                                 non_nested_files = []
                                 
                                 for file_node in subdir_new_files[dir_id]:
-                                    file_name = remove_file_icons(file_node.tag)
                                     if hasattr(file_node, 'nested_path') and file_node.nested_path:
                                         # 处理嵌套文件
                                         nested_path_parts = file_node.nested_path.split('/')
@@ -7867,14 +7838,14 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
             # 调用插件
             if is_new_tree or is_rename:
                 print()
-                print(f"🧩 调用插件")
+                print("🧩 调用插件")
                 for plugin_name, plugin in plugins.items():
                     if plugin.is_active and (is_new_tree or is_rename):
                         task = (
                             plugin.run(task, account=account, tree=is_new_tree, rename_logs=rename_logs) or task
                         )
             elif is_new_tree is False:  # 明确没有新文件
-                print(f"任务完成: 没有新的文件需要转存")
+                print("任务完成: 没有新的文件需要转存")
     print()
 
 
@@ -7882,7 +7853,7 @@ def main():
     global CONFIG_DATA
     _setup_script_logging()
     start_time = datetime.now()
-    print(f"===============程序开始===============")
+    print("===============程序开始===============")
     print(f"⏰ 执行时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     # 读取启动参数
     config_path = sys.argv[1] if len(sys.argv) > 1 else "quark_config.json"
@@ -7903,7 +7874,10 @@ def main():
             cookie_form_file = False
         else:
             print(f"⚙️ 配置文件 {config_path} 不存在❌，正远程从下载配置模版")
-            config_url = f"{GH_PROXY}https://raw.githubusercontent.com/Cp0204/quark_auto_save/main/quark_config.json"
+            # GH_PROXY 是历史遗留变量，原代码未定义会直接 NameError；
+            # 这里改为读取同名环境变量（如 https://ghproxy.example/），默认直连。
+            gh_proxy = (os.environ.get("GH_PROXY") or "").strip()
+            config_url = f"{gh_proxy}https://raw.githubusercontent.com/Cp0204/quark_auto_save/main/quark_config.json"
             if Config.download_file(config_url, config_path):
                 print("⚙️ 配置模版下载成功✅，请到程序目录中手动配置")
             return
@@ -7938,7 +7912,7 @@ def main():
         accounts.append(acc)
     # 签到
     print()
-    print(f"===============签到任务===============")
+    print("===============签到任务===============")
     if tasklist_from_env:
         verify_account(accounts[0])
     else:
@@ -7948,7 +7922,7 @@ def main():
     print()
     # 转存
     if accounts[0].is_active and cookie_form_file:
-        print(f"===============转存任务===============")
+        print("===============转存任务===============")
         # 任务列表
         if tasklist_from_env:
             # 若通过环境变量传入任务列表，视为手动运行，可由外层控制是否忽略执行周期/进度限制
@@ -7994,19 +7968,19 @@ def main():
 
         notify_lines = _clean_notify_lines(NOTIFYS)
         notify_body = "\n".join(notify_lines)
-        print(f"===============推送通知===============")
+        print("===============推送通知===============")
         send_ql_notify("【夸克自动转存】", notify_body)
         print()
     else:
         # 如果没有通知内容，显示统一提示
-        print(f"===============推送通知===============")
+        print("===============推送通知===============")
         print("📭 本次运行没有新的转存，未推送通知")
         print()
     if cookie_form_file:
         # 更新配置
         Config.write_json(config_path, CONFIG_DATA)
 
-    print(f"===============程序结束===============")
+    print("===============程序结束===============")
     duration = datetime.now() - start_time
     print(f"😃 运行时长: {round(duration.total_seconds(), 2)}s")
     print()

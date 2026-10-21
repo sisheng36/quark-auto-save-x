@@ -151,7 +151,7 @@ class Alist_strm_gen:
                     )
                 elif storage_info["driver"] == "QuarkTV":
                     print(
-                        f"AList-Strm 生成: [QuarkTV] 驱动 ⚠️ storage_id 请手动填入 /Alist挂载路径:/Quark目录路径"
+                        "AList-Strm 生成: [QuarkTV] 驱动 ⚠️ storage_id 请手动填入 /Alist挂载路径:/Quark目录路径"
                     )
                 else:
                     print(f"AList-Strm 生成: 不支持 [{storage_info['driver']}] 驱动 ❌")

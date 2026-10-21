@@ -998,7 +998,7 @@ def add_notify_function():
     if push_config.get("NTFY_TOPIC"):
         notify_function.append(ntfy)
     if not notify_function:
-        print(f"无推送渠道，请检查通知变量是否正确")
+        print("无推送渠道，请检查通知变量是否正确")
     return notify_function
 
 

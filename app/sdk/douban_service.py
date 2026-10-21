@@ -8,7 +8,7 @@ import re
 import time
 import logging
 import requests
-from typing import Dict, Optional, Any, List, Iterable
+from typing import Dict, Optional, Any, Iterable
 
 logger = logging.getLogger(__name__)
 

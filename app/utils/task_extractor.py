@@ -6,9 +6,7 @@
 """
 
 import re
-import os
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from typing import Dict, List, Optional
 class TaskExtractor:
     def __init__(self):
         # 剧集编号提取模式
@@ -414,7 +412,7 @@ class TaskExtractor:
                 
                 tasks_info.append(task_info)
                 
-            except Exception as e:
+            except Exception:
                 continue
         
         return tasks_info

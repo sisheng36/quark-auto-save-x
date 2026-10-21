@@ -1,6 +1,9 @@
 import requests
-import json
-from typing import List, Dict, Any
+
+try:
+    from sdk.search_utils import dedupe_by_shareurl
+except ImportError:  # 以仓库根为根导入（如单元测试）
+    from app.sdk.search_utils import dedupe_by_shareurl
 
 
 class PanSou:
@@ -51,7 +54,7 @@ class PanSou:
             
             # 如果重定向失败或没有重定向到 pan.quark.cn，返回原链接
             return url
-        except Exception as e:
+        except Exception:
             # 如果解析失败，返回原链接（避免影响其他功能）
             # 可以在这里添加日志记录错误
             return url
@@ -228,44 +231,6 @@ class PanSou:
         if not cleaned:
             return {"success": False, "message": "PanSou搜索无夸克网盘结果"}
         
-        # 去重：按 shareurl 归并，保留发布时间最新的记录
-        def to_ts(date_str: str) -> float:
-            if not date_str:
-                return 0
-            try:
-                s = str(date_str).strip()
-                from datetime import datetime
-                try:
-                    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").timestamp()
-                except Exception:
-                    pass
-                try:
-                    return datetime.strptime(s, "%Y-%m-%d").timestamp()
-                except Exception:
-                    pass
-                try:
-                    s2 = s.replace('Z', '+00:00')
-                    return datetime.fromisoformat(s2).timestamp()
-                except Exception:
-                    return 0
-            except Exception:
-                return 0
-
-        by_url = {}
-        for item in cleaned:
-            try:
-                url = item.get("shareurl", "")
-                if not url:
-                    continue
-                existed = by_url.get(url)
-                if not existed:
-                    by_url[url] = item
-                else:
-                    # 比较 publish_date（若不存在则视为0）
-                    if to_ts(item.get("publish_date")) > to_ts(existed.get("publish_date")):
-                        by_url[url] = item
-            except Exception:
-                continue
-
-        unique_results = list(by_url.values())
+        # 去重：按 shareurl 归并，保留 publish_date 最新的记录（与 CloudSaver 共用实现）
+        unique_results = dedupe_by_shareurl(cleaned, "publish_date")
         return {"success": True, "data": unique_results}

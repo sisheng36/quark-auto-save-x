@@ -1,6 +1,11 @@
 import re
 import requests
 
+try:
+    from sdk.search_utils import dedupe_by_shareurl
+except ImportError:  # 以仓库根为根导入（如单元测试）
+    from app.sdk.search_utils import dedupe_by_shareurl
+
 
 class CloudSaver:
     """
@@ -119,7 +124,6 @@ class CloudSaver:
             # 收尾多余空白和分隔符
             s = re.sub(r"\s+", " ", s).strip(" -|·,，：:；;" + " ")
             return s.strip()
-        link_array = []
         for channel in search_results:
             for item in channel.get("list", []):
                 cloud_links = item.get("cloudLinks", [])
@@ -155,46 +159,9 @@ class CloudSaver:
                             }
                         )
         
-        # 去重：按 shareurl 归并，保留发布时间最新的记录
-        def to_ts(date_str: str) -> float:
-            if not date_str:
-                return 0
-            try:
-                s = str(date_str).strip()
-                from datetime import datetime
-                try:
-                    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").timestamp()
-                except Exception:
-                    pass
-                try:
-                    return datetime.strptime(s, "%Y-%m-%d").timestamp()
-                except Exception:
-                    pass
-                try:
-                    s2 = s.replace('Z', '+00:00')
-                    return datetime.fromisoformat(s2).timestamp()
-                except Exception:
-                    return 0
-            except Exception:
-                return 0
-
-        by_url = {}
-        for item in clean_results:
-            try:
-                url = item.get("shareurl", "")
-                if not url:
-                    continue
-                existed = by_url.get(url)
-                if not existed:
-                    by_url[url] = item
-                else:
-                    # 比较 datetime（CloudSaver清洗阶段时间字段名为 datetime）
-                    if to_ts(item.get("datetime")) > to_ts(existed.get("datetime")):
-                        by_url[url] = item
-            except Exception:
-                continue
-
-        unique_results = list(by_url.values())
+        # 去重：按 shareurl 归并，保留发布时间最新的记录（与 PanSou 共用实现；
+        # CloudSaver 清洗阶段的时间字段名为 datetime）
+        unique_results = dedupe_by_shareurl(clean_results, "datetime")
 
         # 注意：排序逻辑已移至全局，这里不再进行内部排序
         # 返回归并后的结果，由全局排序函数统一处理
