@@ -1058,23 +1058,6 @@
               <filter-select v-model="taskStatusFilter" label="状态筛选" placeholder="全部" clearable title="按任务状态筛选；「失败任务」= 分享链接已失效且转存尚未完成，口径与总览页「待处理」一致" :options="[{value:'failed',text:'失败任务（待处理）'},{value:'incomplete',text:'未完成'},{value:'ongoing',text:'进行中'},{value:'completed',text:'已完成'},{value:'airing',text:'播出中'},{value:'finale',text:'本季终'},{value:'ended',text:'已完结'},{value:'unmatched',text:'未匹配'}]" ></filter-select>
               </div>
             </div>
-            <!-- 任务列表：失败任务快捷筛选（数量与总览页「待处理」同口径，点击即定位） -->
-            <div class="tasklist-failed-chip-row" v-if="overviewShareBanLoaded && (failedTaskCount > 0 || isFailedFilterActive)">
-              <button type="button"
-                      class="tasklist-failed-chip"
-                      :class="{ active: isFailedFilterActive }"
-                      :disabled="failedTaskCount === 0 && !isFailedFilterActive"
-                      @click="isFailedFilterActive ? (taskStatusFilter = '') : showFailedTasks()"
-                      :title="isFailedFilterActive ? '清除失败任务筛选' : '只显示分享链接失效且转存未完成的任务，方便直接定位处理'">
-                <i class="bi bi-exclamation-triangle-fill"></i>
-                <template v-if="isFailedFilterActive">
-                  失败任务 · {{ failedTaskCount }}<i class="bi bi-x-lg tasklist-failed-chip-clear"></i>
-                </template>
-                <template v-else>
-                  {{ failedTaskCount }} 个任务需要处理
-                </template>
-              </button>
-            </div>
             <!-- 任务列表：类型筛选按钮和排序组件（复用追剧日历移动端样式） -->
             <div class="row mb-3 tasklist-header-row">
               <div class="tasklist-header-categories">
@@ -1099,6 +1082,23 @@
               <div class="tasklist-header-controls">
                 <!-- 排序组件 -->
                 <div class="tasklist-sort-controls d-flex justify-content-end">
+                  <!-- 失败任务快捷筛选胶囊：与排序控件同处一行，不单独占行 -->
+                  <div class="tasklist-failed-chip-slot" v-if="overviewShareBanLoaded && (failedTaskCount > 0 || isFailedFilterActive)">
+                    <button type="button"
+                            class="tasklist-failed-chip"
+                            :class="{ active: isFailedFilterActive }"
+                            :disabled="failedTaskCount === 0 && !isFailedFilterActive"
+                            @click="isFailedFilterActive ? (taskStatusFilter = '') : showFailedTasks()"
+                            :title="isFailedFilterActive ? '清除失败任务筛选' : '只显示分享链接失效且转存未完成的任务，方便直接定位处理'">
+                      <i class="bi bi-exclamation-triangle-fill"></i>
+                      <template v-if="isFailedFilterActive">
+                        失败任务 · {{ failedTaskCount }}<i class="bi bi-x-lg tasklist-failed-chip-clear"></i>
+                      </template>
+                      <template v-else>
+                        {{ failedTaskCount }} 个任务需要处理
+                      </template>
+                    </button>
+                  </div>
                   <div class="tasklist-sort-wrapper">
                     <span class="tasklist-sort-pill tasklist-sort-pill-icon" title="切换排序">按</span>
                     <filter-select class="tasklist-sort-embed" v-model="tasklistSort.by" @change="changeTasklistSortBy" title="选择排序方式"

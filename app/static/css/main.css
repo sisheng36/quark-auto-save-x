@@ -4174,12 +4174,13 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
 .tasklist-filter-row {
   margin-bottom: 14px;
 }
-/* 任务列表：失败任务快捷筛选胶囊（数量与总览「待处理」同口径） */
-.tasklist-failed-chip-row {
-  display: flex;
+/* 任务列表：失败任务快捷筛选胶囊（数量与总览「待处理」同口径）
+   与排序控件同一行，紧挨「按 xx 排列」左侧，不单独占用一行 */
+.tasklist-failed-chip-slot {
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  margin: -6px 0 10px;
+  flex: 0 0 auto;
+  margin-right: 8px;
 }
 .tasklist-failed-chip {
   display: inline-flex;
@@ -4243,8 +4244,9 @@ html.theme-light .tasklist-failed-chip.active {
   border-radius: 10px;
 }
 @media (max-width: 575.98px) {
-  .tasklist-failed-chip-row {
-    justify-content: flex-start;
+  /* 小屏：胶囊与排序控件之间留一点间距，换行时也不会贴边 */
+  .tasklist-failed-chip-slot {
+    margin-right: 6px;
   }
 }
 .task-auto-search-group {
