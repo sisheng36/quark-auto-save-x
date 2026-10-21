@@ -928,10 +928,17 @@
                   </div>
                 </div>
               </div>
-              <div class="tasklist-dashboard-alert" v-if="overviewStats.failedCount > 0"
-                   title="分享链接已失效且转存尚未完成的任务数；转存已完成或临时网络错误不计入">
+              <div class="tasklist-dashboard-alert tasklist-dashboard-alert-action"
+                   v-if="overviewStats.failedCount > 0"
+                   role="button"
+                   tabindex="0"
+                   @click="showFailedTasks"
+                   @keydown.enter.prevent="showFailedTasks"
+                   @keydown.space.prevent="showFailedTasks"
+                   title="分享链接已失效且转存尚未完成的任务数；转存已完成或临时网络错误不计入。点击进入任务列表并筛出这些任务">
                 <i class="bi bi-exclamation-triangle-fill"></i>
                 <span>有 <b>{{ overviewStats.failedCount }}</b> 个任务需要你处理：分享链接已失效，请检查或更新分享</span>
+                <span class="tasklist-dashboard-alert-go">去处理<i class="bi bi-chevron-right"></i></span>
               </div>
               <div class="tasklist-dashboard-alert tasklist-dashboard-alert-ok" v-else
                    title="分享链接均正常，暂无需要处理的任务">
@@ -1046,8 +1053,25 @@
               <filter-select v-model="taskDirSelected" label="任务筛选" placeholder="全部" clearable :options="taskNames" ></filter-select>
               </div>
               <div class="col-xl-4 col-lg-4 col-md-6 mb-2 mb-lg-0">
-              <filter-select v-model="taskStatusFilter" label="状态筛选" placeholder="全部" clearable :options="[{value:'incomplete',text:'未完成'},{value:'ongoing',text:'进行中'},{value:'completed',text:'已完成'},{value:'airing',text:'播出中'},{value:'finale',text:'本季终'},{value:'ended',text:'已完结'},{value:'unmatched',text:'未匹配'}]" ></filter-select>
+              <filter-select v-model="taskStatusFilter" label="状态筛选" placeholder="全部" clearable title="按任务状态筛选；「失败任务」= 分享链接已失效且转存尚未完成，口径与总览页「待处理」一致" :options="[{value:'failed',text:'失败任务（待处理）'},{value:'incomplete',text:'未完成'},{value:'ongoing',text:'进行中'},{value:'completed',text:'已完成'},{value:'airing',text:'播出中'},{value:'finale',text:'本季终'},{value:'ended',text:'已完结'},{value:'unmatched',text:'未匹配'}]" ></filter-select>
               </div>
+            </div>
+            <!-- 任务列表：失败任务快捷筛选（数量与总览页「待处理」同口径，点击即定位） -->
+            <div class="tasklist-failed-chip-row" v-if="overviewShareBanLoaded && (failedTaskCount > 0 || isFailedFilterActive)">
+              <button type="button"
+                      class="tasklist-failed-chip"
+                      :class="{ active: isFailedFilterActive }"
+                      :disabled="failedTaskCount === 0 && !isFailedFilterActive"
+                      @click="isFailedFilterActive ? (taskStatusFilter = '') : showFailedTasks()"
+                      :title="isFailedFilterActive ? '清除失败任务筛选' : '只显示分享链接失效且转存未完成的任务，方便直接定位处理'">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <template v-if="isFailedFilterActive">
+                  失败任务 · {{ failedTaskCount }}<i class="bi bi-x-lg tasklist-failed-chip-clear"></i>
+                </template>
+                <template v-else>
+                  {{ failedTaskCount }} 个任务需要处理
+                </template>
+              </button>
             </div>
             <!-- 任务列表：类型筛选按钮和排序组件（复用追剧日历移动端样式） -->
             <div class="row mb-3 tasklist-header-row">
@@ -1370,7 +1394,14 @@
                   </div>
                   </div>
                 </div>
-              </template>
+              <!-- 当前筛选把待处理失败任务全部挡住了：给出直达入口，避免误判“没有失败任务” -->
+            <div class="tasklist-filter-empty-hint alert alert-warning" role="alert"
+                 v-if="shouldShowTasklist && overviewStats.failedCount > 0 && !isFailedFilterActive && tasklistVisibleCount === 0 && failedTaskCount > 0">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <span>当前筛选条件下没有可显示的任务，但有 <b>{{ failedTaskCount }}</b> 个任务的分享链接已失效需要处理。</span>
+              <button type="button" class="btn btn-sm btn-warning ml-2" @click="showFailedTasks">查看失败任务</button>
+            </div>
+            </template>
             <!-- 任务列表：海报视图 -->
             <div v-else class="tasklist-poster-mode">
               <!-- 复用管理视图的海报网格样式与自适应布局 -->

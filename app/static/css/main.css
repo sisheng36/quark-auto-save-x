@@ -1863,6 +1863,25 @@ body.login-page {
   background: rgba(52, 211, 153, 0.1);
   border-color: rgba(52, 211, 153, 0.28);
 }
+/* 待处理预警条可点击：文案后追加「去处理」，悬停加深 */
+.tasklist-dashboard-alert-action {
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.tasklist-dashboard-alert-action:hover,
+.tasklist-dashboard-alert-action:focus-visible {
+  background: rgba(251, 191, 36, 0.18);
+  border-color: rgba(251, 191, 36, 0.45);
+  outline: none;
+}
+.tasklist-dashboard-alert-action .tasklist-dashboard-alert-go {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  font-weight: 600;
+}
 /* 浅色主题适配（保证对比度） */
 html.theme-light .tasklist-dashboard {
   background: rgba(255, 255, 255, 0.34);
@@ -3891,6 +3910,79 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
 }
 .tasklist-filter-row {
   margin-bottom: 14px;
+}
+/* 任务列表：失败任务快捷筛选胶囊（数量与总览「待处理」同口径） */
+.tasklist-failed-chip-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin: -6px 0 10px;
+}
+.tasklist-failed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warning-color);
+  font-size: 0.78rem;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.tasklist-failed-chip:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.6);
+}
+.tasklist-failed-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.25);
+}
+.tasklist-failed-chip.active {
+  background: rgba(251, 191, 36, 0.92);
+  border-color: rgba(251, 191, 36, 0.95);
+  color: #422006;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.28);
+}
+.tasklist-failed-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.tasklist-failed-chip .tasklist-failed-chip-clear {
+  font-size: 0.68rem;
+  margin-left: 2px;
+}
+html.theme-light .tasklist-failed-chip {
+  border-color: rgba(180, 83, 9, 0.35);
+  background: rgba(180, 83, 9, 0.08);
+  color: #b45309;
+}
+html.theme-light .tasklist-failed-chip:hover:not(:disabled) {
+  background: rgba(180, 83, 9, 0.14);
+}
+html.theme-light .tasklist-failed-chip.active {
+  background: #b45309;
+  border-color: #b45309;
+  color: #fff;
+}
+/* 筛选把待处理任务全部挡住时的提示条 */
+.tasklist-filter-empty-hint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.85rem;
+  border-radius: 10px;
+}
+@media (max-width: 575.98px) {
+  .tasklist-failed-chip-row {
+    justify-content: flex-start;
+  }
 }
 .task-auto-search-group {
   display: flex;

@@ -1,4 +1,5 @@
   import { resolveShareurl, formatSuggestionShareId as formatShareIdFromUrl } from './shareurl.js';
+  import { collectFailedTaskNames, taskDisplayName } from './taskShareBan.js';
 
   // 拼音工具函数：将中文转为拼音（小写），用于排序比较。
   // 排序比较器会反复调用，因此按任务名缓存转换结果，避免 O(n log n) 次全量转拼音。
@@ -425,6 +426,8 @@ export default {
             return '';
           }
         })(),
+        // 失败任务筛选：总览统计（failed_tasks）是否已加载，加载前不显示 0 以免误导
+        overviewShareBanLoaded: false,
         taskLatestRecords: {}, // 唯一任务名的兼容映射
         taskLatestRecordsByPath: {}, // 按任务保存路径隔离
         taskLatestFilesByPath: {}, // 按任务保存路径隔离
@@ -1065,6 +1068,44 @@ export default {
           } catch (e) {
             return [];
           }
+        },
+
+        // 失败任务筛选：按任务名归集「分享失效且转存未完成」的任务
+        // 口径与总览页「待处理」一致（服务端 failed_tasks 已做过完成度/可恢复错误过滤）。
+        // 注意：必须定义在 computed 块内，且不要与 methods 同名（Vue 3 下 methods 会覆盖 computed）。
+        failedTaskNameSet() {
+          try {
+            if (!Array.isArray(this.formData.tasklist) || this.formData.tasklist.length === 0) {
+              return new Set();
+            }
+            const seasonCountsByTaskName = {};
+            this.formData.tasklist.forEach(task => {
+              const name = taskDisplayName(task);
+              if (!name) return;
+              seasonCountsByTaskName[name] = this.getTaskSeasonCounts
+                ? this.getTaskSeasonCounts(task)
+                : null;
+            });
+            return collectFailedTaskNames(this.formData.tasklist, {
+              banByTaskName: this.overviewShareBanByTaskName || {},
+              seasonCountsByTaskName,
+              getCalendarTask: name => (this.getCalendarTaskByName ? this.getCalendarTaskByName(name) : null)
+            }).names;
+          } catch (e) {
+            return new Set();
+          }
+        },
+        // 失败任务数量（与筛选结果同源，保证角标数字与列表一致）
+        failedTaskCount() {
+          try {
+            return this.failedTaskNameSet.size;
+          } catch (e) {
+            return 0;
+          }
+        },
+        // 失败任务筛选是否生效（用于胶囊/空态/预警条文案判断）
+        isFailedFilterActive() {
+          return this.taskStatusFilter === 'failed';
         },
 
         // 任务列表：当前可见任务数量
@@ -2952,6 +2993,10 @@ export default {
             const normalizedProgress = (progress === null || progress === undefined) ? null : Number(progress);
             const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress);
             const isMatched = this.isTaskMatchedWithMetadata(task);
+            // 失败任务：分享链接失效且转存尚未完成（口径与总览页「待处理」一致）
+            if (filter === 'failed') {
+              return this.failedTaskNameSet.has(taskDisplayName(task));
+            }
             switch (filter) {
               case 'incomplete':
                 return !isCompleted;
@@ -6262,6 +6307,7 @@ export default {
                   byName[item.taskname] = item.shareurl_ban || '';
                 });
                 this.overviewShareBanByTaskName = byName;
+                this.overviewShareBanLoaded = true;
                 this.applyOverviewShareBans(byName);
               }
             })
@@ -6273,6 +6319,16 @@ export default {
             });
           this._overviewTaskStatsInflight[reqKey] = promise;
           return promise;
+        },
+        // 总览页「待处理」预警条点击：跳到任务列表，筛出需要处理的失败任务
+        showFailedTasks() {
+          try {
+            this.taskStatusFilter = 'failed';
+            // 同时清掉可能把失败任务挡在外面的名称/任务筛选
+            this.taskNameFilter = '';
+            this.taskDirSelected = '';
+            this.changeTab('tasklist');
+          } catch (e) {}
         },
         // 任务列表：向服务端请求未完成任务的分享失效结果（浏览器不再逐条验链）
         checkShareUrlStatus() {
