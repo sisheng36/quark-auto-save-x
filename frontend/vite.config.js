@@ -10,6 +10,11 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true,
     assetsDir: 'assets',
+    // 首屏解析耗时优化：生产包不产出 sourcemap，
+    // 目标语法对齐主流浏览器，减少运行时的语法降级开销
+    sourcemap: false,
+    target: 'es2019',
+    reportCompressedSize: false,
     rollupOptions: {
       input: 'src/main.js'
     }
