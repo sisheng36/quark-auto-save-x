@@ -19,7 +19,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=2">
-  <link rel="stylesheet" href="./static/css/main.css?v=48">
+  <link rel="stylesheet" href="./static/css/main.css?v=49">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
@@ -95,7 +95,8 @@
                 <i class="bi bi-film"></i> <span class="nav-text">影视发现</span>
               </a>
             </li>
-            <li class="nav-item">
+            <!-- 移动端不提供追剧日历：窄屏由 CSS 隐藏，changeTab 里也有回落守卫 -->
+            <li class="nav-item calendar-nav-item">
               <a class="nav-link" href="#" :class="{active: activeTab === 'calendar'}" @click="changeTab('calendar')">
                 <i class="bi bi-calendar3-week"></i> <span class="nav-text">追剧日历</span>
               </a>
@@ -402,21 +403,24 @@
                       </div>
                       <input type="text" v-model="formData.source.cloudsaver.server" class="form-control" placeholder="CloudSaver 服务器地址，如：http://192.168.1.100:8008">
                     </div>
-                    <div class="input-group mb-2">
-                      <div class="input-group-prepend">
-                        <span class="input-group-text">用户名</span>
+                    <!-- 用户名与密码在桌面端并排一行，窄屏自动回到单列 -->
+                    <div class="source-cred-grid">
+                      <div class="input-group mb-2">
+                        <div class="input-group-prepend">
+                          <span class="input-group-text">用户名</span>
+                        </div>
+                        <input type="text" v-model="formData.source.cloudsaver.username" class="form-control" placeholder="CloudSaver 用户名">
                       </div>
-                      <input type="text" v-model="formData.source.cloudsaver.username" class="form-control" placeholder="CloudSaver 用户名">
-                    </div>
-                    <div class="input-group mb-2">
-                      <div class="input-group-prepend">
-                        <span class="input-group-text">密码</span>
-                      </div>
-                      <input :type="showCloudSaverPassword ? 'text' : 'password'" v-model="formData.source.cloudsaver.password" class="form-control" placeholder="CloudSaver 密码">
-                      <div class="input-group-append">
-                        <button type="button" class="btn btn-outline-secondary" @click="toggleCloudSaverPassword">
-                          <i :class="['bi', showCloudSaverPassword ? 'bi-eye' : 'bi-eye-slash']"></i>
-                        </button>
+                      <div class="input-group mb-2">
+                        <div class="input-group-prepend">
+                          <span class="input-group-text">密码</span>
+                        </div>
+                        <input :type="showCloudSaverPassword ? 'text' : 'password'" v-model="formData.source.cloudsaver.password" class="form-control" placeholder="CloudSaver 密码">
+                        <div class="input-group-append">
+                          <button type="button" class="btn btn-outline-secondary" @click="toggleCloudSaverPassword">
+                            <i :class="['bi', showCloudSaverPassword ? 'bi-eye' : 'bi-eye-slash']"></i>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </template>
@@ -444,20 +448,20 @@
             </div>
             <div class="collapse glass-config-body" id="cfg_magic">
             <div v-for="(value, key, index) in formData.magic_regex" :key="key" class="form-group mb-2">
-              <div class="input-group" :class="{ 'magic-regex-single': Object.keys(formData.magic_regex).length === 1 }">
-                <div class="input-group-prepend">
+              <div class="input-group magic-regex-row" :class="{ 'magic-regex-single': Object.keys(formData.magic_regex).length === 1 }">
+                <div class="input-group-prepend magic-name-label">
                   <span class="input-group-text">魔法名</span>
                 </div>
-                <input type="text" :data-oldkey="key" v-model="key" class="form-control" @change="updateMagicRegexKey($event.target.dataset.oldkey, $event.target.value)" placeholder="自定义名称">
-                <div class="input-group-prepend">
+                <input type="text" :data-oldkey="key" v-model="key" class="form-control magic-name-input" @change="updateMagicRegexKey($event.target.dataset.oldkey, $event.target.value)" placeholder="自定义名称">
+                <div class="input-group-prepend magic-pattern-label">
                   <span class="input-group-text">正则命名</span>
                 </div>
                 <input type="text" v-model="value.pattern" class="form-control" placeholder="匹配表达式">
                 <input type="text" v-model="value.replace" class="form-control" placeholder="替换表达式">
-                <div class="input-group-append" v-if="Object.keys(formData.magic_regex).length === 1">
+                <div class="input-group-append magic-regex-actions" v-if="Object.keys(formData.magic_regex).length === 1">
                   <button type="button" class="btn btn-outline-primary" @click="addMagicRegex()"><i class="bi bi-plus-lg"></i></button>
                 </div>
-                <div class="input-group-append" v-else>
+                <div class="input-group-append magic-regex-actions" v-else>
                   <button v-if="index === Object.keys(formData.magic_regex).length - 1" type="button" class="btn btn-outline-primary" @click="addMagicRegex()"><i class="bi bi-plus-lg"></i></button>
                   <button type="button" class="btn btn-outline-danger" @click="removeMagicRegex(key)"><i class="bi bi-dash-lg"></i></button>
                 </div>
@@ -785,35 +789,38 @@
               </div>
             </div>
             <div class="collapse glass-config-body" id="cfg_api">
-            <div class="input-group api-config-group">
+            <div class="input-group api-config-group api-config-group-wide">
               <div class="input-group-prepend">
                 <span class="input-group-text" title="QASX Token，用于授权第三方访问系统的API接口并执行受控操作">QASX Token</span>
               </div>
               <input type="text" v-model="formData.api_token" class="form-control token-display" disabled title="QASX Token，用于授权第三方访问系统的API接口并执行受控操作">
             </div>
-            <div class="input-group api-config-group">
-              <div class="input-group-prepend">
-                <span class="input-group-text">
-                  <a href="https://www.themoviedb.org/settings/api" target="_blank" class="api-label-link" title="前往TMDB设置页面获取API密钥">TMDB API 密钥</a>
-                </span>
+            <!-- 桌面端一行两个，窄屏回落单列；QASX Token 为只读长串，保持整行 -->
+            <div class="api-config-grid">
+              <div class="input-group api-config-group">
+                <div class="input-group-prepend">
+                  <span class="input-group-text">
+                    <a href="https://www.themoviedb.org/settings/api" target="_blank" class="api-label-link" title="前往TMDB设置页面获取API密钥">TMDB API 密钥</a>
+                  </span>
+                </div>
+                <input type="text" v-model="formData.tmdb_api_key" class="form-control" placeholder="输入 TMDB API 密钥，用于获取电视节目的元数据" title="TMDB API密钥，用于获取电视节目的元数据">
               </div>
-              <input type="text" v-model="formData.tmdb_api_key" class="form-control" placeholder="输入 TMDB API 密钥，用于获取电视节目的元数据" title="TMDB API密钥，用于获取电视节目的元数据">
-            </div>
-            <div class="input-group api-config-group">
-              <div class="input-group-prepend">
-                <span class="input-group-text">
-                  <a href="https://trakt.tv/oauth/applications" target="_blank" class="api-label-link" title="前往Trakt应用管理页面获取Client ID">Trakt Client ID</a>
-                </span>
+              <div class="input-group api-config-group">
+                <div class="input-group-prepend">
+                  <span class="input-group-text">
+                    <a href="https://trakt.tv/oauth/applications" target="_blank" class="api-label-link" title="前往Trakt应用管理页面获取Client ID">Trakt Client ID</a>
+                  </span>
+                </div>
+                <input type="text" v-model="formData.trakt.client_id" class="form-control" placeholder="输入 Trakt Client ID，用于获取电视节目的播出时间" title="Trakt Client ID，用于获取电视节目的播出时间">
               </div>
-              <input type="text" v-model="formData.trakt.client_id" class="form-control" placeholder="输入 Trakt Client ID，用于获取电视节目的播出时间" title="Trakt Client ID，用于获取电视节目的播出时间">
-            </div>
-            <div class="input-group api-config-group">
-              <div class="input-group-prepend">
-                <span class="input-group-text">
-                  <a href="https://github.com/settings/tokens" target="_blank" class="api-label-link" title="前往GitHub生成访问令牌（classic token，勾选 repo 或仅 public_repo 权限即可）">GitHub 访问令牌</a>
-                </span>
+              <div class="input-group api-config-group api-config-group-wide">
+                <div class="input-group-prepend">
+                  <span class="input-group-text">
+                    <a href="https://github.com/settings/tokens" target="_blank" class="api-label-link" title="前往GitHub生成访问令牌（classic token，勾选 repo 或仅 public_repo 权限即可）">GitHub 访问令牌</a>
+                  </span>
+                </div>
+                <input type="password" v-model="formData.github_token" class="form-control" placeholder="可选，填写后新版检测走服务端代理，避免GitHub API限流；留空则保持直连" title="GitHub访问令牌（可选）：填写后新版检测经服务端请求GitHub，避免匿名API限流（60次/小时/IP）">
               </div>
-              <input type="password" v-model="formData.github_token" class="form-control" placeholder="可选，填写后新版检测走服务端代理，避免GitHub API限流；留空则保持直连" title="GitHub访问令牌（可选）：填写后新版检测经服务端请求GitHub，避免匿名API限流（60次/小时/IP）">
             </div>
             <p class="tmdb-attribution">部分功能基于 <a href="https://www.themoviedb.org/" target="_blank">TMDB</a> 提供的数据实现，本应用与 TMDB 无关。</p>
             </div>
@@ -939,7 +946,7 @@
                    @keydown.space.prevent="showFailedTasks"
                    title="分享链接已失效且转存尚未完成的任务数；转存已完成或临时网络错误不计入。点击进入任务列表并筛出这些任务">
                 <i class="bi bi-exclamation-triangle-fill"></i>
-                <span>有 <b>{{ overviewStats.failedCount }}</b> 个任务需要你处理：分享链接已失效，请检查或更新分享</span>
+                <span>有 <b>{{ overviewStats.failedCount }}</b> 个任务需要你处理</span>
                 <span class="tasklist-dashboard-alert-go">去处理<i class="bi bi-chevron-right"></i></span>
               </div>
               <div class="tasklist-dashboard-alert tasklist-dashboard-alert-ok" v-else
@@ -1034,7 +1041,7 @@
                 <button type="button" class="overview-quick-link" @click="changeTab('discovery')">
                   <i class="bi bi-film"></i><span>影视发现</span>
                 </button>
-                <button type="button" class="overview-quick-link" @click="changeTab('calendar')">
+                <button type="button" class="overview-quick-link overview-quick-link-calendar" @click="changeTab('calendar')">
                   <i class="bi bi-calendar3-week"></i><span>追剧日历</span>
                 </button>
                 <button type="button" class="overview-quick-link" @click="changeTab('history')">
@@ -1122,7 +1129,7 @@
                     </span>
                   </div>
                   <!-- 视图切换按钮：列表视图 与 海报视图 -->
-                  <div class="ml-2">
+                  <div class="ml-2 tasklist-view-slot">
                     <button type="button"
                             class="btn btn-outline-secondary btn-sm tasklist-view-toggle-btn"
                             @click="toggleTasklistViewMode"
@@ -1131,7 +1138,7 @@
                     </button>
                   </div>
                   <!-- 创建任务按钮 -->
-                  <div class="ml-2">
+                  <div class="ml-2 tasklist-create-slot">
                     <button type="button"
                             class="btn btn-outline-secondary btn-sm tasklist-create-task-btn"
                             @click="openCreateTaskModal"
@@ -1149,37 +1156,40 @@
                   <div class="task-card-toggle" :aria-expanded="!!taskExpandState[index]" :aria-controls="'collapse_'+index" @click="toggleTaskExpand(index)" :title="getTaskShareSubscriptionHoverText(task)">
                     <i class="bi bi-caret-right-fill"></i>
                     <span class="task-card-title">#<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span></span>
-                    <template v-for="key in formData.button_display_order" :key="'header-' + key">
-                       <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && getTaskLatestFile(task)"
-                            class="task-latest-file"
-                            :class="{'hover-only': formData.button_display.latest_transfer_file === 'hover'}">
-                         · {{ getTaskLatestFile(task) }}
+                    <!-- 卡片信息区：桌面端与标题同行，移动端整体掉到第二行 -->
+                    <span class="task-card-metrics">
+                      <template v-for="key in formData.button_display_order" :key="'header-' + key">
+                         <span v-if="key==='latest_transfer_file' && formData.button_display.latest_transfer_file !== 'disabled' && getTaskLatestFile(task)"
+                              class="task-metric-item task-latest-file"
+                              :class="{'hover-only': formData.button_display.latest_transfer_file === 'hover'}">
+                           {{ getTaskLatestFile(task) }}
+                        </span>
+                         <span v-else-if="key==='season_counts' && formData.button_display.season_counts !== 'disabled' && getTaskSeasonCounts(task)"
+                              class="task-metric-item task-season-counts"
+                              :class="{'hover-only': formData.button_display.season_counts === 'hover'}"
+                               v-html="formatSeasonCounts(getTaskSeasonCounts(task))">
+                        </span>
+                         <span v-else-if="key==='latest_update_date' && formData.button_display.latest_update_date !== 'disabled' && getTaskLatestRecord(task)"
+                              class="task-metric-item task-latest-date"
+                              :class="{'hover-only': formData.button_display.latest_update_date === 'hover'}">
+                           {{ getTaskLatestRecordDisplay(task) }}
+                        </span>
+                         <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task) !== null"
+                              class="task-metric-item task-progress"
+                              :class="{'hover-only': formData.button_display.task_progress === 'hover'}">
+                           {{ getTaskProgressDisplay(task) }}
+                        </span>
+                         <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(getCalendarTaskForTask(task) || task)"
+                              class="task-metric-item task-show-status"
+                              :class="{'hover-only': formData.button_display.show_status === 'hover'}">
+                           {{ getTaskShowStatus(getCalendarTaskForTask(task) || task) }}
+                        </span>
+                      </template>
+                       <span v-if="isTaskUpdatedToday(task) && shouldShowTodayIndicator()"
+                            class="task-today-indicator"
+                            :class="getTodayIndicatorClass()">
+                        <i class="bi bi-stars"></i>
                       </span>
-                       <span v-else-if="key==='season_counts' && formData.button_display.season_counts !== 'disabled' && getTaskSeasonCounts(task)"
-                            class="task-season-counts"
-                            :class="{'hover-only': formData.button_display.season_counts === 'hover'}"
-                             v-html="' · ' + formatSeasonCounts(getTaskSeasonCounts(task))">
-                      </span>
-                       <span v-else-if="key==='latest_update_date' && formData.button_display.latest_update_date !== 'disabled' && getTaskLatestRecord(task)"
-                            class="task-latest-date"
-                            :class="{'hover-only': formData.button_display.latest_update_date === 'hover'}">
-                         · {{ getTaskLatestRecordDisplay(task) }}
-                      </span>
-                       <span v-else-if="key==='task_progress' && formData.button_display.task_progress !== 'disabled' && getTaskProgress(task) !== null"
-                            class="task-progress"
-                            :class="{'hover-only': formData.button_display.task_progress === 'hover'}">
-                         · {{ getTaskProgressDisplay(task) }}
-                      </span>
-                       <span v-else-if="key==='show_status' && formData.button_display.show_status !== 'disabled' && getTaskShowStatus(getCalendarTaskForTask(task) || task)"
-                            class="task-show-status"
-                            :class="{'hover-only': formData.button_display.show_status === 'hover'}">
-                         · {{ getTaskShowStatus(getCalendarTaskForTask(task) || task) }}
-                      </span>
-                    </template>
-                     <span v-if="isTaskUpdatedToday(task) && shouldShowTodayIndicator()"
-                          class="task-today-indicator"
-                          :class="getTodayIndicatorClass()">
-                      <i class="bi bi-stars"></i>
                     </span>
                   </div>
                   <div class="task-buttons">
@@ -1530,14 +1540,14 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-if="history.hasLoaded && filteredHistoryRecords.length === 0">
+                  <tr v-if="history.hasLoaded && filteredHistoryRecords.length === 0" class="empty-state-row">
                     <td colspan="6" class="text-center">暂无记录</td>
                   </tr>
                   <tr v-for="(record, index) in filteredHistoryRecords" :key="record.id" 
                       :class="{'selected-record': selectedRecords.includes(record.id)}" 
                       @click="selectRecord($event, record.id)">
-                    <td>{{ record.transfer_time_readable }}</td>
-                    <td class="position-relative">
+                    <td data-label="转存日期">{{ record.transfer_time_readable }}</td>
+                    <td class="position-relative history-card-title" data-label="任务">
                       <div v-if="!record._expandedFields || !record._expandedFields.includes('task_name')" 
                            class="text-truncate" 
                            :title="record.task_name" 
@@ -1553,7 +1563,7 @@
                         {{ record.task_name }}
                       </div>
                     </td>
-                    <td class="position-relative">
+                    <td class="position-relative" data-label="原文件">
                       <div v-if="!record._expandedFields || !record._expandedFields.includes('original_name')" 
                            class="text-truncate" 
                            :title="record.original_name" 
@@ -1567,7 +1577,7 @@
                         {{ record.original_name }}
                       </div>
                     </td>
-                    <td class="position-relative">
+                    <td class="position-relative" data-label="转存为">
                       <div v-if="!record._expandedFields || !record._expandedFields.includes('renamed_to')"
                            class="text-truncate"
                            :title="record.renamed_to"
@@ -1591,13 +1601,13 @@
                         </span>
                       </div>
                     </td>
-                    <td class="file-size-cell">
+                    <td class="file-size-cell" data-label="大小">
                       <span class="file-size-value">{{ record.file_size_readable }}</span>
                       <span v-if="showHistoryDeleteBtn(record)" class="delete-record-btn" @click.stop="deleteRecord(record.id, record.original_name)" title="删除记录">
                         <i class="bi bi-trash3"></i>
                       </span>
                     </td>
-                    <td>{{ record.modify_date_readable }}</td>
+                    <td data-label="修改日期">{{ record.modify_date_readable }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1798,7 +1808,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-if="fileManager.hasLoaded && fileManager.fileList.length === 0">
+                  <tr v-if="fileManager.hasLoaded && fileManager.fileList.length === 0" class="empty-state-row">
                     <td colspan="3" class="text-center">当前文件夹为空</td>
                   </tr>
                   <template v-else>
@@ -1806,7 +1816,7 @@
                         @click="handleFileRowClick(file, $event)"
                         :class="{'selected-file': fileManager.selectedFiles.includes(file.fid)}"
                         class="cursor-pointer">
-                      <td class="position-relative">
+                      <td class="position-relative file-card-title" data-label="文件名">
                         <!-- 编辑状态 -->
                         <div v-if="file._editing" class="d-flex align-items-center" @click.stop>
                           <i class="bi mr-2" :class="getFileIconClass(file.file_name, file.dir)"></i>
@@ -1846,7 +1856,7 @@
                           <i :class="file._expanded ? 'bi bi-chevron-up' : 'bi bi-chevron-down'"></i>
                         </div>
                       </td>
-                      <td class="file-size-cell">
+                      <td class="file-size-cell" data-label="大小">
                         <span class="file-size-value">{{ file.dir ? (file.include_items + ' 项') : formatFileSize(file.size || file.file_size) }}</span>
                         <span v-if="showFileManagerActionBar(file)" class="file-manager-action-btns">
                           <span v-if="showFileManagerRenameBtn(file)" class="rename-record-btn" @click.stop="startRenameFile(file)" :title="fileManager.selectedFiles.length > 1 ? '批量重命名' : '重命名'">
@@ -1863,7 +1873,7 @@
                           </span>
                         </span>
                       </td>
-                      <td>{{ formatDate(file.updated_at) }}</td>
+                      <td data-label="修改日期">{{ formatDate(file.updated_at) }}</td>
                     </tr>
                   </template>
                 </tbody>

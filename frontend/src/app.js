@@ -428,6 +428,9 @@ export default {
         })(),
         // 失败任务筛选：总览统计（failed_tasks）是否已加载，加载前不显示 0 以免误导
         overviewShareBanLoaded: false,
+        // 本地已修好分享链接的任务名：服务端验链结果要下一个周期才更新，
+        // 靠它先压住旧结论，避免运行按钮卡在失效警告态
+        shareBanClearedNames: {},
         taskLatestRecords: {}, // 唯一任务名的兼容映射
         taskLatestRecordsByPath: {}, // 按任务保存路径隔离
         taskLatestFilesByPath: {}, // 按任务保存路径隔离
@@ -2646,11 +2649,47 @@ export default {
             if (!task) return false;
             const name = task.taskname || task.task_name || '';
             if (!name) return false;
+            // 本地方才修好链接的任务优先按「可运行」显示，等服务器重新验链覆盖
+            if (this.shareBanClearedNames && this.shareBanClearedNames[name]) return false;
             const ban = this.overviewShareBanByTaskName[name];
             return !!(ban && String(ban).trim() !== '');
           } catch (e) {
             return false;
           }
+        },
+        // 记录某个任务刚从本地修复了分享链接（改链接必然先清掉失效标记）
+        // 显式传 task 名而非依赖 task 对象：删改任务后索引会整体重排，对象引用可能已经失效
+        markTaskShareBanCleared(task) {
+          try {
+            const name = taskDisplayName(task);
+            if (!name) return;
+            // 创建任务弹窗里的草稿不在任务列表内，不该影响列表上的失效提示
+            const tasklist = (this.formData && Array.isArray(this.formData.tasklist))
+              ? this.formData.tasklist
+              : [];
+            if (!tasklist.some(item => taskDisplayName(item) === name)) return;
+            if (!this.shareBanClearedNames) this.shareBanClearedNames = {};
+            this.shareBanClearedNames[name] = true;
+            // 列表页下一次拿到新结果前，映射里的旧结论会经 applyOverviewShareBans
+            // 把警告文案再写回任务，所以这里连旧结论一起解除
+            if (this.overviewShareBanByTaskName) {
+              delete this.overviewShareBanByTaskName[name];
+            }
+          } catch (e) {}
+        },
+        // 验链又失败了：撤销上面的本地修复，让按钮和警告重新回到失效态
+        markTaskShareBanActive(task, message) {
+          try {
+            const name = taskDisplayName(task);
+            if (!name) return;
+            if (this.shareBanClearedNames) {
+              delete this.shareBanClearedNames[name];
+            }
+            const ban = message || (task && task.shareurl_ban) || '';
+            if (!ban) return;
+            if (!this.overviewShareBanByTaskName) this.overviewShareBanByTaskName = {};
+            this.overviewShareBanByTaskName[name] = ban;
+          } catch (e) {}
         },
         getTaskShowStatus(taskNameOrTask) {
           try {
@@ -6306,6 +6345,11 @@ export default {
                   if (!item || !item.taskname) return;
                   byName[item.taskname] = item.shareurl_ban || '';
                 });
+                // 本地已修好链接的任务先不受旧验链结论支配：这里一次性过滤，
+                // 运行按钮、待处理角标、展开面板的失效告警都从同一份数据取值
+                Object.keys(this.shareBanClearedNames || {}).forEach(key => {
+                  if (byName[key] !== undefined) delete byName[key];
+                });
                 this.overviewShareBanByTaskName = byName;
                 this.overviewShareBanLoaded = true;
                 this.applyOverviewShareBans(byName);
@@ -6427,6 +6471,11 @@ export default {
           this.loadOverviewTaskStats(false);
         },
         changeTab(tab) {
+          // 移动端不开放追剧日历（底部导航已去掉入口），这里回落总览：
+          // 记忆的标签、旧链接、总览快捷入口都可能把窄屏带进日历页
+          if (tab === 'calendar' && typeof window !== 'undefined' && window.innerWidth <= 767.98) {
+            tab = 'overview';
+          }
           this.activeTab = tab;
           // 在本地存储中保存当前标签页状态
           localStorage.setItem('quarkAutoSave_activeTab', tab);
@@ -6890,6 +6939,13 @@ export default {
                 
                 // 保存成功后触发热更新
                 this.triggerTasklistHotUpdate();
+                // 本地修复分享链接时只清了前端内存里的失效标记，配置里那一条早被 JSON 丢弃，
+                // 服务端仍按旧结论报 failed_tasks，所以要重新验链；先清空标记表，
+                // 让 server 的新结论（包括仍然失效）能如实落到按钮和角标上
+                try {
+                  this.shareBanClearedNames = {};
+                  this.checkShareUrlStatus();
+                } catch (e) {}
               } else {
                 // 错误信息仍然使用alert，确保用户看到
                 alert(response.data.message);
@@ -8313,6 +8369,7 @@ export default {
             return;
           }
           task["shareurl_ban"] = undefined;
+          this.markTaskShareBanCleared(task);
           // 从URL中提取任务名
           try {
             const matches = decodeURIComponent(task.shareurl).match(/\/(\w{32})-([^\/]+)$/);
@@ -8353,11 +8410,13 @@ export default {
                 const formattedError = this.formatShareUrlBanMessage(share_detail.error);
                 if (formattedError) {
                   task["shareurl_ban"] = formattedError;
+                  this.markTaskShareBanActive(task, formattedError);
                 }
               } else {
                 // 检查文件列表是否为空
                 if (share_detail.list !== undefined && share_detail.list.length === 0) {
                   task["shareurl_ban"] = "该分享已被删除，无法访问";
+                  this.markTaskShareBanActive(task, task["shareurl_ban"]);
                 } else {
                   task.taskname = task.taskname == "" ? share_detail.share.title : task.taskname;
                   task.savepath = task.savepath.replace(/TASKNAME/g, share_detail.share.title);
@@ -15646,6 +15705,14 @@ export default {
         const savedTab = localStorage.getItem('quarkAutoSave_activeTab');
         if (savedTab) {
           this.activeTab = savedTab;
+        }
+        // 窄屏没有追剧日历入口：上次在桌面上记住的 calendar 会让移动端落到打不开的页面，
+        // 这里改记成总览，避免每次进来都白屏一次
+        if (this.activeTab === 'calendar' && typeof window !== 'undefined' && window.innerWidth <= 767.98) {
+          this.activeTab = 'overview';
+          try {
+            localStorage.setItem('quarkAutoSave_activeTab', 'overview');
+          } catch (e) {}
         }
         
         // 首屏初始化总览页数据：默认或上次记忆的标签为总览时，

@@ -4852,13 +4852,7 @@ html.theme-light .tasklist-failed-chip.active {
   .navbar-actions {
     margin-right: 52px;
   }
-  .discovery-grid {
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    gap: 10px;
-  }
-  .discovery-poster {
-    height: 155px;
-  }
+  /* 海报网格的两列布局统一由文末「影视发现」章节定义，这里不再重复声明 */
   .calendar-poster-item {
     width: 100%;
   }
@@ -4926,16 +4920,6 @@ html.theme-light .tasklist-failed-chip.active {
   }
   .discovery-search-type .btn {
     flex: 1 1 0;
-  }
-  .discovery-grid {
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-    gap: 8px;
-  }
-  .discovery-poster {
-    height: 132px;
-  }
-  .discovery-title {
-    font-size: 0.82rem;
   }
   .calendar-poster-column {
     scroll-snap-align: center;
@@ -5524,3 +5508,659 @@ html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
 .runlog-content .runlog-line {
   contain-intrinsic-size: auto 1.4em;
 }
+
+/* ============================================================
+   UI 细节修正
+   1) 任务卡信息区：桌面端与标题同行，移动端整体掉到第二行
+   2) 移动端任务列表工具栏左对齐、新建按钮仍在最右
+   3) 影视发现：子分类独占一行、窄屏三行布局与固定两列
+   4) 移动端隐藏追剧日历入口
+   5) 转存记录 / 文件整理：表格改卡片（桌面与移动端统一）
+   6) 系统配置：通知行距、CloudSaver 凭据同排、API 两列、魔法匹配换行
+   ============================================================ */
+
+/* ---------- 1) 任务卡信息区 ---------- */
+/* 分隔点改由 CSS 生成：桌面端首项前面补点号承接标题，各指标之间用尾随点号，
+   这样窄屏换行时新行不会以一个孤零零的点号开头。 */
+.task-card-metrics {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+/* 分隔点挂在每项前面，首项的点号由下面单独补上：
+   这样无论哪些指标被禁用、渲染出几项，都不会多出或漏掉点号。
+   窄屏换行时，新行以「点号 + 内容」开头，与上一行的间隔视觉一致。 */
+.task-card-metrics .task-metric-item::before {
+  content: '\00b7 ';
+  color: var(--text-tertiary);
+}
+.task-card-metrics .task-metric-item:first-child::before {
+  content: '\00b7 ';
+}
+/* 桌面端：信息区不参与收缩竞争，超长时仍按原有 max-width 省略 */
+.task-card-metrics .task-metric-item {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.task-card-metrics .task-today-indicator {
+  flex: 0 0 auto;
+}
+
+/* ---------- 2) 移动端任务列表工具栏 ---------- */
+@media (max-width: 767.98px) {
+  /* Bootstrap 的 .justify-content-end 带 !important，这里必须同样提高优先级 */
+  .tasklist-sort-controls {
+    justify-content: flex-start !important;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+  /* 待处理胶囊：整行、左对齐 */
+  .tasklist-failed-chip-slot {
+    order: 1;
+    width: 100%;
+    margin: 0 0 6px;
+  }
+  .tasklist-failed-chip {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 8px 12px;
+    height: auto;
+    line-height: 1.2;
+    text-align: left;
+    white-space: normal;
+  }
+  /* 排序胶囊：整行、左右两端对齐 */
+  .tasklist-sort-wrapper {
+    order: 2;
+    flex: 1 1 100%;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .tasklist-sort-wrapper .filter-select {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+  }
+  /* 计数与视图切换：与上方控件左对齐 */
+  .tasklist-sort-controls > .tasklist-count-indicator {
+    order: 3;
+    margin-left: 0 !important;
+    height: 32px;
+    padding: 0 12px;
+    font-size: 0.82rem;
+  }
+  .tasklist-sort-controls > .tasklist-view-slot {
+    order: 4;
+    margin-left: 0 !important;
+  }
+  /* 新建任务：位置不变，仍靠最右 */
+  .tasklist-sort-controls > .tasklist-create-slot {
+    order: 5;
+    margin-left: auto !important;
+  }
+  .tasklist-view-toggle-btn,
+  .tasklist-create-task-btn {
+    height: 32px;
+    min-height: 32px;
+  }
+
+  /* ---------- 3) 移动端任务卡两行 ---------- */
+  /* 按钮组改为绝对定位固定在右上角：标题行仍与按钮同排，
+     但信息区可以独占整张卡片的宽度，不必再被按钮挤掉一段。 */
+  .task-card-header {
+    position: relative;
+    align-items: flex-start;
+    gap: 0;
+  }
+  .task-card-toggle {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 2px;
+    padding: 2px 0;
+  }
+  /* 第一行：箭头 + 标题；右侧留出按钮组的宽度，避免文字被压到按钮下面 */
+  .task-card-title {
+    font-size: 0.92rem;
+    max-width: calc(100% - 88px);
+  }
+  /* 第二行：信息区独占整行，与标题左端对齐（缩进约等于箭头宽度） */
+  .task-card-metrics {
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 8px;
+    /* 顶部留出按钮组的高度（按钮绝对定位在右上角），信息区不会压在按钮下面 */
+    margin: 10px 0 0 18px;
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+  /* 第二行行首不需要点号，首个指标直接开始 */
+  .task-card-metrics .task-metric-item:first-child::before {
+    content: '';
+  }
+  .task-card-metrics .task-metric-item {
+    flex: 0 0 auto;
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  .task-card-metrics .task-latest-file {
+    flex: 1 1 100%;
+    word-break: break-all;
+  }
+  .task-buttons {
+    position: absolute;
+    top: 2px;
+    right: 0;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .task-buttons .btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0.2rem 0.4rem;
+  }
+
+  /* ---------- 4) 移动端屏蔽追剧日历 ---------- */
+  .calendar-nav-item,
+  .overview-quick-link-calendar {
+    display: none !important;
+  }
+  /* 少了一格，改成 3 列避免出现空位 */
+  .overview-quick-links {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* ---------- 6) 魔法匹配：每条规则改为纵向排列 ---------- */
+  .glass-config-body .input-group.magic-regex-row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    align-items: center;
+  }
+  /* 「魔法名」跟随输入框同一行；「正则命名」单独起一行，作为下方两个表达式的小标题 */
+  .magic-regex-row > .magic-name-label {
+    flex: 0 0 auto;
+    max-width: none;
+    margin: 0;
+  }
+  .magic-regex-row > .magic-pattern-label {
+    flex: 1 1 100%;
+    max-width: none;
+    margin: 0;
+  }
+  .magic-regex-row > .magic-name-label .input-group-text,
+  .magic-regex-row > .magic-pattern-label .input-group-text {
+    min-width: 0;
+    width: auto;
+    justify-content: flex-start;
+    border-right: none;
+    padding-right: 4px;
+  }
+  /* 「正则命名」是下方两个表达式的标题，不再是输入框的一部分：
+     去掉胶囊底色与描边，只保留小号说明文字 */
+  .magic-regex-row > .magic-pattern-label .input-group-text {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+  .magic-regex-row > .magic-name-input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* 匹配/替换表达式各占一整行，不再被压成一条缝 */
+  .magic-regex-row > .form-control:not(.magic-name-input) {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .magic-regex-row > .magic-regex-actions {
+    flex: 0 0 100%;
+    display: flex;
+    justify-content: flex-end;
+    margin: 0;
+  }
+}
+
+/* ---------- 3) 影视发现：子分类独占第二行 ---------- */
+.discovery-sub-buttons {
+  flex: 1 1 100%;
+}
+@media (max-width: 767.98px) {
+  .discovery-controls {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  /* 第一行：整行搜索框（左「搜索影视」+ 右放大镜） */
+  .discovery-search-toggle {
+    flex: 1 1 100%;
+    width: 100%;
+    height: 40px;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 14px;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+  }
+  .discovery-search-toggle::before {
+    content: '搜索影视';
+    margin-right: auto;
+  }
+  .discovery-search-toggle i {
+    font-size: 0.95rem;
+  }
+  .discovery-search {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  /* 第二、三行：主分类与子分类横向滑动，保持单行不堆叠 */
+  .discovery-main-buttons,
+  .discovery-sub-buttons {
+    flex: 1 1 100%;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .discovery-main-buttons::-webkit-scrollbar,
+  .discovery-sub-buttons::-webkit-scrollbar {
+    display: none;
+  }
+  .discovery-main-buttons .discovery-btn,
+  .discovery-sub-buttons .discovery-btn {
+    flex: 0 0 auto;
+    padding: 0.32rem 0.78rem;
+    font-size: 0.82rem;
+  }
+  /* 海报网格：固定一行两个，封面 2:3 */
+  .discovery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 2px;
+  }
+  .discovery-poster {
+    height: auto;
+    aspect-ratio: 2 / 3;
+  }
+  .discovery-item {
+    border-radius: 12px;
+  }
+  .discovery-title {
+    font-size: 0.85rem;
+    line-height: 1.35;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* ---------- 6) 系统配置排版 ---------- */
+/* 通知设置：「推送通知」下拉与下方推送渠道输入框之间补足行距 */
+.glass-config-body > .filter-select {
+  margin-bottom: 10px;
+}
+.glass-config-body > .filter-select:last-child {
+  margin-bottom: 0;
+}
+/* 搜索来源 CloudSaver：用户名与密码在桌面端并排一行 */
+.source-cred-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+@media (min-width: 768px) {
+  .source-cred-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+}
+/* API：桌面端一行两个；QASX Token 这类只读长串保持整行 */
+.api-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+@media (min-width: 768px) {
+  .api-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 16px;
+  }
+  .api-config-grid > .api-config-group-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ============================================================
+   5) 转存记录 / 文件整理：表格改卡片
+   只作用于两个页面自己的表格（.table-responsive 的直接子表），
+   保存路径等弹窗里同样带 .selectable-files 的表不受影响。
+   桌面端横向分栏、窄屏纵向堆叠。
+   ============================================================ */
+.table-responsive > .table.selectable-records,
+.table-responsive > .table.selectable-files {
+  display: block;
+  width: 100%;
+  table-layout: auto;
+  border-spacing: 0;
+  margin-bottom: 0;
+}
+/* 表头降级为排序胶囊行：卡片布局下它仍是唯一的排序入口，不能隐藏 */
+.table-responsive > .table.selectable-records > thead,
+.table-responsive > .table.selectable-files > thead {
+  display: block;
+  margin-bottom: 10px;
+}
+.table-responsive > .table.selectable-records > thead > tr,
+.table-responsive > .table.selectable-files > thead > tr {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  border: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.table-responsive > .table.selectable-records > thead > tr::-webkit-scrollbar,
+.table-responsive > .table.selectable-files > thead > tr::-webkit-scrollbar {
+  display: none;
+}
+.table-responsive > .table.selectable-records > thead > tr > th,
+.table-responsive > .table.selectable-files > thead > tr > th {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  width: auto !important;
+  min-width: 0 !important;
+  padding: 5px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+html.theme-light .table-responsive > .table.selectable-records > thead > tr > th,
+html.theme-light .table-responsive > .table.selectable-files > thead > tr > th {
+  background: rgba(255, 255, 255, 0.62);
+  border-color: rgba(255, 255, 255, 0.85);
+}
+/* 当前排序字段高亮，与桌面表头箭头语义一致 */
+.table-responsive > .table.selectable-records > thead > tr > th:has(i.bi),
+.table-responsive > .table.selectable-files > thead > tr > th:has(i.bi) {
+  color: #fff;
+  background: var(--accent-grad);
+  border-color: transparent;
+  box-shadow: 0 2px 9px rgba(139, 92, 246, 0.35);
+}
+.table-responsive > .table.selectable-records > tbody,
+.table-responsive > .table.selectable-files > tbody {
+  display: block;
+  width: 100%;
+}
+/* 每一行 = 一张卡片 */
+.table-responsive > .table.selectable-records > tbody > tr,
+.table-responsive > .table.selectable-files > tbody > tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 13px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.055);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+html.theme-light .table-responsive > .table.selectable-records > tbody > tr,
+html.theme-light .table-responsive > .table.selectable-files > tbody > tr {
+  background: rgba(255, 255, 255, 0.62);
+  border-color: rgba(255, 255, 255, 0.8);
+}
+.table-responsive > .table.selectable-records > tbody > tr:hover,
+.table-responsive > .table.selectable-files > tbody > tr:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border-strong);
+}
+html.theme-light .table-responsive > .table.selectable-records > tbody > tr:hover,
+html.theme-light .table-responsive > .table.selectable-files > tbody > tr:hover {
+  background: rgba(255, 255, 255, 0.82);
+}
+/* 单元格 = 「字段名 + 值」，字段名由 ::before 从 data-label 生成 */
+.table-responsive > .table.selectable-records > tbody > tr > td,
+.table-responsive > .table.selectable-files > tbody > tr > td {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: auto !important;
+  max-width: 100%;
+  padding: 0 0 6px 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.5;
+  font-size: 0.85rem;
+}
+.table-responsive > .table.selectable-records > tbody > tr > td:last-child,
+.table-responsive > .table.selectable-files > tbody > tr > td:last-child {
+  padding-bottom: 0 !important;
+}
+.table-responsive > .table.selectable-records > tbody > tr > td[data-label]::before,
+.table-responsive > .table.selectable-files > tbody > tr > td[data-label]::before {
+  content: attr(data-label);
+  flex: 0 0 3.9em;
+  color: var(--text-tertiary);
+  font-size: 0.76rem;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+/* 卡片标题：任务名 / 文件名放大加粗，作为视觉起点 */
+.table-responsive > .table.selectable-records > tbody > tr > td.history-card-title,
+.table-responsive > .table.selectable-files > tbody > tr > td.file-card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-bottom: 8px !important;
+}
+.table-responsive > .table.selectable-records > tbody > tr > td.history-card-title::before,
+.table-responsive > .table.selectable-files > tbody > tr > td.file-card-title::before {
+  display: none;
+}
+/* 长文本完整换行展示，不再依赖桌面端的悬浮提示 */
+.table-responsive > .table.selectable-records > tbody > tr > td .text-truncate,
+.table-responsive > .table.selectable-files > tbody > tr > td .text-truncate {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  word-break: break-word;
+  min-width: 0;
+  flex: 1;
+}
+.table-responsive > .table.selectable-records > tbody > tr > td > div,
+.table-responsive > .table.selectable-files > tbody > tr > td > div {
+  min-width: 0;
+}
+/* 文本已完整展示：桌面端的展开箭头与重复副本不再需要 */
+.table-responsive > .table.selectable-records .expand-button,
+.table-responsive > .table.selectable-files .expand-button {
+  display: none;
+}
+.table-responsive > .table.selectable-records > tbody > tr > td .expanded-text {
+  display: none;
+}
+/* 大小/时间等次要信息弱化，操作按钮靠右成排 */
+.table-responsive .file-size-cell {
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+.table-responsive .file-manager-action-btns {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.table-responsive .delete-record-btn,
+.table-responsive .move-record-btn,
+.table-responsive .extract-record-btn,
+.table-responsive .rename-record-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.9rem;
+}
+html.theme-light .table-responsive .delete-record-btn,
+html.theme-light .table-responsive .move-record-btn,
+html.theme-light .table-responsive .extract-record-btn,
+html.theme-light .table-responsive .rename-record-btn {
+  background: rgba(15, 23, 42, 0.06);
+}
+.table-responsive > .table.selectable-records > tbody > tr.selected-record,
+.table-responsive > .table.selectable-files > tbody > tr.selected-file {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+html.theme-light .table-responsive > .table.selectable-records > tbody > tr.selected-record,
+html.theme-light .table-responsive > .table.selectable-files > tbody > tr.selected-file {
+  background: rgba(139, 92, 246, 0.16);
+}
+/* 空状态行：整行居中，不画成卡片 */
+.table-responsive > .table.selectable-records > tbody > tr.empty-state-row,
+.table-responsive > .table.selectable-files > tbody > tr.empty-state-row {
+  display: block;
+  padding: 24px 8px;
+  background: transparent;
+  border-color: transparent;
+}
+.table-responsive > .table.selectable-records > tbody > tr.empty-state-row:hover,
+.table-responsive > .table.selectable-files > tbody > tr.empty-state-row:hover {
+  background: transparent;
+  border-color: transparent;
+}
+.table-responsive > .table.selectable-records > tbody > tr.empty-state-row > td,
+.table-responsive > .table.selectable-files > tbody > tr.empty-state-row > td {
+  display: block;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+.table-responsive > .table.selectable-records > tbody > tr.empty-state-row > td::before,
+.table-responsive > .table.selectable-files > tbody > tr.empty-state-row > td::before {
+  display: none;
+}
+
+/* 窄屏：纵向堆叠，字段顺序为 标题 → 原文件 → 转存为 → 大小 → 时间 */
+@media (max-width: 767.98px) {
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(2) { order: 1; }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(3) { order: 2; }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(4) { order: 3; }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(5) { order: 4; }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(1) {
+    order: 5;
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+  }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(6) {
+    order: 6;
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+  }
+  .table-responsive > .table.selectable-files > tbody > tr > td:nth-child(1) { order: 1; }
+  .table-responsive > .table.selectable-files > tbody > tr > td:nth-child(2) { order: 2; }
+  .table-responsive > .table.selectable-files > tbody > tr > td:nth-child(3) {
+    order: 3;
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+  }
+}
+
+/* 桌面端：记录卡左右分栏（左：任务/原文件/转存为，右：时间与大小），
+   文件卡单行三段，信息密度与改动前的表格接近。 */
+@media (min-width: 768px) {
+  .table-responsive > .table.selectable-records > tbody > tr {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+    column-gap: 24px;
+    padding: 12px 16px;
+  }
+  .table-responsive > .table.selectable-records > tbody > tr > td {
+    padding-bottom: 4px !important;
+  }
+  /* 左列：任务名 → 原文件 → 转存为 */
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(2) {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(3) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(4) {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  /* 右列：转存日期 → 大小 → 修改日期 */
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(1) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(5) {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .table-responsive > .table.selectable-records > tbody > tr > td:nth-child(6) {
+    grid-column: 2;
+    grid-row: 3;
+    padding-bottom: 0 !important;
+  }
+
+  /* 文件整理：文件名 → 大小（含操作按钮）→ 修改日期，同一行三段 */
+  .table-responsive > .table.selectable-files > tbody > tr {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    column-gap: 20px;
+    align-items: center;
+  }
+  .table-responsive > .table.selectable-files > tbody > tr > td {
+    padding-bottom: 0 !important;
+    align-items: center;
+  }
+  .table-responsive > .table.selectable-files > tbody > tr > td:nth-child(1) {
+    grid-column: 1;
+  }
+  .table-responsive > .table.selectable-files > tbody > tr > td:nth-child(2) {
+    grid-column: 2;
+  }
+  .table-responsive > .table.selectable-files > tbody > tr > td:nth-child(3) {
+    grid-column: 3;
+  }
+  /* 桌面端文件卡字段名窄一些，避免挤占文件名；大小单元格已有图标语义 */
+  .table-responsive > .table.selectable-files > tbody > tr > td[data-label]::before {
+    flex: 0 0 auto;
+    margin-right: 2px;
+  }
+  .table-responsive > .table.selectable-files > tbody > tr > td.file-size-cell::before {
+    display: none;
+  }
+}
+
