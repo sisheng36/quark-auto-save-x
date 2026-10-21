@@ -82,15 +82,19 @@ class EmbyService:
     # ==================== 数据拉取 ====================
 
     def fetch_library_items(self) -> List[dict]:
-        """分页拉取所有 Series + Movie，含 ProviderIds、ProductionYear"""
+        """分页拉取所有 Series + Movie + Season，含 ProviderIds、ProductionYear。
+
+        季条目一起拉：季这一级通常没有 ProviderIds（实测 1577 季里 0 个有 Imdb），
+        但季号与 SeriesId 是后续「IMDb 反查 → 季号」落库需要的。
+        """
         all_items = []
         start_index = 0
         page_size = 1000
         while True:
             data = self._get("Items", {
                 "Recursive": "true",
-                "IncludeItemTypes": "Series,Movie",
-                "Fields": "ProviderIds,ProductionYear",
+                "IncludeItemTypes": "Series,Movie,Season",
+                "Fields": "ProviderIds,ProductionYear,SeriesId,IndexNumber,ParentId",
                 "StartIndex": start_index,
                 "Limit": page_size,
             })
@@ -122,6 +126,72 @@ class EmbyService:
                 seasons.append(int(idx))
         return sorted(seasons)
 
+    def lookup_by_imdb(self, imdb_id: str) -> Optional[dict]:
+        """按 IMDb ID 反查 Emby 条目（AnyProviderIdEquals）。
+
+        豆瓣多季剧集的条目里填的是「该季第一集」的 IMDb，整剧 Series 上并没有这个 ID，
+        所以只能反查。返回：
+          {item_type, emby_id, series_emby_id, season_number}
+        item_type 为 Series 表示这是整剧 ID；为 Episode 时 season_number 即该集所在季。
+        """
+        imdb_id = str(imdb_id or "").strip().lower()
+        if not imdb_id:
+            return None
+        data = self._get("Items", {
+            "Recursive": "true",
+            "AnyProviderIdEquals": f"imdb.{imdb_id}",
+            "Fields": "ProviderIds,SeriesId,ParentIndexNumber,IndexNumber",
+            "Limit": 10,
+        })
+        if not data:
+            return None
+        items = data.get("Items") or []
+        if not items:
+            return None
+        # 这个 ID 本身就挂在 Series 上 → 整剧 ID，按整剧匹配（S1 也走这条，无需季级兜底）
+        series_own = [
+            it for it in items
+            if it.get("Type") == "Series"
+            and self._normalize_imdb_id((it.get("ProviderIds") or {}).get("Imdb", "")) == imdb_id
+        ]
+        if series_own:
+            return {
+                "item_type": "Series",
+                "emby_id": str(series_own[0].get("Id", "")),
+                "series_emby_id": str(series_own[0].get("Id", "")),
+                "season_number": None,
+            }
+        # 否则这是「某一季第一集」的 ID：优先取第 2 季及以后的集，
+        # 第 1 季的季 IMDb 与整剧 ID 容易混淆，且 S1 本来就能靠整剧匹配命中。
+        episodes = [it for it in items if it.get("Type") == "Episode"]
+        later_seasons = [
+            it for it in episodes
+            if (it.get("ParentIndexNumber") or 0) >= 2 and it.get("SeriesId")
+        ]
+        picked = None
+        if later_seasons:
+            later_seasons.sort(key=lambda it: (it.get("ParentIndexNumber") or 0, it.get("IndexNumber") or 0))
+            picked = later_seasons[0]
+        elif episodes:
+            episodes.sort(key=lambda it: (it.get("ParentIndexNumber") or 0, it.get("IndexNumber") or 0))
+            picked = episodes[0]
+        if picked:
+            return {
+                "item_type": "Episode",
+                "emby_id": str(picked.get("Id", "")),
+                "series_emby_id": str(picked.get("SeriesId", "") or ""),
+                "season_number": int(picked.get("ParentIndexNumber") or 0) or None,
+            }
+        series = [it for it in items if it.get("Type") == "Series"]
+        if series:
+            return {
+                "item_type": "Series",
+                "emby_id": str(series[0].get("Id", "")),
+                "series_emby_id": str(series[0].get("Id", "")),
+                "season_number": None,
+            }
+        return None
+
     def refresh_local_cache(self, cal_db) -> dict:
         """
         全量拉取 Emby 媒体库数据并写入本地缓存。
@@ -134,12 +204,32 @@ class EmbyService:
             if not raw_items:
                 return {"success": False, "count": 0, "message": "Emby 媒体库为空或拉取失败"}
             now = int(time.time())
+            # 季条目只在内存里映射，本身不写入缓存表
+            seasons_by_series = {}
+            for raw in raw_items:
+                if raw.get("Type") != "Season":
+                    continue
+                series_emby_id = str(raw.get("SeriesId", "") or raw.get("ParentId", "") or "")
+                idx = raw.get("IndexNumber")
+                if not series_emby_id or idx is None:
+                    continue
+                seasons_by_series.setdefault(series_emby_id, set()).add(int(idx))
+
+            # 旧缓存的季级 IMDb：季列表没变就沿用，避免每次刷新都重新反查
+            previous = {}
+            try:
+                previous = cal_db.get_emby_season_imdb_map() or {}
+            except Exception as e:
+                logger.warning(f"读取上次季级 IMDb 缓存失败: {e}")
+
             normalized = []
             for raw in raw_items:
                 emby_id = str(raw.get("Id", ""))
                 if not emby_id:
                     continue
                 item_type = raw.get("Type", "")
+                if item_type == "Season":
+                    continue
                 provider_ids = raw.get("ProviderIds", {}) or {}
                 provider_tmdb = str(provider_ids.get("Tmdb", "") or "")
                 provider_imdb = str(provider_ids.get("Imdb", "") or "")
@@ -148,10 +238,14 @@ class EmbyService:
                 name = raw.get("Name", "") or ""
                 original_title = raw.get("OriginalTitle", "") or ""
                 season_numbers = ""
-                # Series 才拉取季信息
+                season_imdb_ids = ""
                 if item_type == "Series":
-                    seasons = self.fetch_seasons(emby_id)
+                    seasons = sorted(seasons_by_series.get(emby_id) or self.fetch_seasons(emby_id))
                     season_numbers = ",".join(str(s) for s in seasons)
+                    cached = previous.get(emby_id) or {}
+                    # 季列表没变 → 直接复用上次反查结果
+                    if cached.get("season_numbers") == season_numbers:
+                        season_imdb_ids = cached.get("season_imdb_ids", "") or ""
                 normalized.append({
                     "emby_id": emby_id,
                     "name": name,
@@ -162,17 +256,126 @@ class EmbyService:
                     "provider_imdb": provider_imdb,
                     "provider_tvdb": provider_tvdb,
                     "season_numbers": season_numbers,
+                    "season_imdb_ids": season_imdb_ids,
                     "last_updated": now,
                 })
             # 全量替换：清空旧数据 → 写入新数据
             cal_db.clear_emby_items()
             cal_db.upsert_emby_items_batch(normalized)
             logger.info(f"Emby 媒体库缓存已更新，共 {len(normalized)} 条")
-            return {"success": True, "count": len(normalized), "message": f"已缓存 {len(normalized)} 条"}
+            filled = self._fill_season_imdb_ids(cal_db, normalized)
+            message = f"已缓存 {len(normalized)} 条"
+            if filled:
+                message += f"，补全 {filled} 部剧的季 IMDb"
+            return {"success": True, "count": len(normalized), "message": message}
         except Exception as e:
             self.last_error = str(e)
             logger.error(f"刷新 Emby 媒体库缓存失败: {e}")
             return {"success": False, "count": 0, "message": f"刷新失败: {e}"}
+
+    def _fill_season_imdb_ids(self, cal_db, normalized: List[dict],
+                              budget: int = 400, workers: int = 8) -> int:
+        """为「第 2 季及以后、且还没记录季 IMDb」的剧集补全季级 IMDb。
+
+        思路（实测 Emby 4.10）：季条目没有 Imdb，集上写的是单集 IMDb，而豆瓣季条目
+        填的正是「该季第一集」的 IMDb。所以按季取第一集，读出它的 IMDb 就是季 ID。
+        每季只发 1 个 Limit=1 的小请求，不拉全量集；并发跑，单部剧几毫秒。
+        budget 兜底限制单轮最多补多少部剧，剩下的下次刷新继续。
+        """
+        pending = []
+        for item in normalized:
+            if item.get("item_type") != "Series":
+                continue
+            if item.get("season_imdb_ids"):
+                continue
+            seasons = [int(s) for s in str(item.get("season_numbers", "")).split(",")
+                       if s.strip().isdigit()]
+            if any(s >= 2 for s in seasons):
+                pending.append(item)
+        if not pending:
+            return 0
+
+        targets = pending[:max(0, int(budget))]
+        mapping_by_id = {}
+        if targets:
+            from concurrent.futures import ThreadPoolExecutor
+            try:
+                with ThreadPoolExecutor(max_workers=max(1, min(int(workers), len(targets)))) as pool:
+                    futures = {
+                        pool.submit(self._fetch_season_imdb_ids, item["emby_id"]): item
+                        for item in targets
+                    }
+                    for future, item in futures.items():
+                        try:
+                            mapping = future.result()
+                        except Exception as e:
+                            logger.debug(f"补全季 IMDb 失败 {item.get('name')}: {e}")
+                            continue
+                        if mapping:
+                            mapping_by_id[item["emby_id"]] = mapping
+            except Exception as e:
+                logger.warning(f"季 IMDb 并发补全不可用，改为串行: {e}")
+                for item in targets:
+                    try:
+                        mapping = self._fetch_season_imdb_ids(item["emby_id"])
+                    except Exception:
+                        continue
+                    if mapping:
+                        mapping_by_id[item["emby_id"]] = mapping
+
+        updated = []
+        for item in targets:
+            mapping = mapping_by_id.get(item["emby_id"])
+            if not mapping:
+                continue
+            item["season_imdb_ids"] = mapping
+            updated.append({"emby_id": item["emby_id"], "season_imdb_ids": mapping})
+        if not updated:
+            return 0
+        try:
+            cal_db.upsert_emby_season_imdb_batch(updated)
+        except Exception as e:
+            logger.warning(f"写入季级 IMDb 失败: {e}")
+            return 0
+        return len(updated)
+
+    def _fetch_season_imdb_ids(self, series_emby_id: str) -> str:
+        """读某剧第 2 季起每季第一集的 IMDb，拼成 "2:tt123,3:tt456"（失败返回空串）。"""
+        data = self._get("Items", {
+            "ParentId": series_emby_id,
+            "IncludeItemTypes": "Season",
+            "Fields": "IndexNumber",
+            "SortBy": "IndexNumber",
+            "SortOrder": "Ascending",
+        })
+        if not data:
+            return ""
+        seasons = []
+        for season in data.get("Items") or []:
+            idx = season.get("IndexNumber")
+            if idx is None or int(idx) < 2:
+                continue
+            seasons.append((int(idx), str(season.get("Id", "") or "")))
+        pairs = []
+        for number, season_emby_id in sorted(seasons):
+            if not season_emby_id:
+                continue
+            episodes = self._get("Items", {
+                "ParentId": season_emby_id,
+                "IncludeItemTypes": "Episode",
+                "Fields": "ProviderIds",
+                "SortBy": "ParentIndexNumber,IndexNumber",
+                "SortOrder": "Ascending",
+                "Limit": 1,
+            })
+            items = (episodes or {}).get("Items") or []
+            if not items:
+                continue
+            imdb = self._normalize_imdb_id(
+                (items[0].get("ProviderIds") or {}).get("Imdb", ""))
+            if imdb:
+                pairs.append(f"{number}:{imdb}")
+        return ",".join(pairs)
 
     # ==================== 匹配逻辑 ====================
 
@@ -259,6 +462,19 @@ class EmbyService:
                 seasons.append(int(part))
         return seasons
 
+    @staticmethod
+    def _parse_season_imdb_ids(raw: str) -> dict:
+        """解析「季号 → 季级 IMDb」："2:tt123,3:tt456" → {2: 'tt123', 3: 'tt456'}"""
+        mapping = {}
+        for part in str(raw or "").split(","):
+            number, _, imdb = part.partition(":")
+            number = number.strip()
+            imdb = imdb.strip().lower()
+            if not number.isdigit() or not imdb:
+                continue
+            mapping[int(number)] = imdb
+        return mapping
+
     @classmethod
     def _is_season_in_library(cls, matched: dict, season_number: Optional[int]) -> bool:
         """卡片带季号且缓存有季列表时，该季在列表中才算已入库；否则剧集命中即已入库。"""
@@ -279,15 +495,39 @@ class EmbyService:
         }
 
     @classmethod
-    def _title_candidate_allowed(cls, candidate: dict, imdb_id: str) -> bool:
-        """标题命中但双方都有 IMDb 且不一致时，说明是同名不同片，不能算已入库。"""
+    def _title_candidate_allowed(cls, candidate: dict, imdb_id: str,
+                                 season_number: Optional[int] = None) -> bool:
+        """标题命中但双方都有 IMDb 且不一致时，判断是不是同名不同片。
+
+        多季剧集有个坑：豆瓣条目填的是「这一季」的 IMDb（= 该季第一集的 IMDb），
+        而 Emby 的 Series 上挂的是整剧 ID，两者本来就不相等。若直接用「不相等就拦截」，
+        多季剧集会被全部误判成未入库。所以：
+          1) 整剧 ID 相等 → 同一部剧；
+          2) 卡片带季号、且该季的季级 IMDb 与卡片一致 → 同一部剧（最硬的证据）；
+          3) 卡片带季号、但这部剧本季没取到季级 IMDb（实测约 78% 的剧集上没有 IMDb）
+             → 只要这部剧本季确实在库，就认标题命中。季级 IMDb 只是加强证据，
+             取不到时不能因此把已入库判成未入库；
+          4) 卡片不带季号 → 只有 ID 对得上该剧某一季才放行，否则仍按同名不同片拦截。
+        """
         if not imdb_id:
             return True
         candidate_imdb = cls._normalize_imdb_id(candidate.get("provider_imdb", ""))
         if not candidate_imdb:
             # Emby 没刮到 IMDb，标题命中仍然可信
             return True
-        return candidate_imdb == imdb_id
+        if candidate_imdb == imdb_id:
+            return True
+        season_imdbs = cls._parse_season_imdb_ids(candidate.get("season_imdb_ids", ""))
+        if season_number is None:
+            # 无季号：只有 ID 等于该剧某一季的 ID 才认（避免同名不同剧误判）
+            return imdb_id in season_imdbs.values() if season_imdbs else False
+        known = season_imdbs.get(int(season_number))
+        if known:
+            # 该季有季级 IMDb 证据：必须一致
+            return known == imdb_id
+        # 该季没有季级 IMDb：季级证据缺失不等于不是同一部剧，
+        # 退回「这一季确实在库」的判断，避免误报未入库。
+        return cls._is_season_in_library(candidate, season_number)
 
     @staticmethod
     def _normalize_imdb_id(imdb_id) -> str:
@@ -353,6 +593,8 @@ class EmbyService:
         imdb_index = {}
         # 构建标题索引: {normalized_title: [item, ...]}
         title_index = {}
+        # 构建季级 IMDb 索引: {season_imdb: [(series_item, season_number), ...]}
+        season_imdb_index = {}
         for item in all_emby:
             tmdb = item.get("provider_tmdb", "")
             item_type = item.get("item_type", "")
@@ -361,6 +603,9 @@ class EmbyService:
             imdb = self._normalize_imdb_id(item.get("provider_imdb", ""))
             if imdb:
                 imdb_index.setdefault(imdb, []).append(item)
+            for season_number, season_imdb in self._parse_season_imdb_ids(
+                    item.get("season_imdb_ids", "")).items():
+                season_imdb_index.setdefault(season_imdb, []).append((item, season_number))
             for key in (item.get("name", ""), item.get("original_title", "")):
                 if key:
                     norm = self._normalize_title(key)
@@ -411,14 +656,30 @@ class EmbyService:
                         in_library = self._is_season_in_library(matched, season_number)
                     status_map[status_key] = self._result_from_match(matched, in_library, "imdb")
                     continue
+                # 2b. 豆瓣多季条目填的是「这一季」的 IMDb（= 该季第一集的 IMDb），
+                # 这个 ID 不会出现在 Series 上。按季级索引兜底，避免多季剧集全部误判未入库。
+                if not self._is_movie_item(di):
+                    _, season_number = self._split_season_suffix(di.get("title", "") or "")
+                    for season_item, season_hit in season_imdb_index.get(imdb_id, []):
+                        if season_number is not None and int(season_hit) != int(season_number):
+                            continue
+                        status_map[status_key] = self._result_from_match(
+                            season_item, True, "imdb-season")
+                        break
+                    if status_key in status_map:
+                        continue
             # 3. 标题+年份模糊匹配（豆瓣榜单卡无 tmdb_id）
             title = di.get("title", "")
             year = di.get("year", "")
+            # 卡片标题里的季号（豆瓣多季条目形如「某某剧 第三季」），IMDb 冲突判定要用
+            card_season = None
+            if title and not self._is_movie_item(di):
+                _, card_season = self._split_season_suffix(title)
             if title:
                 norm_title = self._normalize_title(title)
                 candidates = [
                     c for c in title_index.get(norm_title, [])
-                    if self._title_candidate_allowed(c, imdb_id)
+                    if self._title_candidate_allowed(c, imdb_id, card_season)
                 ]
                 if candidates:
                     best = self._pick_best_candidate(candidates, year)
@@ -433,10 +694,10 @@ class EmbyService:
                         if norm_base and norm_base != norm_title:
                             base_candidates = [
                                 c for c in title_index.get(norm_base, [])
-                                if self._title_candidate_allowed(c, imdb_id)
+                                if self._title_candidate_allowed(c, imdb_id, season_number)
                             ]
                             if base_candidates:
-                                best = self._pick_series_candidate(base_candidates)
+                                best = self._pick_series_candidate(base_candidates, season_number)
                                 if best:
                                     in_library = self._is_season_in_library(best, season_number)
                                     status_map[status_key] = self._result_from_match(best, in_library, "title")
@@ -460,10 +721,19 @@ class EmbyService:
         year = di.get("year", "")
         return f"title-{title}-{year}"
 
+    @staticmethod
+    def _prefer_with_imdb(candidates: list) -> list:
+        """同名多部时，优先保留刮到 IMDb 的那部：它有更硬的证据，也更可能是正片。"""
+        if not candidates or len(candidates) < 2:
+            return candidates
+        with_imdb = [c for c in candidates if str(c.get("provider_imdb") or "").strip()]
+        return with_imdb or candidates
+
     def _pick_best_candidate(self, candidates: list, year: str) -> Optional[dict]:
         """从候选条目中挑选年份最接近的"""
         if not candidates:
             return None
+        candidates = self._prefer_with_imdb(candidates)
         if len(candidates) == 1:
             return candidates[0]
         if not year:
@@ -486,9 +756,13 @@ class EmbyService:
                 best_diff = diff
         return best or candidates[0]
 
-    @staticmethod
-    def _pick_series_candidate(candidates: list) -> Optional[dict]:
-        """剥季匹配：优先 Series，不去掉年份差过大的候选（分季年份 ≠ 开播年）。"""
+    @classmethod
+    def _pick_series_candidate(cls, candidates: list, season_number: Optional[int] = None) -> Optional[dict]:
+        """剥季匹配：优先 Series，不去掉年份差过大的候选（分季年份 ≠ 开播年）。
+
+        同名多部（例如 1996 与 1999 两版《西游记》）时，先排除本季不在库的候选，
+        再优先刮到 IMDb 的那部，避免随手挑中重名条目导致误报未入库。
+        """
         if not candidates:
             return None
         unique = []
@@ -502,4 +776,9 @@ class EmbyService:
             unique.append(item)
         series = [item for item in unique if item.get("item_type") == "Series"]
         pool = series or unique
+        if season_number is not None:
+            has_season = [item for item in pool if cls._is_season_in_library(item, season_number)]
+            if has_season:
+                pool = has_season
+        pool = cls._prefer_with_imdb(pool)
         return pool[0]

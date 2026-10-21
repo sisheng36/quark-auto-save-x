@@ -670,6 +670,24 @@ class CalendarDB:
             provider_imdb TEXT,
             provider_tvdb TEXT,
             season_numbers TEXT,
+            season_imdb_ids TEXT,
+            last_updated INTEGER
+        )
+        ''')
+        # 季级 IMDb：Emby 的 Season 没有 Imdb，只有集上有；豆瓣多季条目填的正是
+        # 「该季第一集」的 IMDb。这里存反查结果：{季号: imdb_id}，形如 "2:tt7787482"
+        cursor.execute("PRAGMA table_info(emby_items)")
+        if 'season_imdb_ids' not in [column[1] for column in cursor.fetchall()]:
+            cursor.execute('ALTER TABLE emby_items ADD COLUMN season_imdb_ids TEXT')
+
+        # IMDb 反查缓存（AnyProviderIdEquals 的结果，避免每次刷新重复请求 Emby）
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS emby_imdb_lookup (
+            imdb_id TEXT PRIMARY KEY,
+            emby_id TEXT,
+            item_type TEXT,
+            series_emby_id TEXT,
+            season_number INTEGER,
             last_updated INTEGER
         )
         ''')
@@ -1781,13 +1799,15 @@ class CalendarDB:
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def upsert_emby_item(self, emby_id: str, name: str, original_title: str, year: str,
                          item_type: str, provider_tmdb: str, provider_imdb: str,
-                         provider_tvdb: str, season_numbers: str, last_updated: int):
+                         provider_tvdb: str, season_numbers: str, last_updated: int,
+                         season_imdb_ids: str = ""):
         """单条写入 Emby 媒体条目"""
         cursor = self.conn.cursor()
         cursor.execute('''
         INSERT INTO emby_items (emby_id, name, original_title, year, item_type,
-            provider_tmdb, provider_imdb, provider_tvdb, season_numbers, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            provider_tmdb, provider_imdb, provider_tvdb, season_numbers,
+            season_imdb_ids, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(emby_id) DO UPDATE SET
             name=excluded.name,
             original_title=excluded.original_title,
@@ -1797,9 +1817,11 @@ class CalendarDB:
             provider_imdb=excluded.provider_imdb,
             provider_tvdb=excluded.provider_tvdb,
             season_numbers=excluded.season_numbers,
+            season_imdb_ids=excluded.season_imdb_ids,
             last_updated=excluded.last_updated
         ''', (emby_id, name, original_title, year, item_type,
-              provider_tmdb, provider_imdb, provider_tvdb, season_numbers, last_updated))
+              provider_tmdb, provider_imdb, provider_tvdb, season_numbers,
+              season_imdb_ids, last_updated))
         self.conn.commit()
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
@@ -1812,12 +1834,14 @@ class CalendarDB:
             it.get('emby_id', ''), it.get('name', ''), it.get('original_title', ''),
             it.get('year', ''), it.get('item_type', ''), it.get('provider_tmdb', ''),
             it.get('provider_imdb', ''), it.get('provider_tvdb', ''),
-            it.get('season_numbers', ''), it.get('last_updated', 0)
+            it.get('season_numbers', ''), it.get('season_imdb_ids', ''),
+            it.get('last_updated', 0)
         ) for it in items]
         cursor.executemany('''
         INSERT INTO emby_items (emby_id, name, original_title, year, item_type,
-            provider_tmdb, provider_imdb, provider_tvdb, season_numbers, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            provider_tmdb, provider_imdb, provider_tvdb, season_numbers,
+            season_imdb_ids, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(emby_id) DO UPDATE SET
             name=excluded.name,
             original_title=excluded.original_title,
@@ -1827,9 +1851,32 @@ class CalendarDB:
             provider_imdb=excluded.provider_imdb,
             provider_tvdb=excluded.provider_tvdb,
             season_numbers=excluded.season_numbers,
+            season_imdb_ids=excluded.season_imdb_ids,
             last_updated=excluded.last_updated
         ''', rows)
         self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_emby_season_imdb_batch(self, items: list):
+        """批量更新「剧集 → 季号 → IMDb」映射，items 为 [{emby_id, season_imdb_ids}, ...]"""
+        if not items:
+            return
+        cursor = self.conn.cursor()
+        cursor.executemany(
+            'UPDATE emby_items SET season_imdb_ids=? WHERE emby_id=?',
+            [(it.get('season_imdb_ids', ''), it.get('emby_id', '')) for it in items],
+        )
+        self.conn.commit()
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_emby_season_imdb_map(self):
+        """读取 {emby_id: season_imdb_ids}，用于增量复用上次的季级 IMDb 结果"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT emby_id, season_numbers, season_imdb_ids FROM emby_items')
+        return {
+            row[0]: {'season_numbers': row[1] or '', 'season_imdb_ids': row[2] or ''}
+            for row in cursor.fetchall()
+        }
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def clear_emby_items(self):
@@ -1853,6 +1900,52 @@ class CalendarDB:
         cursor = self.conn.cursor()
         cursor.execute('SELECT COUNT(*) FROM emby_items')
         return cursor.fetchone()[0]
+
+    # ==================== emby_imdb_lookup ====================
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_emby_imdb_lookup(self, imdb_ids: list):
+        """批量读取 IMDb 反查缓存，返回 {imdb_id: {emby_id, item_type, series_emby_id, season_number, last_updated}}"""
+        imdb_ids = [str(i or '').strip().lower() for i in (imdb_ids or []) if str(i or '').strip()]
+        if not imdb_ids:
+            return {}
+        cursor = self.conn.cursor()
+        result = {}
+        # 分批查询，避免 SQL 变量个数超限
+        for start in range(0, len(imdb_ids), 500):
+            chunk = imdb_ids[start:start + 500]
+            placeholders = ','.join('?' for _ in chunk)
+            cursor.execute(
+                f'SELECT imdb_id, emby_id, item_type, series_emby_id, season_number, last_updated '
+                f'FROM emby_imdb_lookup WHERE imdb_id IN ({placeholders})',
+                chunk,
+            )
+            columns = [c[0] for c in cursor.description]
+            for row in cursor.fetchall():
+                row_dict = dict(zip(columns, row))
+                result[row_dict['imdb_id']] = row_dict
+        return result
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_emby_imdb_lookup(self, rows: list):
+        """批量写入 IMDb 反查缓存，rows 为 dict 列表（未命中的行 emby_id 留空）"""
+        if not rows:
+            return
+        cursor = self.conn.cursor()
+        cursor.executemany('''
+        INSERT INTO emby_imdb_lookup (imdb_id, emby_id, item_type, series_emby_id, season_number, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(imdb_id) DO UPDATE SET
+            emby_id=excluded.emby_id,
+            item_type=excluded.item_type,
+            series_emby_id=excluded.series_emby_id,
+            season_number=excluded.season_number,
+            last_updated=excluded.last_updated
+        ''', [(
+            r.get('imdb_id', ''), r.get('emby_id', ''), r.get('item_type', ''),
+            r.get('series_emby_id', ''), r.get('season_number'), r.get('last_updated', 0),
+        ) for r in rows])
+        self.conn.commit()
 
     # ==================== douban_imdb_cache ====================
 

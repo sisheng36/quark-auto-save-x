@@ -14037,7 +14037,10 @@ export default {
           if (status && status.in_library) {
             const seasons = status.seasons;
             const matchBy = status.match_by || '';
-            const via = matchBy === 'imdb' ? '（IMDb 匹配）' : '';
+            // imdb：整剧 IMDb 命中；imdb-season：豆瓣填的是「这一季」的 IMDb，按季对上
+            let via = '';
+            if (matchBy === 'imdb') via = '（IMDb 匹配）';
+            else if (matchBy === 'imdb-season') via = '（季 IMDb 匹配）';
             if (seasons) {
               const seasonList = seasons.split(',').filter(Boolean).map(s => '第' + s + '季').join('、');
               return seasonList ? `已在 Emby 入库: ${seasonList}${via}` : `已在 Emby 入库${via}`;
