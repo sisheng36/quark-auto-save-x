@@ -1333,9 +1333,13 @@ PORT = int(os.environ.get("PORT", "5005"))
 LOG_DIR = os.path.join(parent_dir, "config", "logs")
 LOG_FILE_PATH = os.path.join(LOG_DIR, "runtime.log")
 MAX_RUNTIME_LOG_LINES = 2000
+# 运行日志尾部倒读的块大小：256KB 约 3400 行，一次读块通常就能覆盖一天的日志窗口
+_RUNTIME_LOG_TAIL_CHUNK = 256 * 1024
 RUNTIME_LOG_PATTERN = re.compile(
     r'^\[(?P<timestamp>\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\[(?P<level>[A-Z]+)\]\s?(?P<message>.*)$'
 )
+# 字节级时间戳正则：倒读时直接在 bytes 上判断时间，避免整行 decode 与 strptime 的开销
+_RUNTIME_LOG_TS_BYTES = re.compile(rb'^\[(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\]')
 os.makedirs(LOG_DIR, exist_ok=True)
 
 config_data = {}
@@ -1671,40 +1675,177 @@ def _log_subprocess_line(stripped_line: str) -> None:
         logging.info(stripped_line)
 
 
-def _parse_runtime_log_line(line: str) -> dict:
-    """解析单行日志文本，提取时间、级别与内容。"""
+def _parse_runtime_log_line(line: str, include_raw: bool = False) -> dict:
+    """解析单行日志文本，提取时间、级别与内容。
+
+    include_raw=False（默认）时不再返回与 message 完全重复的 raw 字段，
+    以精简响应体积；仅在解析失败（message 无法从行内容里拆出来）时保留 raw，
+    保证前端 getRuntimeLogText 的兜底路径不退化。
+    """
     text = (line or "").rstrip("\n")
     entry = {
-        "raw": text,
         "timestamp": "",
         "level": "INFO",
         "message": text
     }
     if not text:
+        # 空行也保留 raw，前端兜底逻辑依赖它判断原文
+        entry["raw"] = text
         return entry
     match = RUNTIME_LOG_PATTERN.match(text.strip())
     if match:
         entry["timestamp"] = match.group("timestamp")
         entry["level"] = match.group("level")
         entry["message"] = match.group("message")
+    if include_raw or not match:
+        entry["raw"] = text
     return entry
 
 
-def get_recent_runtime_logs(limit: int = None, days: float = None) -> list:
+def _parse_runtime_ts(ts: str, current_year: int, now: datetime):
+    """MM-DD HH:MM:SS -> datetime；跨年（解析结果晚于 now）回退一年；失败返回 None"""
+    try:
+        month = int(ts[0:2])
+        day = int(ts[3:5])
+        hour = int(ts[6:8])
+        minute = int(ts[9:11])
+        second = int(ts[12:14])
+        parsed = datetime(current_year, month, day, hour, minute, second)
+    except (ValueError, TypeError, IndexError):
+        return None
+    if parsed > now:
+        # 跨年：日志时间比当前还晚，说明属于上一年
+        try:
+            parsed = datetime(current_year - 1, month, day, hour, minute, second)
+        except (ValueError, TypeError):
+            return None
+    return parsed
+
+
+def _runtime_log_line_time(raw_line: bytes, current_year: int, now: datetime):
+    """字节行 -> datetime；无时间戳或解析失败返回 None（不参与时间窗口判断）。"""
+    if not raw_line.startswith(b"["):
+        # 与 str 侧保持一致：_parse_runtime_log_line 会先 strip 再匹配
+        raw_line = raw_line.lstrip()
+        if not raw_line:
+            return None
+    match = _RUNTIME_LOG_TS_BYTES.match(raw_line)
+    if not match:
+        return None
+    # group(0) 形如 b'[MM-DD HH:MM:SS]'，去掉方括号即时间戳
+    return _parse_runtime_ts(match.group(0)[1:-1].decode("ascii", "ignore"), current_year, now)
+
+
+def _read_runtime_log_tail(time_threshold: datetime, current_year: int, now: datetime):
+    """从日志文件尾部按块倒读，返回时间窗口内的原始字节行（保持文件顺序）。
+
+    倒读流程：
+      1. 二进制模式打开，seek(0, 2) 取文件大小，从尾部向前按 _RUNTIME_LOG_TAIL_CHUNK 读块；
+      2. 每块 split(b"\\n")，块首可能是被边界截断的半行，留给下一轮（更靠前的块）拼接；
+      3. 用字节级正则快速取时间戳，一旦块内出现早于 time_threshold 的行即停止向前读；
+      4. 停止后统一 decode（utf-8 + errors="replace"），多字节字符不会被块边界切断
+         （0x0A 不会出现在 UTF-8 多字节序列中，因此逐行 decode 与整体 decode 等价）。
+
+    Returns:
+        (byte_lines, reached_start)：byte_lines 为按文件顺序（旧 -> 新）的字节行，
+        reached_start 表示是否已读到文件头（未命中窗口边界）。
+    """
+    collected = []  # 逆序收集的字节行（最新在前）
+    remainder = b""
+    reached_start = False
+    hit_boundary = False
+
+    with open(LOG_FILE_PATH, "rb") as fp:
+        fp.seek(0, os.SEEK_END)
+        position = fp.tell()
+        while position > 0:
+            read_size = min(_RUNTIME_LOG_TAIL_CHUNK, position)
+            position -= read_size
+            fp.seek(position)
+            block = fp.read(read_size)
+            if remainder:
+                block += remainder
+                remainder = b""
+            parts = block.split(b"\n")
+            if position > 0:
+                # 块首半行不完整，交给更靠前的块拼接
+                remainder = parts[0]
+                parts = parts[1:]
+            if parts and parts[-1] == b"":
+                # 块以换行结尾时最后一个元素是空串
+                parts.pop()
+            for raw_line in reversed(parts):
+                if not raw_line:
+                    continue
+                if raw_line.endswith(b"\r"):
+                    raw_line = raw_line[:-1]
+                    if not raw_line:
+                        continue
+                line_time = _runtime_log_line_time(raw_line, current_year, now)
+                if line_time is not None and line_time < time_threshold:
+                    hit_boundary = True
+                    break
+                collected.append(raw_line)
+            if hit_boundary:
+                break
+        else:
+            reached_start = True
+
+    collected.reverse()
+    return collected, reached_start
+
+
+def _build_runtime_log_entries(lines, include_raw: bool = False) -> list:
+    """把日志行文本转成响应条目，并生成只由内容决定的稳定 id。
+
+    id = f"{content_hash}:{n}"：
+      - content_hash 由行内容 md5 得到，与行序号无关；
+      - n 是同一内容**在它之后**（更新的方向）还出现过几次，从 0 开始计数。
+
+    n 之所以从尾部往前数，是因为窗口是从尾部开始截取的：窗口向前滑动只会丢掉更旧的行，
+    不会改变任何存活行「后面还有几条相同内容」。若从前往后数，窗口丢掉一条重复行就会让
+    后面所有同内容的行编号整体前移，id 照样漂移（实测窗口内 45% 的行是重复内容，
+    这种漂移会波及上千行）。从尾部计数后，存活行 id 在窗口滑动时严格不变，
+    前端 Vue 的 :key 复用才能真正生效。
+    """
+    logs = []
+    seen = {}
+    for line in reversed(lines):
+        entry = _parse_runtime_log_line(line, include_raw=include_raw)
+        content_hash = hashlib.md5(line.encode("utf-8", "ignore")).hexdigest()
+        occurrence = seen.get(content_hash, 0)
+        seen[content_hash] = occurrence + 1
+        entry["id"] = f"{content_hash}:{occurrence}"
+        logs.append(entry)
+    logs.reverse()
+    return logs
+
+
+def get_recent_runtime_logs(limit: int = None, days: float = None,
+                            max_lines: int = None, include_raw: bool = False):
     """获取最近的运行日志行。
-    
+
     Args:
         limit: 按条数限制，默认 None（不使用条数限制）
         days: 按时间范围限制（天数），默认 None（不使用时间限制）
               如果同时指定 limit 和 days，优先使用 days 参数
-    
+        max_lines: 最多返回多少条（取最新的 N 条），默认 None 表示不限制；
+                   days 分支会先取窗口内全部日志算出 total，再裁剪到最新 max_lines 条
+        include_raw: 是否在每行都携带 raw 字段，默认 False（解析失败的异常行始终保留 raw）
+
     Returns:
-        日志条目列表
+        (logs, truncated, total) 三元组：
+            logs      日志条目列表（按文件顺序，旧 -> 新）
+            truncated 是否因 max_lines 上限被裁剪
+            total     裁剪前的完整条数
     """
     if not os.path.exists(LOG_FILE_PATH):
-        return []
-    
-    # 如果指定了 days 参数，按时间范围筛选
+        return [], False, 0
+
+    now = datetime.now()
+    current_year = now.year
+
+    # 如果指定了 days 参数，按时间范围筛选（尾部倒读，命中窗口边界即停）
     if days is not None:
         try:
             days_float = float(days)
@@ -1712,50 +1853,28 @@ def get_recent_runtime_logs(limit: int = None, days: float = None) -> list:
                 days_float = 1.0  # 默认1天
         except (ValueError, TypeError):
             days_float = 1.0
-        
+
         # 计算时间阈值（当前时间往前推指定天数）
-        time_threshold = datetime.now() - timedelta(days=days_float)
-        current_year = datetime.now().year
-        
-        logs = []
+        time_threshold = now - timedelta(days=days_float)
+
         try:
-            with open(LOG_FILE_PATH, "r", encoding="utf-8", errors="replace") as fp:
-                for raw_line in fp:
-                    line = raw_line.rstrip("\n")
-                    if not line:
-                        continue
-                    
-                    entry = _parse_runtime_log_line(line)
-                    timestamp_str = entry.get("timestamp", "")
-                    
-                    # 解析时间戳（格式：MM-DD HH:MM:SS）
-                    if timestamp_str:
-                        try:
-                            # 尝试解析时间戳，需要加上当前年份
-                            log_time = datetime.strptime(f"{current_year}-{timestamp_str}", "%Y-%m-%d %H:%M:%S")
-                            
-                            # 如果解析出的时间比当前时间还晚（跨年情况），则减一年
-                            if log_time > datetime.now():
-                                log_time = datetime.strptime(f"{current_year - 1}-{timestamp_str}", "%Y-%m-%d %H:%M:%S")
-                            
-                            # 只保留在时间范围内的日志
-                            if log_time >= time_threshold:
-                                entry["id"] = f"{len(logs)}-{hashlib.md5((line + str(len(logs))).encode('utf-8', 'ignore')).hexdigest()}"
-                                logs.append(entry)
-                        except (ValueError, TypeError):
-                            # 如果时间戳解析失败，保留该日志（兼容没有时间戳的日志）
-                            entry["id"] = f"{len(logs)}-{hashlib.md5((line + str(len(logs))).encode('utf-8', 'ignore')).hexdigest()}"
-                            logs.append(entry)
-                    else:
-                        # 没有时间戳的日志也保留
-                        entry["id"] = f"{len(logs)}-{hashlib.md5((line + str(len(logs))).encode('utf-8', 'ignore')).hexdigest()}"
-                        logs.append(entry)
+            byte_lines, _reached_start = _read_runtime_log_tail(
+                time_threshold, current_year, now
+            )
         except Exception as exc:
             logging.warning(f"读取运行日志失败: {exc}")
-            return []
-        
-        return logs
-    
+            return [], False, 0
+
+        total = len(byte_lines)
+        # 读完后统一 decode，避免块边界切断多字节字符
+        text_lines = [item.decode("utf-8", "replace") for item in byte_lines]
+        if max_lines is not None and max_lines > 0 and total > max_lines:
+            text_lines = text_lines[-max_lines:]
+            truncated = True
+        else:
+            truncated = False
+        return _build_runtime_log_entries(text_lines, include_raw=include_raw), truncated, total
+
     # 如果指定了 limit 参数，按条数限制（保持向后兼容）
     if limit is not None:
         try:
@@ -1763,7 +1882,7 @@ def get_recent_runtime_logs(limit: int = None, days: float = None) -> list:
         except (ValueError, TypeError):
             limit_int = 600
         limit_int = max(100, min(limit_int, MAX_RUNTIME_LOG_LINES))
-        
+
         lines = deque(maxlen=limit_int)
         try:
             with open(LOG_FILE_PATH, "r", encoding="utf-8", errors="replace") as fp:
@@ -1771,31 +1890,38 @@ def get_recent_runtime_logs(limit: int = None, days: float = None) -> list:
                     lines.append(raw_line.rstrip("\n"))
         except Exception as exc:
             logging.warning(f"读取运行日志失败: {exc}")
-            return []
-        
-        logs = []
-        for idx, raw_line in enumerate(lines):
-            entry = _parse_runtime_log_line(raw_line)
-            entry["id"] = f"{idx}-{hashlib.md5((raw_line + str(idx)).encode('utf-8', 'ignore')).hexdigest()}"
-            logs.append(entry)
-        return logs
-    
+            return [], False, 0
+
+        text_lines = list(lines)
+        total = len(text_lines)
+        if max_lines is not None and max_lines > 0 and total > max_lines:
+            text_lines = text_lines[-max_lines:]
+            truncated = True
+        else:
+            truncated = False
+        return _build_runtime_log_entries(text_lines, include_raw=include_raw), truncated, total
+
     # 如果两个参数都没有指定，返回所有日志（不推荐，但保持兼容性）
-    logs = []
+    text_lines = []
     try:
         with open(LOG_FILE_PATH, "r", encoding="utf-8", errors="replace") as fp:
             for raw_line in fp:
                 line = raw_line.rstrip("\n")
                 if not line:
                     continue
-                entry = _parse_runtime_log_line(line)
-                entry["id"] = f"{len(logs)}-{hashlib.md5((line + str(len(logs))).encode('utf-8', 'ignore')).hexdigest()}"
-                logs.append(entry)
+                text_lines.append(line)
     except Exception as exc:
         logging.warning(f"读取运行日志失败: {exc}")
-        return []
-    
-    return logs
+        return [], False, 0
+
+    total = len(text_lines)
+    if max_lines is not None and max_lines > 0 and total > max_lines:
+        text_lines = text_lines[-max_lines:]
+        truncated = True
+    else:
+        truncated = False
+
+    return _build_runtime_log_entries(text_lines, include_raw=include_raw), truncated, total
 
 
 # --------- 每日任务：在用户设置的刷新时间重算所有季的已播出集数并更新进度 ---------
@@ -3519,21 +3645,47 @@ def api_runtime_logs():
     # 优先使用 days 参数（按时间范围），如果没有则使用 limit 参数（按条数，保持向后兼容）
     days = request.args.get("days")
     limit = request.args.get("limit")
-    
+
+    # max_lines：最多返回多少条（取最新 N 条）。不传则不裁剪，此时 total 与 logs 条数相等；
+    # 传了才会出现 truncated=True（logs 只剩最新 N 条，total 仍是裁剪前的完整条数）
+    max_lines = request.args.get("max_lines")
+    if max_lines is not None:
+        try:
+            max_lines_int = int(max_lines)
+        except (ValueError, TypeError):
+            max_lines_int = None
+        if max_lines_int is not None and max_lines_int > 0:
+            max_lines = max_lines_int
+        else:
+            max_lines = None
+    else:
+        max_lines = None
+
     if days is not None:
         try:
             days_float = float(days)
-            logs = get_recent_runtime_logs(days=days_float)
+            logs, truncated, total = get_recent_runtime_logs(
+                days=days_float, max_lines=max_lines
+            )
         except (ValueError, TypeError):
             # 如果 days 参数无效，回退到 limit 参数
             limit = limit or 600
-            logs = get_recent_runtime_logs(limit=limit)
+            logs, truncated, total = get_recent_runtime_logs(
+                limit=limit, max_lines=max_lines
+            )
     else:
         # 如果没有 days 参数，使用 limit 参数（保持向后兼容）
         limit = limit or 600
-        logs = get_recent_runtime_logs(limit=limit)
-    
-    return jsonify({"success": True, "logs": logs})
+        logs, truncated, total = get_recent_runtime_logs(
+            limit=limit, max_lines=max_lines
+        )
+
+    return jsonify({
+        "success": True,
+        "logs": logs,
+        "truncated": truncated,
+        "total": total,
+    })
 
 
 # -------------------- 追剧日历：任务提取与匹配辅助 --------------------

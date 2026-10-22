@@ -31,6 +31,12 @@
   }
   // 运行日志行 HTML 缓存：同一行对象只在内容或移动端状态变化时重新生成
   const _runtimeLogHtmlCache = new WeakMap();
+  // 运行日志行小写文本缓存：关键词筛选每次轮询都要全量扫描，
+  // 增量合并复用行对象引用后可直接命中，避免每 5 秒重复 toLowerCase 数千行
+  const _runtimeLogLowerTextCache = new WeakMap();
+  // 任务块解析结果缓存：按 runtimeLogs 数组引用 + 长度缓存，
+  // 避免每次筛选（以及每次轮询后的重算）都重扫全量日志
+  const _runtimeLogTaskBlocksCache = new WeakMap();
 
   function emptyOverviewTaskStats() {
     return {
@@ -416,6 +422,13 @@ export default {
         runtimeLogLevels: ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
         runtimeLogPollingTimer: null,
         runtimeLogInitialized: false, // 跟踪运行日志是否已初始化（用于避免首次加载时的闪现）
+        // 单次最多渲染的日志行数（硬保险）：筛选在全量上执行，截断只影响最终渲染，
+        // 防止数万行日志把主线程卡死
+        runtimeLogRenderLimit: 1500,
+        // 轮询 in-flight 守卫：慢请求未返回时不再叠加新请求
+        _runtimeLogFetching: false,
+        // 页面可见性监听器句柄（stopRuntimeLogPolling 需要能清理）
+        runtimeLogVisibilityHandler: null,
         taskDirs: [""],
         taskDirSelected: "",
         taskNameFilter: "",
@@ -1464,17 +1477,22 @@ export default {
           
           return this.sortTaskNamesByPinyin([...taskNames]);
         },
-        filteredRuntimeLogs() {
+        // 运行日志：筛选（全量执行，不做截断），结果缓存供 filteredRuntimeLogs 复用
+        runtimeLogsFilteredAll() {
           try {
-            let logs = Array.isArray(this.runtimeLogs) ? this.runtimeLogs.slice() : [];
+            // 注意：筛选始终在全量 runtimeLogs 上执行，截断只作用于最终渲染结果，
+            // 否则「筛选出来是空的」会被误读成日志缺失
+            const source = Array.isArray(this.runtimeLogs) ? this.runtimeLogs : [];
+            let logs = source.slice();
             const keyword = (this.runtimeLogFilters.keyword || '').trim().toLowerCase();
             const taskName = (this.runtimeLogFilters.task || '').trim();
             const level = (this.runtimeLogFilters.level || '').trim().toUpperCase();
             
             // 如果指定了任务筛选，需要按任务块进行完整筛选
             if (taskName) {
-              // 首先解析所有任务块
-              const taskBlocks = this.parseTaskBlocks(logs);
+              // 任务块解析结果按 runtimeLogs 引用 + 长度缓存，避免每次筛选重扫；
+              // 这里传原始数组（不是 slice 出来的副本），缓存键才能稳定命中
+              const taskBlocks = this.parseTaskBlocks(source);
               
               // 找出所有匹配任务名称的任务块索引
               const matchedBlockIndices = new Set();
@@ -1506,10 +1524,7 @@ export default {
             
             // 关键词筛选（在任务块筛选之后进行）
             if (keyword) {
-              logs = logs.filter(log => {
-                const text = this.getRuntimeLogText(log).toLowerCase();
-                return text.includes(keyword);
-              });
+              logs = logs.filter(log => this.getRuntimeLogLowerText(log).includes(keyword));
             }
             
             // 日志级别筛选
@@ -1517,16 +1532,34 @@ export default {
               logs = logs.filter(log => (log.level || '').toUpperCase() === level);
             }
             
-            // 移动端（窄屏设备）：倒序显示，让最新日志在顶部
-            const isMobile = window.innerWidth <= 768;
-            if (isMobile) {
-              logs = logs.reverse();
-            }
             return logs;
           } catch (e) {
             console.error('筛选运行日志时出错:', e);
             return this.runtimeLogs || [];
           }
+        },
+        // 运行日志：最终渲染列表（移动端倒序 + 渲染上限截断）
+        filteredRuntimeLogs() {
+          const all = this.runtimeLogsFilteredAll;
+          if (!Array.isArray(all) || all.length === 0) {
+            return [];
+          }
+          // 移动端（窄屏设备）：倒序显示，让最新日志在顶部
+          const isMobile = window.innerWidth <= 768;
+          const ordered = isMobile ? all.slice().reverse() : all;
+          // 渲染上限：桌面端数组末尾是最新日志，移动端倒序后开头是最新日志，
+          // 因此统一保留「最新的一端」，避免把刚写入的日志截掉
+          const limit = parseInt(this.runtimeLogRenderLimit, 10);
+          if (limit > 0 && ordered.length > limit) {
+            return isMobile ? ordered.slice(0, limit) : ordered.slice(-limit);
+          }
+          return ordered;
+        },
+        // 运行日志：是否发生了渲染截断（用于列表顶部提示行）
+        runtimeLogTruncated() {
+          const all = this.runtimeLogsFilteredAll;
+          const limit = parseInt(this.runtimeLogRenderLimit, 10);
+          return Array.isArray(all) && limit > 0 && all.length > limit;
         },
         totalPages() {
           // 直接使用后端返回的total_pages
@@ -1746,12 +1779,15 @@ export default {
             // 如果已经有日志，立即显示并滚动到底部，避免空白
             const hasLogs = Array.isArray(this.runtimeLogs) && this.runtimeLogs.length > 0;
             if (hasLogs && !this.runtimeLogInitialized) {
-              this.runtimeLogInitialized = true;
+              // 先贴底、再显示：若先置 initialized=true，用户会看到「从顶部跳到最新」的闪现。
+              // 贴底 Promise 必定 resolve（内部每步都有超时兜底），不会让内容卡在隐藏态。
               this.$nextTick(() => {
-                const viewport = this.$refs.runtimeLogViewport;
-                if (viewport) {
-                  viewport.scrollTop = viewport.scrollHeight;
-                }
+                // 统一走 sentinel 贴底（content-visibility 下 scrollHeight 不可信）
+                this.scrollRuntimeLogToNewest().then(() => {
+                  if (!this.runtimeLogInitialized) {
+                    this.runtimeLogInitialized = true;
+                  }
+                });
               });
             }
             this.startRuntimeLogPolling();
@@ -8477,6 +8513,22 @@ export default {
           }
           return log.raw ? String(log.raw) : '';
         },
+        // 运行日志：获取用于关键词匹配的小写文本
+        // 增量合并复用行对象引用后可直接命中缓存，避免每 5 秒对数千行重复 toLowerCase；
+        // 用「源文本引用」作为内容指纹，源文本一变（对象被替换或 message 更新）立即失效
+        getRuntimeLogLowerText(log) {
+          if (!log || typeof log !== 'object') {
+            return '';
+          }
+          const source = this.getRuntimeLogText(log);
+          const cached = _runtimeLogLowerTextCache.get(log);
+          if (cached && cached.source === source) {
+            return cached.lower;
+          }
+          const lower = source.toLowerCase();
+          _runtimeLogLowerTextCache.set(log, { source: source, lower: lower });
+          return lower;
+        },
         // 运行日志：将日志文本转换为带可点击区域的 HTML
         getRuntimeLogDisplayHtml(log) {
           // 缓存：同一行对象内容不变时复用生成结果，避免长日志每次渲染重复转义
@@ -8573,11 +8625,19 @@ export default {
         parseTaskBlocks(logs) {
           // 解析日志中的任务块，返回任务块数组
           // 每个任务块包含：startIndex, endIndex, taskName, taskNumber
+          const list = Array.isArray(logs) ? logs : [];
+          // 缓存键 = 数组引用 + 长度：runtimeLogs 每次轮询都会被新数组替换（引用变化），
+          // 同一数组内长度变化说明内容变了，两者合起来足以感知内容变化；
+          // 命中时直接复用上次解析结果，避免每次筛选重扫全量日志
+          const cached = _runtimeLogTaskBlocksCache.get(list);
+          if (cached && cached.length === list.length) {
+            return cached.blocks;
+          }
           const blocks = [];
           let currentBlock = null;
           
-          for (let i = 0; i < logs.length; i++) {
-            const log = logs[i];
+          for (let i = 0; i < list.length; i++) {
+            const log = list[i];
             const text = this.getRuntimeLogText(log);
             
             // 检查是否是任务块开始标记：格式为 #数字------------------
@@ -8633,12 +8693,178 @@ export default {
           
           // 处理最后一个未结束的任务块
           if (currentBlock && currentBlock.endIndex === -1) {
-            currentBlock.endIndex = logs.length - 1;
+            currentBlock.endIndex = list.length - 1;
           }
           
+          _runtimeLogTaskBlocksCache.set(list, { length: list.length, blocks: blocks });
           return blocks;
         },
+        // 运行日志：按 id 增量合并（复用旧行对象引用）
+        // 返回是否发生了实际变化；结构完全一致时跳过赋值，避免无意义重渲染
+        _mergeRuntimeLogs(incoming) {
+          const next = Array.isArray(incoming) ? incoming : [];
+          const prev = Array.isArray(this.runtimeLogs) ? this.runtimeLogs : [];
+
+          // 新列表与旧列表长度相同且逐项 id 一致 —— 内容没变，跳过赋值
+          let sameStructure = prev.length === next.length;
+          if (sameStructure) {
+            for (let i = 0; i < next.length; i++) {
+              const oldLog = prev[i];
+              const newLog = next[i];
+              if (!oldLog || !newLog || oldLog.id !== newLog.id) {
+                sameStructure = false;
+                break;
+              }
+            }
+          }
+          if (sameStructure) {
+            return false;
+          }
+
+          // 按 id 复用旧行对象引用：getRuntimeLogDisplayHtml 用 WeakMap 按对象引用缓存 HTML，
+          // 只有复用引用才能命中缓存，否则每 5 秒都要重新转义全部日志行
+          const oldById = new Map();
+          for (let i = 0; i < prev.length; i++) {
+            const oldLog = prev[i];
+            if (oldLog && oldLog.id !== undefined && oldLog.id !== null) {
+              oldById.set(oldLog.id, oldLog);
+            }
+          }
+          const merged = new Array(next.length);
+          for (let i = 0; i < next.length; i++) {
+            const newLog = next[i];
+            const oldLog = (newLog && newLog.id !== undefined && newLog.id !== null)
+              ? oldById.get(newLog.id)
+              : undefined;
+            merged[i] = oldLog || newLog;
+          }
+          this.runtimeLogs = merged;
+          return true;
+        },
+        // 运行日志：当前是否停在「最新」一端
+        // 桌面端最新在底部（越接近底部越新）；移动端倒序显示、最新在顶部
+        _isRuntimeLogAtNewest(viewport) {
+          const vp = viewport || this.$refs.runtimeLogViewport;
+          if (!vp) return false;
+          const isMobile = window.innerWidth <= 768;
+          if (isMobile) {
+            return vp.scrollTop <= 50;
+          }
+          const distanceFromBottom = vp.scrollHeight - vp.scrollTop - vp.clientHeight;
+          return distanceFromBottom < 50;
+        },
+        // 运行日志：滚动到最新一行（贴底）
+        //
+        // 关键机制：content-visibility: auto 会让视口外的日志行跳过布局，
+        // 于是 scrollHeight 严重低估（实测 3200 行低估近一半），
+        // 单次 scrollTop = scrollHeight 会贴不到底、最后一行完全不可见。
+        // 末尾 sentinel（.runlog-end）是**没有** content-visibility 的普通元素，
+        // 强制布局它时，浏览器必须把前面所有 content-visibility 行的真实高度算出来，
+        // scrollHeight 随即变得可信 —— 这才是贴底正确的真正原因。
+        //
+        // 因此这里刻意不使用 scrollIntoView：它会连带滚动所有可滚动祖先
+        // （包括整个文档，实测把 window.scrollY 从 300 拽到 0），
+        // 而用户正浏览页面中部时每 5 秒被拽回顶部是不可接受的。
+        // 移动端为倒序列表（最新在上），对应把视口滚到顶部，不依赖高度测量。
+        scrollRuntimeLogToNewest() {
+          const viewport = this.$refs.runtimeLogViewport;
+          if (!viewport) {
+            return Promise.resolve();
+          }
+          const isMobile = window.innerWidth <= 768;
+          // 单步调度：优先 rAF（与布局/绘制对齐），并带超时兜底 ——
+          // 后台标签页或无合成器的环境里 rAF 可能被节流到数秒甚至不触发，
+          // 而首次加载的「显示内容」正挂在这个 Promise 上，不能无限期等待
+          const scheduleStep = (cb) => {
+            let done = false;
+            const run = () => {
+              if (done) return;
+              done = true;
+              cb();
+            };
+            if (typeof requestAnimationFrame === 'function') {
+              requestAnimationFrame(run);
+            }
+            setTimeout(run, 120);
+          };
+          // 把视口移到「最新」一端；返回是否已真正抵达最新端
+          const jumpToNewest = () => {
+            const vp = this.$refs.runtimeLogViewport;
+            if (!vp) return true;
+            if (isMobile) {
+              // 倒序列表：最新在顶部，直接回到顶部（不依赖 scrollHeight 测量）
+              vp.scrollTop = 0;
+              return true;
+            }
+            // 先强制 sentinel 布局，把 content-visibility 行的真实高度逼出来
+            const end = this.$refs.runtimeLogEnd;
+            if (end) void end.offsetHeight;
+            void vp.scrollHeight;
+            vp.scrollTop = vp.scrollHeight;
+            // 是否已贴到底（scrollTop 会被钳制在 scrollHeight - clientHeight）
+            return vp.scrollHeight - vp.scrollTop - vp.clientHeight <= 1;
+          };
+          return new Promise((resolve) => {
+            // 第一遍同步贴底（$nextTick 之后 DOM 已更新，此时贴底可避免可见的跳动）
+            jumpToNewest();
+            const writtenTop = viewport.scrollTop;
+            // content-visibility 是「边滚边长」的：贴到底之后，新进入视口的行才做真实布局，
+            // scrollHeight 会继续增长（实测贴底后还会再涨 109~218px），底部因此又远离一点。
+            // 所以不能以「此刻是否已贴底」作为结束条件，而要连续若干次量测，
+            // 直到「贴底 + scrollHeight 不再增长」同时成立才收敛。
+            // 迭代次数有上限，避免异常情况下无限循环。
+            // 两段节奏：
+            //  - 前几轮用 rAF（快），尽快贴合；
+            //  - 之后用递增延迟，因为 content-visibility 的真实高度是渲染后才异步补上的
+            //    （实测贴底后 scrollHeight 还会再涨一次），必须等它落地再补一次贴底。
+            const delays = [0, 0, 60, 160, 320, 600, 1000, 1600];
+            let passIndex = 0;
+            const pass = () => {
+              const vp = this.$refs.runtimeLogViewport;
+              if (vp !== viewport) {
+                resolve();
+                return;
+              }
+              // 期间用户主动滚离「最新」端就放弃，
+              // 避免「用户刚翻看历史，被后台轮询拽回底部」
+              if (isMobile) {
+                if (vp.scrollTop > writtenTop + 8) {
+                  resolve();
+                  return;
+                }
+              } else if (vp.scrollTop < writtenTop - 8) {
+                resolve();
+                return;
+              }
+              const heightBefore = vp.scrollHeight;
+              jumpToNewest();
+              const heightAfter = vp.scrollHeight;
+              passIndex++;
+              if (passIndex >= delays.length) {
+                resolve();
+                return;
+              }
+              // 高度在变说明懒布局还在补，继续跟；高度稳定且已贴底也可以收工
+              const stillGrowing = heightAfter !== heightBefore;
+              if (!stillGrowing && vp.scrollHeight - vp.scrollTop - vp.clientHeight <= 1 && passIndex >= 3) {
+                resolve();
+                return;
+              }
+              const delay = delays[passIndex];
+              if (delay > 0) {
+                setTimeout(pass, delay);
+              } else {
+                scheduleStep(pass);
+              }
+            };
+            scheduleStep(pass);
+          });
+        },
         fetchRuntimeLogs(force = false) {
+          // in-flight 守卫：慢请求未返回时不再叠加新请求（5 秒轮询不会越积越多）
+          if (this._runtimeLogFetching) {
+            return Promise.resolve();
+          }
           const hasLogs = Array.isArray(this.runtimeLogs) && this.runtimeLogs.length > 0;
           const shouldShowLoading = force || (!hasLogs && !this.runtimeLogLoading);
           const isInitialLoad = force && !hasLogs; // 判断是否是首次加载（强制刷新且没有现有日志）
@@ -8664,44 +8890,55 @@ export default {
           if (viewport) {
             previousScrollTop = viewport.scrollTop;
             previousScrollHeight = viewport.scrollHeight;
-            // 判断用户是否接近底部（距离底部小于50像素视为接近底部）
-            const distanceFromBottom = previousScrollHeight - previousScrollTop - viewport.clientHeight;
-            wasNearBottom = distanceFromBottom < 50;
+            // 判断用户是否停在「最新」一端：桌面端是接近底部（<50px），
+            // 移动端列表倒序、最新在顶部，因此改为判断是否接近顶部
+            wasNearBottom = this._isRuntimeLogAtNewest(viewport);
           }
           
           // 获取运行日志显示范围配置（天数），默认1天
           const displayDays = this.formData.performance && this.formData.performance.runtime_log_display_days 
             ? parseFloat(this.formData.performance.runtime_log_display_days) || 1 
             : 1;
-          axios.get('/api/runtime_logs', { params: { days: displayDays } })
+          this._runtimeLogFetching = true;
+          return axios.get('/api/runtime_logs', { params: { days: displayDays } })
             .then(res => {
               if (res.data && res.data.success) {
-                this.runtimeLogs = res.data.logs || [];
+                // 增量合并而非整体替换：窗口滑动时存活行沿用旧对象引用，
+                // 配合稳定的 :key 让 Vue 只 patch 变化的少量节点，不再全量重建 DOM
+                const changed = this._mergeRuntimeLogs(res.data.logs || []);
                 this.$nextTick(() => {
-                  const viewport = this.$refs.runtimeLogViewport;
-                  if (viewport) {
-                    if (isInitialLoad || wasNearBottom) {
-                      // 首次加载或用户接近底部时，滚动到底部（保持自动跟随最新日志）
-                      viewport.scrollTop = viewport.scrollHeight;
-                      // 首次加载时，滚动完成后再显示内容，避免闪现
-                      if (isInitialLoad) {
-                        // 使用 requestAnimationFrame 确保滚动完成后再显示
-                        requestAnimationFrame(() => {
-                          requestAnimationFrame(() => {
-                            this.runtimeLogInitialized = true;
-                          });
-                        });
+                  const vp = this.$refs.runtimeLogViewport;
+                  if (!vp) {
+                    // 视口还没渲染（不在运行日志页，或 DOM 尚未更新）：
+                    // 这里**不能**设置 runtimeLogInitialized。内容此刻不可见，
+                    // 若提前置位，下次进入运行日志页会看到「未滚动、停在顶部」的首屏。
+                    // 保持隐藏，等真正渲染后由下一次 fetch 的贴底流程置位。
+                    return;
+                  }
+                  // 重新判定一次：上一轮贴底后视口停在最新端，但本次合并让内容变长，
+                  // 用刷新前的 wasNearBottom 会误判成「用户已离开」，于是不再跟随最新
+                  const shouldFollow = isInitialLoad || wasNearBottom || this._isRuntimeLogAtNewest(vp);
+                  if (shouldFollow) {
+                    // 首次加载或用户停在最新端时贴底，保持自动跟随最新日志
+                    this.scrollRuntimeLogToNewest().then(() => {
+                      // 首次加载时，滚动完成后再显示内容，避免闪现「顶部 → 底部」
+                      // 只有视口确实存在（上面已 return）才走到这里，因此不会出现
+                      // 「未滚动就显示」的情况
+                      if (isInitialLoad && this.$refs.runtimeLogViewport) {
+                        this.runtimeLogInitialized = true;
                       }
-                    } else {
-                      // 否则保持用户的滚动位置
-                      const newScrollHeight = viewport.scrollHeight;
-                      const heightDiff = newScrollHeight - previousScrollHeight;
-                      viewport.scrollTop = previousScrollTop + heightDiff;
-                    }
-                    // 确保如果不是首次加载，日志是显示的
-                    if (!isInitialLoad && !this.runtimeLogInitialized) {
-                      this.runtimeLogInitialized = true;
-                    }
+                    });
+                  } else if (changed) {
+                    // 否则保持用户的滚动位置（按内容高度差补偿）
+                    // 注意：content-visibility 下 scrollHeight 会低估，补偿量可能偏小，
+                    // 但这里的方向是「不打断用户」，宁可略偏也不要强行贴底
+                    const newScrollHeight = vp.scrollHeight;
+                    const heightDiff = newScrollHeight - previousScrollHeight;
+                    vp.scrollTop = Math.max(0, previousScrollTop + heightDiff);
+                  }
+                  // 确保如果不是首次加载，日志是显示的
+                  if (!isInitialLoad && !this.runtimeLogInitialized) {
+                    this.runtimeLogInitialized = true;
                   }
                 });
               }
@@ -8716,24 +8953,58 @@ export default {
               }
             })
             .finally(() => {
+              this._runtimeLogFetching = false;
               if (shouldShowLoading) {
                 this.runtimeLogLoading = false;
               }
             });
         },
-        startRuntimeLogPolling() {
+        // 运行日志：启动/重启 5 秒轮询定时器（页面隐藏时不启动）
+        _startRuntimeLogInterval() {
           if (this.runtimeLogPollingTimer) {
             return;
           }
-          this.fetchRuntimeLogs(true);
           this.runtimeLogPollingTimer = setInterval(() => {
             this.fetchRuntimeLogs(false);
           }, 5000);
         },
-        stopRuntimeLogPolling() {
+        // 运行日志：仅清理定时器（页面隐藏时用，保留可见性监听器）
+        _stopRuntimeLogInterval() {
           if (this.runtimeLogPollingTimer) {
             clearInterval(this.runtimeLogPollingTimer);
             this.runtimeLogPollingTimer = null;
+          }
+        },
+        startRuntimeLogPolling() {
+          // 已启动过（可见性监听器仍在）：只补定时器，不重复绑监听器
+          if (this.runtimeLogVisibilityHandler) {
+            this._startRuntimeLogInterval();
+            this.fetchRuntimeLogs(false);
+            return;
+          }
+          this.fetchRuntimeLogs(true);
+          // 页面隐藏时不建定时器，等可见性回调里补
+          if (!document.hidden) {
+            this._startRuntimeLogInterval();
+          }
+          // 页面可见性守卫：隐藏时暂停 5 秒轮询，可见时立即补一次再恢复
+          const onVisibilityChange = () => {
+            if (document.hidden) {
+              this._stopRuntimeLogInterval();
+            } else {
+              this.fetchRuntimeLogs(false);
+              this._startRuntimeLogInterval();
+            }
+          };
+          this.runtimeLogVisibilityHandler = onVisibilityChange;
+          document.addEventListener('visibilitychange', onVisibilityChange);
+        },
+        stopRuntimeLogPolling() {
+          this._stopRuntimeLogInterval();
+          // 必须清理可见性监听器，否则离开页面后仍会触发轮询
+          if (this.runtimeLogVisibilityHandler) {
+            document.removeEventListener('visibilitychange', this.runtimeLogVisibilityHandler);
+            this.runtimeLogVisibilityHandler = null;
           }
         },
         async runScriptNow(task_index = null) {
@@ -15896,5 +16167,8 @@ export default {
         
         // 停止任务列表后台监听
         this.stopTasklistAutoWatch();
+
+        // 停止运行日志轮询并移除可见性监听器
+        this.stopRuntimeLogPolling();
       }
     };

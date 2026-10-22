@@ -2983,6 +2983,24 @@ html.theme-light .overview-quick-link:hover {
   border-radius: 4px;
   padding: 0 4px;
 }
+/* 贴底 sentinel：不占视觉空间，仅作为 scrollIntoView 的锚点。
+   注意不要加 content-visibility，否则锚点自身也会被跳过布局。 */
+.runlog-end {
+  height: 1px;
+}
+/* 渲染上限提示行：独立于 .runlog-line，不参与行内点击事件委托 */
+.runlog-truncated-tip {
+  margin-bottom: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border-left: 2px solid var(--warning-color, #f59e0b);
+  background: rgba(245, 158, 11, 0.10);
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  font-family: inherit;
+  white-space: normal;
+  user-select: none;
+}
 .runlog-line:hover {
   background: rgba(255, 255, 255, 0.04);
 }

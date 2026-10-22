@@ -19,7 +19,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=2">
-  <link rel="stylesheet" href="./static/css/main.css?v=54">
+  <link rel="stylesheet" href="./static/css/main.css?v=55">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
@@ -847,6 +847,10 @@
                     暂无匹配的日志
                   </div>
                   <div v-else-if="filteredRuntimeLogs.length > 0" :style="{ visibility: runtimeLogInitialized ? 'visible' : 'hidden' }">
+                    <!-- 渲染上限提示：不参与点击事件委托（无 @click），不影响行内 >>> / 任务名点击 -->
+                    <div v-if="runtimeLogTruncated" class="runlog-truncated-tip">
+                      仅显示最近 {{ runtimeLogRenderLimit }} 行，完整日志见运行日志弹窗
+                    </div>
                     <div v-for="log in filteredRuntimeLogs"
                          :key="log.id"
                          class="runlog-line"
@@ -854,6 +858,9 @@
                       <span class="runlog-line-meta">[{{ log.timestamp || '--' }}][<span class="log-level-clickable" @click="filterByLogLevel(log.level || 'INFO', $event)">{{ log.level || 'INFO' }}</span>]</span>
                       <span class="runlog-line-message" v-html="getRuntimeLogDisplayHtml(log)"></span>
                     </div>
+                    <!-- 末尾 sentinel：贴底锚点。content-visibility 下 scrollHeight 不可信，
+                         靠它 + 二次 rAF scrollIntoView 让浏览器算出真实末尾 -->
+                    <div ref="runtimeLogEnd" class="runlog-end"></div>
                   </div>
                 </div>
               </div>
