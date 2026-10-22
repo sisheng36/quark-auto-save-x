@@ -746,6 +746,114 @@ a:hover {
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(168, 85, 247, 0.18));
 }
 
+/* --------------- PWA 提示条（安装 / 离线 / 版本更新） --------------- */
+/* 固定在底部左侧：右侧留出悬浮操作按钮组的位置（桌面 92px / 窄屏 72px） */
+.pwa-banners {
+  position: fixed;
+  left: 0;
+  right: 92px;
+  bottom: 0;
+  z-index: 1085;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  pointer-events: none;
+}
+.pwa-banner {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: 560px;
+  padding: 10px 12px 10px 14px;
+  border-radius: 12px;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border-strong);
+  box-shadow: 0 8px 30px rgba(4, 3, 18, 0.5);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.pwa-banner > i {
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  color: var(--text-secondary);
+}
+.pwa-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
+}
+.pwa-banner-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  padding: 0.25rem 0.7rem;
+}
+.pwa-banner-close {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+.pwa-banner-close:hover {
+  opacity: 1;
+  color: var(--text-primary);
+}
+.pwa-banner-update {
+  border-color: rgba(99, 102, 241, 0.55);
+}
+.pwa-banner-update > i {
+  color: var(--accent-2);
+}
+.pwa-banner-offline {
+  border-color: rgba(251, 191, 36, 0.45);
+}
+.pwa-banner-offline > i {
+  color: var(--warning-color);
+}
+.pwa-banner-install {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+.pwa-banner-install > i {
+  color: var(--accent-2);
+}
+.pwa-banner-ios {
+  border-color: rgba(56, 189, 248, 0.45);
+}
+.pwa-banner-ios > i {
+  color: var(--info-color);
+}
+@media (max-width: 767.98px) {
+  .pwa-banners {
+    right: 72px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .pwa-banner {
+    font-size: 0.85rem;
+    padding: 9px 10px 9px 12px;
+    gap: 8px;
+  }
+}
+html.theme-light .pwa-banner {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--dark-text-color);
+}
+html.theme-light .pwa-banner > i {
+  color: var(--dark-text-color);
+}
+
 /* --------------- 通用工具类 --------------- */
 .cursor-pointer {
   cursor: pointer;

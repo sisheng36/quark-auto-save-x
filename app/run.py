@@ -2773,6 +2773,115 @@ def favicon():
         mimetype="image/vnd.microsoft.icon",
     )
 
+# ---------------------------------------------------------------------------
+# PWA（Progressive Web App）支持
+# ---------------------------------------------------------------------------
+# Service Worker 逻辑结构版本：改动 sw.js 的缓存策略时 +1，
+# 缓存名随版本变化，发版后浏览器会自动重建整套缓存。
+PWA_SCHEMA_VERSION = 1
+# PWA 静态资源目录（manifest / sw.js 模板 / 离线页）
+PWA_DIR = os.path.join(app.root_path, "static", "pwa")
+
+
+def _pwa_cache_version():
+    """缓存版本号：应用版本 + PWA schema 版本。"""
+    return f"{app.config.get('APP_VERSION', 'dev')}-pwa{PWA_SCHEMA_VERSION}"
+
+
+def _pwa_precache_urls():
+    """预缓存清单：固定静态资源 + 当前 Vite 构建产物。
+
+    构建产物带内容哈希且随发版变化，这里实时读取 manifest，
+    保证离线可用的应用壳始终与线上版本一致。
+    """
+    urls = [
+        "/static/pwa/offline.html",
+        "/manifest.webmanifest",
+        "/static/images/pwa/icon-192.png",
+        "/static/images/pwa/icon-512.png",
+        "/static/images/pwa/maskable-512.png",
+        "/static/images/apple-touch-icon.png",
+        "/static/css/main.css",
+        "/static/css/bootstrap.min.css",
+        "/static/css/bootstrap-icons.subset.css",
+        "/static/css/fonts/bootstrap-icons.woff2",
+        "/static/js/axios.min.js",
+        "/static/js/bootstrap.bundle.min.js",
+        "/static/js/jquery-3.5.1.slim.min.js",
+        "/static/js/sort_file_by_name.js",
+    ]
+    try:
+        manifest_path = os.path.join(
+            app.root_path, "static", "dist", ".vite", "manifest.json"
+        )
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.loads(f.read())
+        for value in manifest.values():
+            if not isinstance(value, dict):
+                continue
+            for key in ("file", "css", "assets"):
+                item = value.get(key)
+                if isinstance(item, str) and item:
+                    urls.append("/static/dist/" + item.lstrip("/"))
+                elif isinstance(item, list):
+                    for sub in item:
+                        if isinstance(sub, str) and sub:
+                            urls.append("/static/dist/" + sub.lstrip("/"))
+    except Exception:
+        # 前端尚未构建：只保留固定静态资源，不影响安装
+        pass
+    # 去重并保持顺序
+    seen = set()
+    result = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            result.append(url)
+    return result
+
+
+@app.route("/manifest.webmanifest")
+def pwa_manifest():
+    """PWA Manifest：未登录也必须可访问，否则浏览器无法安装应用。"""
+    response = send_from_directory(
+        PWA_DIR,
+        "manifest.webmanifest",
+        mimetype="application/manifest+json",
+    )
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.route("/sw.js")
+def pwa_service_worker():
+    """Service Worker 脚本：从静态模板读取，注入缓存版本与预缓存清单。
+
+    必须放在站点根路径，才能让作用域覆盖整站（配合 Service-Worker-Allowed 头）。
+    """
+    try:
+        with open(os.path.join(PWA_DIR, "sw.js"), "r", encoding="utf-8") as f:
+            source = f.read()
+    except Exception:
+        # 模板缺失时返回最小可用脚本，避免前端注册报错
+        source = "self.addEventListener('install', () => self.skipWaiting());"
+    source = source.replace("__CACHE_VERSION__", _pwa_cache_version())
+    source = source.replace("__PRECACHE_URLS__", json.dumps(_pwa_precache_urls()))
+    source = source.replace("__OFFLINE_URL__", "/static/pwa/offline.html")
+    response = Response(source, content_type="application/javascript; charset=utf-8")
+    # 允许该脚本注册为根作用域的 Service Worker
+    response.headers["Service-Worker-Allowed"] = "/"
+    # 脚本本身不缓存，保证浏览器能及时拿到新版本
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.route("/service-worker.js")
+def pwa_service_worker_alias():
+    """兼容早期命名的别名：脚本最终仍由根路径提供，作用域保持 /。"""
+    return redirect(url_for("pwa_service_worker"))
+
+
 
 # 静态资源强缓存：所有 /static/* 均通过带版本号的 URL 引用，
 # 内容变更时由模板中的 ?v= 参数负责穿透缓存。

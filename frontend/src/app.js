@@ -1,5 +1,6 @@
   import { resolveShareurl, formatSuggestionShareId as formatShareIdFromUrl } from './shareurl.js';
   import { collectFailedTaskNames, taskDisplayName } from './taskShareBan.js';
+  import { initPwa, installApp, applyUpdate, clearRuntimeCaches, dismissInstallHint } from './pwa.js';
 
   // 拼音工具函数：将中文转为拼音（小写），用于排序比较。
   // 排序比较器会反复调用，因此按任务名缓存转换结果，避免 O(n log n) 次全量转拼音。
@@ -256,6 +257,18 @@ export default {
         version: (window.__QAS_CONFIG__ && window.__QAS_CONFIG__.version) || "",
         versionTips: "",
         plugin_flags: (window.__QAS_CONFIG__ && window.__QAS_CONFIG__.plugin_flags) || "",
+        // PWA 状态：安装提示 / iOS 添加到主屏幕提示 / 离线提示 / 版本更新提示
+        pwa: {
+          canInstall: false,
+          isIOS: false,
+          isStandalone: false,
+          isOnline: true,
+          updateReady: false,
+          showInstallHint: false,
+          showIosHint: false,
+          showOffline: false,
+          showUpdate: false
+        },
         weekdays: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
         // 全局缓存穿透时间戳（兜底）
         imageCacheBustTick: 0,
@@ -11416,6 +11429,34 @@ export default {
           this.toastMessage = message;
           $(this.$refs.toast).toast('show');
         },
+
+        // ---- PWA：安装 / 更新 / 离线提示 ----
+        // 触发浏览器安装（需用户手势；iOS 不支持，走「分享 → 添加到主屏幕」提示）
+        pwaInstall() {
+          installApp();
+        },
+        // 应用新版本：先清掉「配置已修改」标记，避免刷新时弹出原生确认框
+        pwaApplyUpdate() {
+          this.configModified = false;
+          applyUpdate();
+        },
+        // 关闭「发现新版本」提示（Service Worker 仍处于 waiting，可稍后再次刷新）
+        pwaDismissUpdate() {
+          this.pwa = { ...this.pwa, showUpdate: false };
+        },
+        // 关闭安装提示：7 天内不再展示
+        pwaDismissInstall() {
+          dismissInstallHint();
+          this.pwa = {
+            ...this.pwa,
+            showInstallHint: false,
+            showIosHint: false
+          };
+        },
+        // 退出登录前清理业务缓存（Service Worker 侧也会在处理 /logout 时再清一次）
+        pwaPrepareLogout() {
+          clearRuntimeCaches();
+        },
         toggleFloatingActions() {
           this.floatingActionsExpanded = !this.floatingActionsExpanded;
         },
@@ -15918,6 +15959,11 @@ export default {
         this.checkNewVersion();
         this.fetchUserInfo(); // 获取用户信息
 
+        // PWA：注册 Service Worker，并订阅安装/离线/更新状态变化
+        this._pwaDestroy = initPwa((state) => {
+          this.pwa = { ...this.pwa, ...state };
+        });
+
         // 首屏渲染后再后台加载拼音库，避免 316KB 脚本阻塞交互；库就绪后排序自动重算
         if (typeof pinyinPro === 'undefined') {
           const startPinyinLoad = () => { this.ensurePinyinPro(); };
@@ -16150,6 +16196,11 @@ export default {
       },
       beforeUnmount() {
         window.removeEventListener('beforeunload', this.handleBeforeUnload);
+        // 注销 PWA 事件监听（Service Worker 本身继续在后台工作）
+        if (this._pwaDestroy) {
+          this._pwaDestroy();
+          this._pwaDestroy = null;
+        }
         // 清理总览问候语时段检测定时器
         if (this._overviewGreetingTimer) {
           clearInterval(this._overviewGreetingTimer);

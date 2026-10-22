@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>夸克自动转存</title>
   <!-- CSS -->
   <script>
@@ -19,11 +19,17 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=2">
-  <link rel="stylesheet" href="./static/css/main.css?v=55">
+  <link rel="stylesheet" href="./static/css/main.css?v=56">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-title" content="夸克自动转存">
+  <!-- PWA：可安装应用（manifest / 主题色 / 独立窗口 / 安全区适配） -->
+  <meta name="theme-color" content="#0d0b1f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
   <!-- 前端运行时配置（由后端注入，供延迟加载的应用脚本使用） -->
   <script>
     window.__QAS_CONFIG__ = {
@@ -48,6 +54,31 @@
         <div class="toast-body toast-body-custom">
           {{ toastMessage }}
         </div>
+      </div>
+    </div>
+
+    <!-- PWA 提示条：安装应用 / iOS 添加到主屏幕 / 离线状态 / 版本更新（非阻塞，可关闭） -->
+    <div class="pwa-banners" v-if="pwa.showUpdate || pwa.showOffline || pwa.showInstallHint || pwa.showIosHint">
+      <div class="pwa-banner pwa-banner-update" v-if="pwa.showUpdate">
+        <i class="bi bi-arrow-repeat"></i>
+        <span class="pwa-banner-text">发现新版本，点击刷新</span>
+        <button type="button" class="btn btn-sm btn-primary pwa-banner-action" @click="pwaApplyUpdate">立即刷新</button>
+        <button type="button" class="pwa-banner-close" @click="pwaDismissUpdate" aria-label="关闭提示"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="pwa-banner pwa-banner-offline" v-if="pwa.showOffline">
+        <i class="bi bi-wifi-off"></i>
+        <span class="pwa-banner-text">当前处于离线状态，展示的是最近一次缓存的数据，联网后才能执行写操作</span>
+      </div>
+      <div class="pwa-banner pwa-banner-install" v-if="pwa.showInstallHint">
+        <i class="bi bi-download"></i>
+        <span class="pwa-banner-text">把「夸克自动转存」安装到桌面，独立窗口打开、离线也能查看</span>
+        <button type="button" class="btn btn-sm btn-primary pwa-banner-action" @click="pwaInstall">安装应用</button>
+        <button type="button" class="pwa-banner-close" @click="pwaDismissInstall" aria-label="关闭提示"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="pwa-banner pwa-banner-ios" v-if="pwa.showIosHint">
+        <i class="bi bi-share"></i>
+        <span class="pwa-banner-text">在 Safari 底部点「分享」按钮 → 选择「添加到主屏幕」，即可像 App 一样使用</span>
+        <button type="button" class="pwa-banner-close" @click="pwaDismissInstall" aria-label="关闭提示"><i class="bi bi-x-lg"></i></button>
       </div>
     </div>
     <!-- 背景光晕装饰 -->
@@ -122,7 +153,7 @@
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="/logout">
+              <a class="nav-link" href="/logout" @click="pwaPrepareLogout">
                 <i class="bi bi-power"></i> <span class="nav-text">退出</span>
               </a>
             </li>

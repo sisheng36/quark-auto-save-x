@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0d0b1f">
+<meta name="description" content="夸克自动转存 —— 离线提示页">
+<title>离线状态 · 夸克自动转存</title>
+<style>
+  /* 所有样式内联，确保完全离线可用，不依赖任何外部 CSS / 字体 / 图片 */
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+  }
+
+  body {
+    background: #0d0b1f;
+    color: #e8eaf6;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+                 "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 20px;
+    /* 背景光晕，纯 CSS 渐变，无需外部图片 */
+    background-image:
+      radial-gradient(120% 90% at 50% -20%, rgba(139, 92, 246, 0.28) 0%, rgba(13, 11, 31, 0) 60%),
+      radial-gradient(80% 60% at 100% 100%, rgba(139, 92, 246, 0.14) 0%, rgba(13, 11, 31, 0) 55%);
+  }
+
+  .card {
+    width: 100%;
+    max-width: 420px;
+    padding: 40px 28px 32px;
+    text-align: center;
+    background: rgba(232, 234, 246, 0.04);
+    border: 1px solid rgba(232, 234, 246, 0.10);
+    border-radius: 20px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+    padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ---- 纯 CSS 绘制的图标（无字体图标 / 无外部图片） ---- */
+  .icon {
+    width: 96px;
+    height: 96px;
+    margin: 0 auto 24px;
+    border-radius: 26px;
+    background: linear-gradient(140deg, #8b5cf6 0%, #6d28d9 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    box-shadow: 0 10px 30px rgba(139, 92, 246, 0.35);
+  }
+
+  /* 感叹号主体 */
+  .icon::before {
+    content: "";
+    display: block;
+    width: 12px;
+    height: 34px;
+    border-radius: 6px;
+    background: #ffffff;
+    transform: translateY(-9px);
+  }
+
+  /* 感叹号圆点 */
+  .icon::after {
+    content: "";
+    position: absolute;
+    bottom: 26px;
+    left: 50%;
+    margin-left: -6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ffffff;
+  }
+
+  h1 {
+    margin: 0 0 12px;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: #e8eaf6;
+  }
+
+  p.desc {
+    margin: 0 0 28px;
+    font-size: 15px;
+    color: rgba(232, 234, 246, 0.72);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    min-width: 160px;
+    padding: 12px 32px;
+    font-size: 16px;
+    font-weight: 600;
+    font-family: inherit;
+    color: #ffffff;
+    background: #8b5cf6;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+  }
+
+  .btn:hover {
+    background: #7c4ef0;
+  }
+
+  .btn:active {
+    transform: translateY(1px);
+  }
+
+  .btn:focus-visible {
+    outline: 3px solid rgba(139, 92, 246, 0.65);
+    outline-offset: 3px;
+  }
+
+  .tip {
+    margin: 22px 0 0;
+    font-size: 13px;
+    color: rgba(232, 234, 246, 0.50);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn {
+      transition: none;
+    }
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="icon" role="img" aria-label="离线提示图标"></div>
+    <h1>当前处于离线状态</h1>
+    <p class="desc">应用尚未缓存完成，或网络连接不可用。请检查网络后重试。</p>
+    <button class="btn" type="button" onclick="location.reload()">重试</button>
+    <p class="tip">联网后打开一次本应用，之后即可离线查看最近一次的数据</p>
+  </main>
+</body>
+</html>
