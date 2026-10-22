@@ -153,6 +153,48 @@
 #app:not([data-v-app]) {
   display: none;
 }
+/* --------------- 骨架的窄屏形态 ---------------
+   桌面端骨架是「左栏 + 主区」两栏，与桌面侧边栏位置一致；
+   但窄屏侧边栏是抽屉（贴边全高、78% 宽），骨架左栏那块 216px 的
+   深色面板既不是抽屉也不是内容，会被读成"空白侧边栏"。窄屏改成
+   单栏：左栏隐藏，主区铺满，并补几条菜单占位条说明"菜单在加载"。 */
+@media (max-width: 767.98px) {
+  .boot-skeleton {
+    flex-direction: column;
+  }
+  .boot-skeleton-sidebar {
+    display: none;
+  }
+  .boot-skeleton-main {
+    padding: 18px 16px;
+  }
+}
+/* 骨架里的菜单占位条：只在窄屏出现，替代被隐藏的左栏，说明"菜单正在加载"。
+   桌面端左侧已有侧边栏面板，再放一组占位条属于重复信息，故隐藏。 */
+.boot-skeleton-nav {
+  display: none;
+}
+@media (max-width: 767.98px) {
+  .boot-skeleton-nav {
+    display: block;
+    height: 14px;
+    border-radius: 7px;
+    margin-bottom: 14px;
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .boot-skeleton-nav:first-child {
+    margin-top: 2px;
+  }
+  .boot-skeleton-nav.short {
+    width: 62%;
+    margin-bottom: 20px;
+  }
+  /* 浅色主题下白条几乎不可见，改用深色半透明 */
+  html.theme-light .boot-skeleton-nav {
+    background: rgba(15, 23, 42, 0.09);
+  }
+}
+
 /* 宽屏（含 2K/4K）统一正文上限宽度，避免卡片被拉得过长、输入框横跨整屏 */
 @media (min-width: 1600px) {
   .page-width-wide .container-fluid {
@@ -4758,10 +4800,35 @@ html.theme-light .tasklist-failed-chip.active {
   .glass-sidebar.collapse.show {
     transform: translateX(0);
   }
+  /* 抽屉是固定定位的全高面板，只沿 X 轴滑出。
+     Bootstrap 的 .collapsing 自带 height:0 + overflow:hidden，
+     用在固定定位抽屉上会把它压成一条约 33px 高的横条——收起瞬间
+     看起来就是"左侧空白菜单栏一闪而过"。这里还原高度、改为裁剪
+     纵向溢出，让收起过程只做横向位移动画。 */
   .glass-sidebar.collapsing {
     display: block !important;
+    height: auto !important;
+    top: 0;
+    bottom: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
     transform: translateX(-105%);
     transition: transform 0.25s ease;
+    /* 位移期间关闭毛玻璃：Chrome/Safari 在 backdrop-filter 元素做 transform
+       动画时会复用旧的背景快照，导致抽屉滑动过程中文字整体消失、只剩一块
+       空白色块（即"左侧空白菜单栏一闪而过"）。收起完成后 .collapse 会恢复
+       模糊，观感一致且动画只持续 0.25s。 */
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    /* 关闭模糊后必须给不透明底色，否则抽屉会透出下面的页面内容 */
+    background: #14123a;
+  }
+  /* 浅色主题的 html.theme-light .glass-sidebar 优先级更高，
+     这里必须带上同样的前缀才能覆盖掉它的 backdrop-filter。 */
+  html.theme-light .glass-sidebar.collapsing {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: #f2f6fb;
   }
   /* 移动端菜单按钮：固定在左上角，可随时展开/收起抽屉 */
   .mobile-sidebar-toggle {

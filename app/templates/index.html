@@ -19,7 +19,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=2">
-  <link rel="stylesheet" href="./static/css/main.css?v=49">
+  <link rel="stylesheet" href="./static/css/main.css?v=51">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
@@ -81,43 +81,43 @@
         <div class="sidebar-sticky">
           <ul class="nav flex-column">
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'overview'}" @click="changeTab('overview')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'overview'}" @click.prevent="changeTab('overview')">
                 <i class="bi bi-speedometer2"></i> <span class="nav-text">总览</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'tasklist'}" @click="changeTab('tasklist')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'tasklist'}" @click.prevent="changeTab('tasklist')">
                 <i class="bi bi-list-ul"></i> <span class="nav-text">任务列表</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'discovery'}" @click="changeTab('discovery')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'discovery'}" @click.prevent="changeTab('discovery')">
                 <i class="bi bi-film"></i> <span class="nav-text">影视发现</span>
               </a>
             </li>
             <!-- 移动端不提供追剧日历：窄屏由 CSS 隐藏，changeTab 里也有回落守卫 -->
             <li class="nav-item calendar-nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'calendar'}" @click="changeTab('calendar')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'calendar'}" @click.prevent="changeTab('calendar')">
                 <i class="bi bi-calendar3-week"></i> <span class="nav-text">追剧日历</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'history'}" @click="changeTab('history')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'history'}" @click.prevent="changeTab('history')">
                 <i class="bi bi-clock-history"></i> <span class="nav-text">转存记录</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'filemanager'}" @click="changeTab('filemanager')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'filemanager'}" @click.prevent="changeTab('filemanager')">
                 <i class="bi bi-archive"></i> <span class="nav-text">文件整理</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'config'}" @click="changeTab('config')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'config'}" @click.prevent="changeTab('config')">
                 <i class="bi bi-gear"></i> <span class="nav-text">系统配置</span>
               </a>
             </li>
             <li class="nav-item">
-              <a class="nav-link" href="#" :class="{active: activeTab === 'runlogs'}" @click="changeTab('runlogs')">
+              <a class="nav-link" href="#" :class="{active: activeTab === 'runlogs'}" @click.prevent="changeTab('runlogs')">
                 <i class="bi bi-terminal"></i> <span class="nav-text">运行日志</span>
               </a>
             </li>
@@ -184,7 +184,7 @@
                 <span class="glass-config-toggle-title" title="夸克自动转存WebUI账号设置">
                   <h2>账号设置</h2>
                   <span class="badge badge-pill badge-light">
-                    <a href="#" title="夸克自动转存WebUI账号设置"><i class="bi bi-question-circle"></i></a>
+                    <a href="#" @click.prevent title="夸克自动转存WebUI账号设置"><i class="bi bi-question-circle"></i></a>
                   </span>
                 </span>
               </div>
@@ -2526,7 +2526,7 @@
                 <ol class="breadcrumb">
                   <li class="breadcrumb-item cursor-pointer" @click="navigateTo('0','/')"><i class="bi bi-house-door"></i></li>
                   <li v-for="(item, index) in fileSelect.paths" class="breadcrumb-item">
-                    <a v-if="index != fileSelect.paths.length - 1" href="#" @click="navigateTo(item.fid, item.name)">{{ item.name }}</a>
+                    <a v-if="index != fileSelect.paths.length - 1" href="#" @click.prevent="navigateTo(item.fid, item.name)">{{ item.name }}</a>
                     <span v-else class="text-muted">{{ item.name }}</span>
                   </li>
                 </ol>
@@ -3192,6 +3192,11 @@
   <div class="boot-skeleton" aria-hidden="true">
     <div class="boot-skeleton-sidebar"></div>
     <div class="boot-skeleton-main">
+      <!-- 菜单占位条：仅窄屏显示（桌面端左侧已有侧边栏面板，无需重复） -->
+      <div class="boot-skeleton-nav"></div>
+      <div class="boot-skeleton-nav"></div>
+      <div class="boot-skeleton-nav"></div>
+      <div class="boot-skeleton-nav short"></div>
       <div class="boot-skeleton-bar"></div>
       <div class="boot-skeleton-bar short"></div>
       <div class="boot-skeleton-block"></div>
