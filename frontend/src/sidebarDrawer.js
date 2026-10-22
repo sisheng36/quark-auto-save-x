@@ -63,7 +63,7 @@ export function initSidebarDrawer() {
   }
 
   // Bootstrap 的打开阶段只有 .collapsing、没有 .show；在 show.bs 时给抽屉
-  // 加上 .is-opening，让 CSS 立刻从 -105% 滑向 0，而不是等 .show 出现后再滑。
+  // 加上 .is-opening，让 CSS 立刻从 -100% 滑向 0，而不是等 .show 出现后再滑。
   function onShow() {
     sidebar.classList.add('is-opening');
     syncState(true);

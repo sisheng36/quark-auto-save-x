@@ -63,6 +63,19 @@
      不支持 env() 的浏览器保持 0，见下方 @supports 覆盖。 */
   --safe-top: 0px;
 
+  /* 顶部留白增量系数：额外下移量 = 状态栏高度 × 该系数。
+     iOS 在状态栏下方会对滚过的内容做一层顶部滚动模糊，卡片顶边贴得太近时会被糊掉。
+     在原有 safe-top 补偿之外再按比例追加一段留白，让所有内容的起算线整体落到
+     模糊带以下，纯色垫层那类硬遮盖就不需要了。顺带满足 "整体往下移一点" 的观感。
+     注意是「原有补偿 + 追加」，不是把原有补偿打折——否则抽屉首项会退回状态栏里。
+     --safe-top 为 0（桌面 / 浏览器 / 无刘海）时增量为 0，布局与改动前完全一致。 */
+  --safe-top-gap: 0.4;
+  --safe-top-extra: calc(var(--safe-top) * var(--safe-top-gap));
+
+  /* 抽屉与手柄必须完全同步：行程、时长、缓动只能有一个来源 */
+  --drawer-motion-duration: 0.25s;
+  --drawer-motion-easing: ease;
+
   /* ---------- 表单控件统一令牌 ----------
      全站输入框/下拉/输入组共用同一套尺寸与圆角，避免各处细节不一致：
      - 高度统一 38px（小号 32px），圆角 10px，边框与焦点环一致
@@ -99,7 +112,7 @@
   display: flex;
   gap: var(--sidebar-offset);
   padding: var(--sidebar-offset);
-  padding-top: calc(var(--sidebar-offset) + var(--safe-top));
+  padding-top: calc(var(--sidebar-offset) + var(--safe-top) + var(--safe-top-extra));
   z-index: 1;
   pointer-events: none;
 }
@@ -559,7 +572,7 @@ a:hover {
 /* --------------- 悬浮侧边栏 --------------- */
 .glass-sidebar {
   position: fixed;
-  top: calc(var(--sidebar-offset) + var(--safe-top));
+  top: calc(var(--sidebar-offset) + var(--safe-top) + var(--safe-top-extra));
   left: var(--sidebar-offset);
   bottom: var(--sidebar-offset);
   width: var(--sidebar-width);
@@ -681,7 +694,7 @@ a:hover {
   margin-left: calc(var(--sidebar-width) + var(--sidebar-offset) * 2);
   margin-right: var(--sidebar-offset);
   padding: 18px 8px 30px;
-  padding-top: calc(18px + var(--safe-top));
+  padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
   transition: margin-left 0.25s ease;
 }
 .glass-sidebar.sidebar-collapsed ~ .glass-main {
@@ -4943,17 +4956,23 @@ html.theme-light .tasklist-failed-chip.active {
     max-width: 300px;
     border-radius: 0 18px 18px 0;
     display: block;
-    transform: translateX(-105%);
-    transition: transform 0.25s ease;
+    transform: translateX(-100%);
+    transition: transform var(--drawer-motion-duration) var(--drawer-motion-easing);
     z-index: 1045;
     margin: 0;
-    border-top: none;
-    border-left: none;
-    /* 抽屉顶部让开状态栏：玻璃面板仍铺到屏幕顶，只把菜单项下移 */
-    padding-top: calc(18px + var(--safe-top));
+    /* 移动端抽屉贴屏幕四边，四边都不该有边线：右缘那条 1px 描边正好落在
+       手柄的接缝上，手柄只盖住中间 112px，上下两端就露出一条竖线。 */
+    border: 0;
+    /* 抽屉顶部让开状态栏：玻璃面板仍铺到屏幕顶，只把菜单项下移。
+       增量与主内容用同一个系数，抽屉与页面同步下移，相对位置保持不变。 */
+    padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
   }
   .glass-sidebar.collapse.show {
     transform: translateX(0);
+  }
+  /* 完全收起后右缘正好压在 x=0，投影会落在屏幕左缘形成一道暗边 */
+  .glass-sidebar.collapse:not(.show):not(.collapsing) {
+    box-shadow: none;
   }
   /* 抽屉是固定定位的全高面板，只沿 X 轴滑出。
      Bootstrap 的 .collapsing 自带 height:0 + overflow:hidden，
@@ -4967,8 +4986,8 @@ html.theme-light .tasklist-failed-chip.active {
     bottom: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    transform: translateX(-105%);
-    transition: transform 0.25s ease;
+    transform: translateX(-100%);
+    transition: transform var(--drawer-motion-duration) var(--drawer-motion-easing);
     /* 位移期间关闭毛玻璃：Chrome/Safari 在 backdrop-filter 元素做 transform
        动画时会复用旧的背景快照，导致抽屉滑动过程中文字整体消失、只剩一块
        空白色块（即"左侧空白菜单栏一闪而过"）。收起完成后 .collapse 会恢复
@@ -4980,7 +4999,9 @@ html.theme-light .tasklist-failed-chip.active {
   }
   /* 打开阶段由 JS 在 show.bs.collapse 时加上 .is-opening：
      Bootstrap 此时还没有 .show，若不区分方向会先等 0.25s 再滑入（两段式）。
-     加上这个类后抽屉立刻从 -105% 滑向 0；收起时仍沿用上面的 -105%。 */
+     加上这个类后抽屉立刻从 -100% 滑向 0；收起时仍沿用上面的 -100%。
+     行程 = 抽屉自身宽度，与手柄的位移行程严格等长（手柄终点比宽度内收 1px），
+     两者同走 transform、同一条时长与缓动，全程重叠恒为 1px 不露缝。 */
   .glass-sidebar.collapsing.is-opening {
     transform: translateX(0);
   }
@@ -5002,7 +5023,7 @@ html.theme-light .tasklist-failed-chip.active {
   .mobile-sidebar-toggle {
     position: fixed;
     top: 50%;
-    left: 0; /* 闭合时贴屏幕左缘 */
+    left: 0; /* 位置完全交给 transform：left 动画走主线程，会落后于抽屉的合成层动画 */
     z-index: 1046; /* 高于抽屉(1045)与遮罩(1044)，低于弹窗/悬浮按钮(1050) */
     display: flex;
     align-items: center;
@@ -5014,8 +5035,11 @@ html.theme-light .tasklist-failed-chip.active {
     border: 0;
     box-shadow: none;
     color: var(--text-primary);
-    transform: translateY(-50%);
-    transition: left 0.25s ease, transform 0.18s ease;
+    /* 收起态比屏幕左缘多 1px，视觉上仍贴边，同时盖住抽屉收起时那条边缘 */
+    transform: translate3d(-1px, -50%, 0);
+    /* 与抽屉同一条时长与缓动，且同为 transform：两段动画在合成层上严格同步 */
+    transition: transform var(--drawer-motion-duration) var(--drawer-motion-easing);
+    will-change: transform;
     cursor: pointer;
     touch-action: pan-y; /* 允许纵向滚动，横向手势留给 JS 识别 */
     user-select: none;
@@ -5039,6 +5063,9 @@ html.theme-light .tasklist-failed-chip.active {
     overflow: visible;
     pointer-events: none;
     filter: drop-shadow(var(--handle-shadow));
+    /* 按压反馈作用在形状层：按钮自身的 transform 专用于位移动画，不能被缩放覆盖 */
+    transform-origin: center;
+    transition: transform 0.18s ease;
   }
   .mobile-sidebar-toggle-shape-fill {
     fill: url(#qasDrawerHandleGradient);
@@ -5058,12 +5085,14 @@ html.theme-light .tasklist-failed-chip.active {
     z-index: 1;
     font-size: 1rem;
     line-height: 1;
-    transition: transform 0.25s ease;
+    transition: transform var(--drawer-motion-duration) var(--drawer-motion-easing);
   }
   .mobile-sidebar-toggle.is-open {
-    /* 舌片右侧贴住抽屉右缘：起点比抽屉宽度内收 1px，盖住抽屉本身那条 1px 描边，
-       反圆角正好从面板边缘“长出”。78% / 300px 与抽屉宽度保持一致。 */
-    left: calc(min(78%, 300px) - 1px);
+    /* 舌片右侧贴住抽屉右缘：终点比抽屉宽度内收 1px，与抽屉的行程（自身宽度）
+       严格等长，因此开合全程重叠恒为 1px，反圆角始终从面板边缘“长出”。
+       注意 translate 的百分比按**元素自身宽度**（28px）解析，不能照抄抽屉的 78%；
+       固定定位元素的百分比宽度等价于视口宽度，所以这里用 78vw 与同一个 300px 上限。 */
+    transform: translate3d(calc(min(78vw, 300px) - 1px), -50%, 0);
   }
   .mobile-sidebar-toggle.is-open i {
     transform: rotate(180deg);
@@ -5077,8 +5106,10 @@ html.theme-light .tasklist-failed-chip.active {
     outline: 2px solid var(--focus-border-color);
     outline-offset: -2px;
   }
-  .mobile-sidebar-toggle:active {
-    transform: translateY(-50%) scale(0.96);
+  /* 按压时只缩小形状层：若缩放按钮自身，会把 translate3d 的 X 位移清零，
+     手柄会在按下瞬间弹回左缘（看起来就是"跟不上抽屉"）。 */
+  .mobile-sidebar-toggle:active .mobile-sidebar-toggle-shape {
+    transform: scale(0.96);
   }
   /* 抽屉遮罩：展开或开合动画期间覆盖内容区，点击空白处收起抽屉 */
   .sidebar-backdrop {
@@ -5125,7 +5156,7 @@ html.theme-light .tasklist-failed-chip.active {
   .glass-main {
     margin-left: var(--sidebar-offset);
     padding: 12px 2px 20px;
-    padding-top: calc(12px + var(--safe-top));
+    padding-top: calc(12px + var(--safe-top) + var(--safe-top-extra));
   }
   .glass-navbar .navbar-brand {
     width: auto;
@@ -5187,7 +5218,7 @@ html.theme-light .tasklist-failed-chip.active {
   }
   .toast-container,
   .toast-container.toast-container-center {
-    top: calc(58px + var(--safe-top));
+    top: calc(58px + var(--safe-top) + var(--safe-top-extra));
     right: 12px;
     left: 12px;
     transform: none;
