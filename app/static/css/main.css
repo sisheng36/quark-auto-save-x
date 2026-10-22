@@ -1223,9 +1223,13 @@ label {
 }
 .table tbody tr:hover {
   background: rgba(255, 255, 255, 0.045);
+  /* Bootstrap 的 .table-hover tbody tr:hover 会把整行文字刷成 #212529，
+     深色模式下等于「深灰字 + 深色底」，悬停行几乎看不清；这里只换底色、不动文字色 */
+  color: var(--text-primary);
 }
 .table-hover tbody tr:hover {
   background: rgba(139, 92, 246, 0.09);
+  color: var(--text-primary);
 }
 .table thead th.sorting:hover,
 .table thead th.sortable:hover {
@@ -3218,6 +3222,29 @@ html.theme-light .overview-quick-link:hover {
 .discovery-search .input-group {
   flex: 1 1 240px;
   min-width: 0;
+}
+/* 搜索中放大镜按钮会进入 disabled 态：Bootstrap 会把它刷成透明背景，
+   在输入组里形成一个断口，因此这里保持与相邻「返回榜单」按钮一致的底色 */
+.discovery-search .input-group-append .btn:disabled {
+  /* 全局 .btn:disabled 会把整块按钮压到 45% 透明，按钮底色随之变淡、
+     与相邻按钮出现深浅色阶；这里保持底色实心，只把图标调暗表达禁用 */
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--glass-border);
+  color: var(--text-tertiary);
+}
+html.theme-light .discovery-search .input-group-append .btn:disabled {
+  background: var(--surface-muted);
+  border-color: var(--glass-border-strong);
+}
+/* 放大镜与 X 之间不留拼缝：两个按钮同底色，去掉彼此相邻的边框与 -1px 负边距，
+   让它们拼成一条连续的按钮区（只保留与输入框交界处的那条线） */
+.discovery-search .input-group-append .btn + .btn {
+  margin-left: 0;
+  border-left: 0;
+}
+.discovery-search .input-group-append .btn:first-child {
+  border-right: 0;
 }
 .discovery-search-type {
   flex: 0 0 auto;

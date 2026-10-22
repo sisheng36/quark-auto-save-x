@@ -11944,6 +11944,7 @@ export default {
           try {
             // 如果点击的是输入框、搜索按钮或下拉菜单本身，不关闭下拉菜单
             if (event.target.closest('.input-group input') ||
+                event.target.closest('.resource-search-btn') ||
                 event.target.closest('.btn-primary[type="button"]') ||
                 event.target.closest('.dropdown-menu.task-suggestions') ||
                 event.target.closest('.bi-search') ||
