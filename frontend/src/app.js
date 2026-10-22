@@ -1,6 +1,7 @@
   import { resolveShareurl, formatSuggestionShareId as formatShareIdFromUrl } from './shareurl.js';
   import { collectFailedTaskNames, taskDisplayName } from './taskShareBan.js';
   import { initPwa, installApp, applyUpdate, clearRuntimeCaches, dismissInstallHint } from './pwa.js';
+  import { initSidebarDrawer } from './sidebarDrawer.js';
 
   // 拼音工具函数：将中文转为拼音（小写），用于排序比较。
   // 排序比较器会反复调用，因此按任务名缓存转换结果，避免 O(n log n) 次全量转拼音。
@@ -15964,6 +15965,9 @@ export default {
           this.pwa = { ...this.pwa, ...state };
         });
 
+        // 移动端抽屉指示：同步手柄状态，并启用点击之外的手势开合
+        this._sidebarDrawerCleanup = initSidebarDrawer();
+
         // 首屏渲染后再后台加载拼音库，避免 316KB 脚本阻塞交互；库就绪后排序自动重算
         if (typeof pinyinPro === 'undefined') {
           const startPinyinLoad = () => { this.ensurePinyinPro(); };
@@ -16200,6 +16204,11 @@ export default {
         if (this._pwaDestroy) {
           this._pwaDestroy();
           this._pwaDestroy = null;
+        }
+        // 清理移动端抽屉手势监听
+        if (this._sidebarDrawerCleanup) {
+          this._sidebarDrawerCleanup();
+          this._sidebarDrawerCleanup = null;
         }
         // 清理总览问候语时段检测定时器
         if (this._overviewGreetingTimer) {

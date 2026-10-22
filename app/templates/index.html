@@ -19,7 +19,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=2">
-  <link rel="stylesheet" href="./static/css/main.css?v=57">
+  <link rel="stylesheet" href="./static/css/main.css?v=60">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
@@ -189,11 +189,33 @@
       <!-- 抽屉遮罩：移动端抽屉展开时覆盖内容区，点击空白处收起抽屉 -->
       <div class="sidebar-backdrop d-md-none" data-toggle="collapse" data-target="#sidebarMenu" aria-hidden="true"></div>
 
-      <!-- 移动端菜单按钮：展开/收起侧边栏抽屉（位于抽屉之后，便于 CSS 按抽屉状态显隐） -->
-      <button type="button" class="navbar-toggler navbar-toggler-square mobile-sidebar-toggle d-md-none collapsed"
+      <!-- 移动端抽屉指示：竖向手柄，连接侧为反圆角（内凹）。
+           点击或向右滑动展开；展开后手柄内缘贴到抽屉右缘，点击或向左滑动收起。 -->
+      <button type="button" class="mobile-sidebar-toggle d-md-none collapsed"
               data-toggle="collapse" data-target="#sidebarMenu"
-              aria-controls="sidebarMenu" aria-expanded="false" aria-label="打开侧边栏菜单">
-        <i class="bi bi-list"></i>
+              aria-controls="sidebarMenu" aria-expanded="false" aria-label="展开侧边栏菜单">
+        <!-- 手柄主体：从抽屉边缘向外凸出的小舌片。
+             贴边的一侧（左侧）上下用反圆角内凹过渡，外侧用普通圆角，
+             与参考图一致：不是一条直边拼接，而是从面板边缘“长”出来的圆润凸起。 -->
+        <svg class="mobile-sidebar-toggle-shape" viewBox="0 0 28 112"
+             preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <defs>
+            <!-- 渐变方向与抽屉边缘垂直：起点即抽屉底色，向外逐渐提亮，
+                 让舌片看起来是从侧边栏“长”出来的 -->
+            <linearGradient id="qasDrawerHandleGradient" x1="0" y1="0" x2="1" y2="0">
+              <stop class="mobile-sidebar-toggle-stop-1" offset="0"></stop>
+              <stop class="mobile-sidebar-toggle-stop-2" offset="0.55"></stop>
+              <stop class="mobile-sidebar-toggle-stop-3" offset="1"></stop>
+            </linearGradient>
+          </defs>
+          <!-- 填充：整块形状 -->
+          <path class="mobile-sidebar-toggle-shape-fill"
+                d="M0 0 A14 14 0 0 0 14 14 L16 14 A12 12 0 0 1 28 26 L28 86 A12 12 0 0 1 16 98 L14 98 A14 14 0 0 0 0 112 Z"></path>
+          <!-- 描边：只画外轮廓，贴边的一侧留空，避免出现一条竖直分割线 -->
+          <path class="mobile-sidebar-toggle-shape-stroke"
+                d="M0 0 A14 14 0 0 0 14 14 L16 14 A12 12 0 0 1 28 26 L28 86 A12 12 0 0 1 16 98 L14 98 A14 14 0 0 0 0 112"></path>
+        </svg>
+        <i class="bi bi-chevron-right" aria-hidden="true"></i>
       </button>
 
       <main class="glass-main">
