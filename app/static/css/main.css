@@ -1,19 +1,23 @@
 /* ============================================================
    quark-auto-save-x WebUI — 深色磨砂玻璃（Glassmorphism）主题
-   蓝紫渐变背景 · 悬浮侧边栏 · 磨砂质感
+   纯色紫背景 · 悬浮侧边栏 · 磨砂质感
    ============================================================ */
 
 /* --------------- 设计系统变量 --------------- */
 :root {
-  /* 渐变背景（夜色蓝紫系） */
+  /* 深色底：只用于需要比页面更暗的局部（日志块等），不参与页面背景 */
   --bg-deep: #0d0b1f;
-  --bg-grad-1: #0f0c29;
-  --bg-grad-2: #1e1a4a;
-  --bg-grad-3: #302b63;
-  --bg-grad-4: #4a2a6d;
 
-  /* 页面画布基础色：内容与背景自然延伸到安全区，浏览器原生工具栏由系统绘制。 */
+  /* 页面唯一的背景色：画布（html）、body、固定取色层、安全区露出的部分全用这一个值。
+     背景栈里**只允许存在这一种颜色** —— 多出第二块颜色，内容不足一屏时回弹就会把它
+     拽进可视区，变成一条卡在屏幕中间的色带（成因见下方「固定背景层」注释）。 */
   --chrome-bg: #3d2a68;
+
+  /* 固定背景层向下多铺的高度。iOS 26 独立窗口 / PWA 下 position: fixed 按「布局视口」
+     铺，而布局视口比屏幕矮 46.7px（真机实测：固定层止于 y=797.3，屏高 844），够不到
+     屏幕最底那一条；内容不足一屏时回弹会把 body 色块抬起来，正好露出这条缝。
+     补铺 72px（≈1.5×）让纯色一直铺到屏幕底边之外，覆盖机型差异。 */
+  --bg-bleed: 72px;
 
   /* 强调色（蓝紫渐变） */
   --accent-2: #8b5cf6;
@@ -246,13 +250,15 @@
 /* --------------- 基础样式 --------------- */
 html {
   height: 100%;
-  /* 根背景必须是显式颜色：Safari 采样到 transparent 会回退成白/黑 */
+  /* 画布颜色 = 页面背景色：滚动溢出、内容不足一屏时的空白、回弹露出的区域都是它。
+     根背景必须是显式颜色，Safari 采样到 transparent 会回退成白/黑。 */
   background-color: var(--chrome-bg);
 }
 
 body {
   min-height: 100%;
-  /* 画布底色同样显式给值（理由同 html）：它决定滚动溢出与安全区露出的颜色 */
+  /* 与画布、固定取色层同色：回弹时 body 的不透明块会随文档一起上移（内容不足一屏时
+     尤其明显），露出来的必须是同一个颜色，观感才是「整块一起往上走」而不是被切开。 */
   background: var(--chrome-bg);
   color: var(--text-primary);
   font-size: 14px;
@@ -260,86 +266,27 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 固定渐变背景层（background-attachment:fixed 在 iOS 不可靠，改用伪元素） */
+/* 固定背景层（background-attachment: fixed 在 iOS 上不可靠，改用伪元素）
+   这一层只做两件事：
+   1) 给 iOS 26 Safari 的 Liquid Glass 提供取色 —— WebKit bug 325446：铺满视口的
+      fixed 元素带上 background-color，状态栏/底部工具栏才会取到这个颜色，否则
+      回退成系统默认色（深色模式下是纯黑，就是之前那条黑边）；
+   2) 用同一个纯色把屏幕底部补满（--bg-bleed），覆盖 iOS 布局视口比屏幕矮的那一条。
+   这里**只能有 background-color，不能有任何 background-image**：
+   以前这层画的是 135° 渐变 + 三团径向光晕，模板里还叠了 .aurora 光晕小球。内容
+   够长时它们被 body 的不透明底色完全盖住、平时看不见；但内容不足一屏时（例如只有
+   2 个任务的任务列表），回弹会把 body 色块的下缘抬起来，把这些图层拽进可视区 ——
+   截图上就是一条偏蓝的色带卡在屏幕中间，色带下方又是 html 画布色，两条硬边一夹
+   就成了用户反馈的「底部分裂」。
+   现在整页只有一块纯色：回弹时露出来的是同一个颜色，看起来就是整块一起往上走。 */
 body.qas-body::before,
 body.login-page::before {
   content: "";
   position: fixed;
-  inset: 0;
+  inset: 0 0 calc(-1 * var(--bg-bleed)) 0;
   z-index: -2;
-  /* 关键：铺满视口的 fixed 图层必须自带 background-color。
-     只写渐变（等价于 background-color: transparent）时，iOS 26 Safari
-     采样不到颜色，会把状态栏/底部工具栏涂成系统默认的纯黑——这就是那条黑边。
-     WebKit bug 325446 已复现：给该图层补上 background-color 后两条栏立即取色。 */
+  pointer-events: none;
   background-color: var(--chrome-bg);
-  background-image: linear-gradient(135deg,
-      var(--bg-grad-1) 0%,
-      var(--bg-grad-2) 38%,
-      var(--bg-grad-3) 68%,
-      var(--bg-grad-4) 100%);
-}
-
-/* 光晕装饰层（仅装饰，不挡交互） */
-body.qas-body::after,
-body.login-page::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse 55% 42% at 12% 8%, rgba(99, 102, 241, 0.22), transparent 65%),
-    radial-gradient(ellipse 48% 38% at 88% 18%, rgba(168, 85, 247, 0.18), transparent 65%),
-    radial-gradient(ellipse 60% 46% at 72% 88%, rgba(59, 130, 246, 0.14), transparent 65%);
-}
-
-/* 模板内 .aurora / .login-aurora 光晕小球 */
-.aurora,
-.login-aurora {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  overflow: hidden;
-}
-.aurora-orb {
-  position: absolute;
-  display: block;
-  border-radius: 50%;
-  /* 用模糊的径向渐变替代 filter: blur()，避免每帧重新计算滤镜（移动端滚动掉帧的主因） */
-  opacity: 0.55;
-  animation: aurora-float 16s ease-in-out infinite alternate;
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-}
-.aurora-orb-1 {
-  width: 420px;
-  height: 420px;
-  left: -120px;
-  top: -110px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.55), transparent 70%);
-}
-.aurora-orb-2 {
-  width: 360px;
-  height: 360px;
-  right: -100px;
-  top: 22%;
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.5), transparent 70%);
-  animation-delay: -5s;
-}
-.aurora-orb-3 {
-  width: 460px;
-  height: 460px;
-  left: 30%;
-  bottom: -180px;
-  background: radial-gradient(circle, rgba(59, 130, 246, 0.42), transparent 70%);
-  animation-delay: -10s;
-}
-@keyframes aurora-float {
-  0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(30px, -26px) scale(1.08); }
-  100% { transform: translate(-22px, 20px) scale(0.94); }
 }
 
 /* 链接 */
@@ -5003,9 +4950,6 @@ html.theme-light .tasklist-failed-chip.active {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-  .aurora-orb {
-    animation: none;
-  }
   .config-tab-pane {
     animation: none;
   }
@@ -5459,10 +5403,6 @@ html.theme-light {
   color-scheme: light;
   --bg-deep: #dce9f1;
   --chrome-bg: #e1e0f4;
-  --bg-grad-1: #d1e8ff;
-  --bg-grad-2: #cdf1e2;
-  --bg-grad-3: #f1deed;
-  --bg-grad-4: #d2e3fb;
   --accent-2: #2563eb;
   --accent-grad: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
   --glass-bg: rgba(255, 255, 255, 0.72);
@@ -5494,13 +5434,6 @@ html.theme-light {
   --surface-input: rgba(255, 255, 255, 0.88);
 }
 
-html.theme-light body.qas-body::after,
-html.theme-light body.login-page::after {
-  background: none;
-}
-html.theme-light .aurora-orb {
-  opacity: 0.1;
-}
 html.theme-light a {
   color: #1d4ed8;
 }
