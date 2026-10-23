@@ -1320,6 +1320,28 @@ input[type="color"] {
   border-radius: var(--control-radius-sm);
 }
 
+@media (max-width: 767.98px) {
+  /* 已建立任务展开后的编辑区：和新建任务弹窗保持一致——任务名称输入框独占一行，
+     四个搜索按钮在下一行平分整行，不再挤在输入框右侧把输入框压窄。 */
+  .task-card-body .input-group.task-search-group {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .task-card-body .task-search-group > .form-control {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .task-card-body .task-search-actions {
+    width: 100%;
+    margin: 0;
+  }
+  .task-card-body .input-group.task-search-group .task-search-actions > .btn,
+  .task-card-body .input-group.task-search-group .task-search-actions > .input-group-text {
+    flex: 1 1 auto;
+    border-radius: var(--control-radius);
+  }
+}
+
 /* 表单组/检查 */
 .form-group {
   margin-bottom: 1rem;
