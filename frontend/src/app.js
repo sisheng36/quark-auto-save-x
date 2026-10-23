@@ -1906,14 +1906,6 @@ export default {
         },
         applyTheme() {
           document.documentElement.classList.toggle('theme-light', this.isLightTheme);
-          // 主题色跟随：Safari/Android 的工具栏区与 PWA 窗口底色都取 theme-color，
-          // 不跟着切会在浅色页面底部拖一条深色带（"黑边"的另一种形态）
-          try {
-            var themeMeta = document.querySelector('meta[name="theme-color"]');
-            if (themeMeta) {
-              themeMeta.setAttribute('content', this.isLightTheme ? '#e1e0f4' : '#3d2a68');
-            }
-          } catch (e) {}
           try {
             localStorage.setItem('quarkAutoSave_theme', this.isLightTheme ? 'light' : 'dark');
           } catch (e) {}

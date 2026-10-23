@@ -12,13 +12,7 @@
   --bg-grad-3: #302b63;
   --bg-grad-4: #4a2a6d;
 
-  /* 浏览器栏采样色（iOS 26 Safari 的 Liquid Glass 状态栏 / 底部工具栏底色，
-     同时也是 PWA 独立窗口的窗口底色）。
-     Safari 26 起不再读 <meta name="theme-color">，改为采样页面背景色和
-     「贴近视口上下边缘 4px 内的 fixed/sticky 元素的 background-color」；
-     采样不到就回退成系统默认色（深色模式下是纯黑），页面底部于是出现一条
-     与页面断开的黑边（WebKit bug 325446 / 304952）。
-     这里取渐变底部那一档紫，让工具栏与页面底部连成一片。 */
+  /* 页面画布基础色：内容与背景自然延伸到安全区，浏览器原生工具栏由系统绘制。 */
   --chrome-bg: #3d2a68;
 
   /* 强调色（蓝紫渐变） */
@@ -75,9 +69,6 @@
      不支持 env() 的浏览器保持 0，见下方 @supports 覆盖。 */
   --safe-top: 0px;
   --safe-bottom: 0px;
-  /* 浏览器栏可能覆盖布局视口，由 visualViewport 动态更新。 */
-  --browser-bottom-inset: 0px;
-  --bottom-viewport-clearance: max(var(--safe-bottom), var(--browser-bottom-inset));
 
   /* 顶部留白增量系数：额外下移量 = 状态栏高度 × 该系数。
      iOS 在状态栏下方会对滚过的内容做一层顶部滚动模糊，卡片顶边贴得太近时会被糊掉。
@@ -288,26 +279,6 @@ body.login-page::before {
       var(--bg-grad-4) 100%);
 }
 
-/* 上下边缘 4px 的取色条：Safari 只认「贴近边缘 4px 内」的 fixed 元素底色，
-   有了这两条，状态栏取页面顶部的深色、底部工具栏取渐变底部的紫色，两端各自贴合。
-   颜色与渐变在该位置的颜色一致，正常渲染下看不出来。 */
-.qas-chrome-edge {
-  position: fixed;
-  left: 0;
-  right: 0;
-  height: 4px;
-  z-index: 1;
-  pointer-events: none;
-}
-.qas-chrome-edge-top {
-  top: 0;
-  background-color: var(--bg-grad-1);
-}
-.qas-chrome-edge-bottom {
-  bottom: 0;
-  background-color: var(--chrome-bg);
-}
-
 /* 光晕装饰层（仅装饰，不挡交互） */
 body.qas-body::after,
 body.login-page::after {
@@ -502,8 +473,8 @@ a:hover {
   position: fixed;
   right: 20px;
   top: auto;
-  /* 同时避开系统手势区与覆盖视口的浏览器工具栏。 */
-  bottom: calc(20px + var(--bottom-viewport-clearance));
+  /* 底部安全区：Home 指示条压在按钮组下沿时点不到 */
+  bottom: calc(20px + var(--safe-bottom));
   transform: none;
   display: flex;
   flex-direction: column;
@@ -596,7 +567,7 @@ a:hover {
   .floating-action-buttons {
     right: 10px;
     top: auto;
-    bottom: calc(20px + var(--bottom-viewport-clearance));
+    bottom: calc(20px + var(--safe-bottom));
     transform: none;
     flex-direction: column;
     padding: 6px;
@@ -743,8 +714,8 @@ a:hover {
 .glass-main {
   margin-left: calc(var(--sidebar-width) + var(--sidebar-offset) * 2);
   margin-right: var(--sidebar-offset);
-  /* 额外留白让最后一行卡片能滚到系统与浏览器底栏上方。 */
-  padding: 18px 8px calc(30px + var(--bottom-viewport-clearance));
+  /* 底部内边距叠加安全区：否则最后一行卡片会被 Home 指示条压住，滚到底也看不全 */
+  padding: 18px 8px calc(30px + var(--safe-bottom));
   padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
   transition: margin-left 0.25s ease;
 }
@@ -812,7 +783,7 @@ a:hover {
   position: fixed;
   left: 0;
   right: 92px;
-  bottom: max(0px, calc(var(--browser-bottom-inset) - var(--safe-bottom)));
+  bottom: 0;
   z-index: 1085;
   display: flex;
   flex-direction: column;
@@ -1597,8 +1568,8 @@ td[colspan] {
 }
 .modal-footer {
   border-top: 1px solid var(--glass-border);
-  /* 弹窗按钮避开系统手势区和覆盖视口的浏览器工具栏。 */
-  padding: 0.9rem 1.25rem calc(0.9rem + var(--bottom-viewport-clearance));
+  /* 弹窗贴到底时底部按钮落在 Home 指示条上，补安全区（桌面为 0，观感不变） */
+  padding: 0.9rem 1.25rem calc(0.9rem + var(--safe-bottom));
 }
 .modal-lg .modal-content {
   max-width: none;
@@ -4308,12 +4279,12 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   #createTaskModal .modal-dialog {
     margin: calc(8px + var(--safe-top)) auto 8px;
     max-width: calc(100% - 16px);
-    max-height: calc(100dvh - 16px - var(--safe-top) - var(--bottom-viewport-clearance));
+    max-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
     display: flex;
     flex-direction: column;
   }
   #createTaskModal .modal-content {
-    max-height: calc(100dvh - 16px - var(--safe-top) - var(--bottom-viewport-clearance));
+    max-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
     display: flex;
     flex-direction: column;
   }
@@ -4335,7 +4306,7 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
     align-items: stretch;
     gap: 8px;
     /* 底部按钮是主要操作，必须完整落在 Home 指示条之上 */
-    padding: 0.75rem 1rem calc(0.75rem + var(--bottom-viewport-clearance));
+    padding: 0.75rem 1rem calc(0.75rem + var(--safe-bottom));
   }
   #createTaskModal .modal-footer .file-selection-info {
     flex: 1 1 100%;
@@ -5102,7 +5073,7 @@ html.theme-light .tasklist-failed-chip.active {
        增量与主内容用同一个系数，抽屉与页面同步下移，相对位置保持不变。
        底部同理：最后一项（主题切换）不能被 Home 指示条压住。 */
     padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
-    padding-bottom: calc(18px + var(--bottom-viewport-clearance));
+    padding-bottom: calc(18px + var(--safe-bottom));
   }
   .glass-sidebar.collapse.show {
     transform: translateX(0);
@@ -5292,7 +5263,7 @@ html.theme-light .tasklist-failed-chip.active {
   /* 展开时给侧边栏留空间（无遮罩，保持简洁） */
   .glass-main {
     margin-left: var(--sidebar-offset);
-    padding: 12px 2px calc(20px + var(--bottom-viewport-clearance));
+    padding: 12px 2px calc(20px + var(--safe-bottom));
     padding-top: calc(12px + var(--safe-top) + var(--safe-top-extra));
   }
   .glass-navbar .navbar-brand {
