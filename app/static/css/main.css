@@ -5157,7 +5157,9 @@ html.theme-light .tasklist-failed-chip.active {
     position: fixed;
     top: 0;
     left: 0;
-    bottom: 0;
+    /* 向下多铺一截（与底板同一个 --bg-bleed），原因见 padding-bottom 处。
+       bottom 为负值时面板仍然铺到布局视口底之外，把那条缝盖住。 */
+    bottom: calc(-1 * var(--bg-bleed));
     width: 78%;
     max-width: 300px;
     border-radius: 0 20px 20px 0;
@@ -5174,6 +5176,19 @@ html.theme-light .tasklist-failed-chip.active {
        底部同理：最后一项（主题切换）不能被 Home 指示条压住。 */
     padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
     padding-bottom: calc(18px + var(--safe-bottom));
+    /* 向下多铺的那一截（= --bg-bleed）用「下边框」承载，而不是加 padding-bottom：
+       边框在 padding 盒之外、不参与滚动区域，所以菜单项排版、末项「退出」距底
+       18px、内容溢出时的滚动终点全都与改动前一致；而边框区域照样由面板背景填充，
+       面板因此一直画到屏幕底边之外，底部不再露出底板色。
+       （用 padding 补偿会踩坑：底部链接是 flex 贴底，内容溢出时末项被推出可视区。）
+       颜色不能用 transparent：那一段背后没有可模糊的内容，透明会直接透出底板色；
+       这里填「面板叠在遮罩与页面底色上」的等效实色（深色主题 #17123a）。 */
+    border-bottom: var(--bg-bleed) solid #17123a;
+  }
+  /* 浅色主题同理：面板 = 42% 白 叠在 --chrome-bg 上，等效实色实测 #c6c7d7 */
+  html.theme-light .glass-sidebar,
+  html.theme-light .glass-sidebar.collapse {
+    border-bottom-color: #c6c7d7;
   }
   .glass-sidebar.collapse.show {
     transform: translateX(0);
@@ -5191,7 +5206,8 @@ html.theme-light .tasklist-failed-chip.active {
     display: block !important;
     height: auto !important;
     top: 0;
-    bottom: 0;
+    /* 与展开态同一套上下边界，收起过程面板高度不塌、底部不会闪 */
+    bottom: calc(-1 * var(--bg-bleed));
     overflow-y: auto;
     overflow-x: hidden;
     transform: translateX(-100%);
@@ -5223,37 +5239,6 @@ html.theme-light .tasklist-failed-chip.active {
   /* 已展开的抽屉：纵向滚动保持原生，横向滑动交给 JS 收起 */
   .glass-sidebar {
     touch-action: pan-y;
-  }
-  /* iOS 26 独立窗口专属：屏幕最下方约 47px 是系统窗口区
-     （manifest background_color / 采样色，实测连 box-shadow 都画不进去），
-     面板直接在布局视口底切断，就会在它上方留下一条与页面同色的硬边
-     —— 就是用户截图里抽屉底部那条浅紫带。
-     这里让面板与遮罩的底部用一小段渐变过渡到页面底色：在布局视口底处颜色
-     正好等于系统区颜色，视觉上接上；不改布局、不影响滚动、也不依赖能否
-     画进系统区。渐变量取 min(32px, 18px + 安全区)，保证不会盖住底部按钮。
-     其余环境（桌面 / Android / iOS 普通标签页）没有这条系统区，不加渐变。 */
-  html.ios-standalone .glass-sidebar {
-    background-image: linear-gradient(to bottom,
-        transparent calc(100% - min(32px, 18px + var(--safe-bottom))),
-        var(--chrome-bg) 100%);
-  }
-  html.ios-standalone .sidebar-backdrop {
-    background: linear-gradient(to bottom,
-        var(--navbar-mobile-overlay) calc(100% - min(32px, 18px + var(--safe-bottom))),
-        transparent 100%);
-  }
-  /* 浅色主题要重新声明：上面两条用的是 background[-image]，而浅色主题
-     在下方用 background 简写覆盖了抽屉与遮罩，不补一遍渐变会被清掉。 */
-  html.theme-light.ios-standalone .glass-sidebar {
-    background: linear-gradient(to bottom,
-        transparent calc(100% - min(32px, 18px + var(--safe-bottom))),
-        var(--chrome-bg) 100%),
-      rgba(255, 255, 255, 0.42);
-  }
-  html.theme-light.ios-standalone .sidebar-backdrop {
-    background: linear-gradient(to bottom,
-        rgba(15, 23, 42, 0.32) calc(100% - min(32px, 18px + var(--safe-bottom))),
-        transparent 100%);
   }
   /* 移动端抽屉指示：从抽屉边缘向外凸出的小舌片。
      上下拉长、左右收窄，贴边一侧用反圆角（内凹）过渡到面板，
@@ -5360,7 +5345,9 @@ html.theme-light .tasklist-failed-chip.active {
     top: 0;
     left: 0;
     right: 0;
-    bottom: 0;
+    /* 与抽屉同步多铺一截：遮罩没有内容，加高不影响任何布局，
+       只是把底部那一段也压暗，避免抽屉补铺后旁边仍露出未压暗的底板 */
+    bottom: calc(-1 * var(--bg-bleed));
     z-index: 1044; /* 低于抽屉(1045)，高于页面内容 */
     background: var(--navbar-mobile-overlay);
   }

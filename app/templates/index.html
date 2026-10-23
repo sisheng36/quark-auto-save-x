@@ -15,29 +15,11 @@
       } catch (e) {}
     }());
   </script>
-  <!-- 运行环境标记：iOS 独立窗口（主屏启动）下，屏幕最下方约 47px 是系统窗口区，
-       网页画不进去。抽屉/遮罩需要在那条缝上方做一小段渐变过渡才不出现硬边
-       （见 main.css 的 html.ios-standalone 规则）。桌面 / Android / iOS 普通
-       标签页都没有这条系统区，不加标记、不加渐变。 -->
-  <script>
-    (function () {
-      try {
-        var platform = navigator.platform || '';
-        var isIOS = /iPad|iPhone|iPod/.test(platform) ||
-          (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        var standalone = navigator.standalone === true ||
-          (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-        if (isIOS && standalone) {
-          document.documentElement.classList.add('ios-standalone');
-        }
-      } catch (e) {}
-    }());
-  </script>
   <!-- 字体预连接：图标字体与首屏样式尽早建立连接，减少一次串行等待 -->
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=3">
-  <link rel="stylesheet" href="./static/css/main.css?v=74">
+  <link rel="stylesheet" href="./static/css/main.css?v=75">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
