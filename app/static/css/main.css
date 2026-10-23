@@ -5190,6 +5190,18 @@ html.theme-light .tasklist-failed-chip.active {
   html.theme-light .glass-sidebar.collapse {
     border-bottom-color: #c6c7d7;
   }
+  /* 根治：iOS 主屏启动时让整页「永远可滚动」。
+     真机对照（IMG_0358 内容多 / IMG_0359 内容少）证明带子只在「整页不可滚动」时
+     出现：那种状态下 iOS 把 fixed 的包含块压到 797px，并把整个图层裁在那条线上，
+     抽屉、遮罩、连它们向下补铺的背景都画不进屏幕最底那 47px（只有画布色能画进去，
+     所以看到的是页面底色）。一旦页面可滚动，包含块恢复 844，抽屉就铺满了。
+     做法是给 html 留 1px 的滚动余量：内容再少也判定为「可滚动」，
+     iOS 因此始终用屏幕高度铺 fixed 图层。1px 看不见、也不会让页面真的滑动。
+     副作用检查：body 的 min-height 仍是 100%，内容排版不动；仅 iOS 主屏启动生效，
+     桌面 / Android / iOS 普通标签页均不打这个标记。 */
+  html.ios-standalone {
+    min-height: calc(100% + 1px);
+  }
   .glass-sidebar.collapse.show {
     transform: translateX(0);
   }
