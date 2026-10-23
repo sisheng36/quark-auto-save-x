@@ -230,6 +230,13 @@ WebUI 已封装为 PWA：可安装到手机主屏或桌面，以独立窗口（s
 
 iOS Safari 不支持 `beforeinstallprompt`，不会出现自动弹出的安装提示，需要通过「分享 → 添加到主屏幕」手动添加；应用内也会给出相应的操作引导。
 
+### 安全区适配（刘海 / 底部手势条）
+
+- **顶部**：`env(safe-area-inset-top)` 补偿状态栏，独立窗口下汉堡菜单、首屏卡片顶边、抽屉首项、toast 与弹窗标题栏都不会被遮挡
+- **底部**：`env(safe-area-inset-bottom)` 补偿 Home 指示条，最后一行卡片、右下角悬浮按钮组、PWA 提示条、弹窗底部按钮与抽屉末项都会整体让开，不会压在系统手势区上
+- 两者都是 CSS 变量（`--safe-top` / `--safe-bottom`）：桌面与 Android 下取 0，布局与补偿前完全一致
+- 主题色（`<meta name="theme-color">`、manifest 的 `theme_color` / `background_color`）取页面渐变底部那一档紫色，避免 iOS Safari 的底部工具栏区与 PWA 窗口底色露出近黑色、被看成一条与页面断开的「黑边」；浅色主题会同步切换
+
 ### 离线能力与限制
 
 - ✅ **可以**：打开应用外壳（页面框架与静态资源），并查看最近一次成功请求的 GET 接口数据（只读）

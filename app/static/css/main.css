@@ -57,11 +57,15 @@
   --sidebar-offset: 14px;
   --navbar-height: 58px;
 
-  /* 安全区（仅顶部：状态栏 / 刘海）。
+  /* 安全区（顶部：状态栏 / 刘海；底部：Home 指示条）。
      PWA 以独立窗口启动时布局视口从屏幕顶端开始，系统不再让开状态栏，
      必须由页面自行补偿，否则顶部控件会被状态栏遮挡且点不到。
+     底部同理：Home 指示条那一截（iPhone 约 34px）落在视口内，
+     不补内边距的话最后一张卡片、悬浮按钮组、弹窗底部按钮都会压在系统手势区上，
+     点按容易误触返回桌面。两条都只在独立窗口/刘海屏下非 0，桌面与安卓为 0。
      不支持 env() 的浏览器保持 0，见下方 @supports 覆盖。 */
   --safe-top: 0px;
+  --safe-bottom: 0px;
 
   /* 顶部留白增量系数：额外下移量 = 状态栏高度 × 该系数。
      iOS 在状态栏下方会对滚过的内容做一层顶部滚动模糊，卡片顶边贴得太近时会被糊掉。
@@ -224,10 +228,15 @@
   }
 }
 
-/* 支持 env() 的浏览器改用真实顶部安全区（非独立窗口 / 桌面下为 0，不影响现有布局） */
+/* 支持 env() 的浏览器改用真实安全区（非独立窗口 / 桌面下为 0，不影响现有布局） */
 @supports (top: env(safe-area-inset-top)) {
   :root {
     --safe-top: env(safe-area-inset-top, 0px);
+  }
+}
+@supports (bottom: env(safe-area-inset-bottom)) {
+  :root {
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
 
@@ -453,7 +462,8 @@ a:hover {
   position: fixed;
   right: 20px;
   top: auto;
-  bottom: 20px;
+  /* 底部安全区：Home 指示条压在按钮组下沿时点不到 */
+  bottom: calc(20px + var(--safe-bottom));
   transform: none;
   display: flex;
   flex-direction: column;
@@ -546,7 +556,7 @@ a:hover {
   .floating-action-buttons {
     right: 10px;
     top: auto;
-    bottom: 20px;
+    bottom: calc(20px + var(--safe-bottom));
     transform: none;
     flex-direction: column;
     padding: 6px;
@@ -693,7 +703,8 @@ a:hover {
 .glass-main {
   margin-left: calc(var(--sidebar-width) + var(--sidebar-offset) * 2);
   margin-right: var(--sidebar-offset);
-  padding: 18px 8px 30px;
+  /* 底部内边距叠加安全区：否则最后一行卡片会被 Home 指示条压住，滚到底也看不全 */
+  padding: 18px 8px calc(30px + var(--safe-bottom));
   padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
   transition: margin-left 0.25s ease;
 }
@@ -766,7 +777,8 @@ a:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0 12px 12px;
+  /* 提示条贴底：不叠加安全区会被 Home 指示条盖住最后一行文字 */
+  padding: 0 12px calc(12px + var(--safe-bottom));
   pointer-events: none;
 }
 .pwa-banner {
@@ -1545,7 +1557,8 @@ td[colspan] {
 }
 .modal-footer {
   border-top: 1px solid var(--glass-border);
-  padding: 0.9rem 1.25rem;
+  /* 弹窗贴到底时底部按钮落在 Home 指示条上，补安全区（桌面为 0，观感不变） */
+  padding: 0.9rem 1.25rem calc(0.9rem + var(--safe-bottom));
 }
 .modal-lg .modal-content {
   max-width: none;
@@ -4247,19 +4260,20 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   max-width: 760px;
 }
 @media (max-width: 767.98px) {
-  /* 弹窗顶部让开状态栏（PWA 独立窗口下布局视口从屏幕顶端开始） */
+  /* 弹窗顶部让开状态栏、底部让开 Home 指示条
+     （PWA 独立窗口下布局视口从屏幕顶端开始，安全区全落在视口内） */
   .modal-dialog {
     margin-top: calc(0.5rem + var(--safe-top));
   }
   #createTaskModal .modal-dialog {
     margin: calc(8px + var(--safe-top)) auto 8px;
     max-width: calc(100% - 16px);
-    max-height: calc(100dvh - 16px - var(--safe-top));
+    max-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
     display: flex;
     flex-direction: column;
   }
   #createTaskModal .modal-content {
-    max-height: calc(100dvh - 16px - var(--safe-top));
+    max-height: calc(100dvh - 16px - var(--safe-top) - var(--safe-bottom));
     display: flex;
     flex-direction: column;
   }
@@ -4280,7 +4294,8 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
     justify-content: stretch;
     align-items: stretch;
     gap: 8px;
-    padding: 0.75rem 1rem;
+    /* 底部按钮是主要操作，必须完整落在 Home 指示条之上 */
+    padding: 0.75rem 1rem calc(0.75rem + var(--safe-bottom));
   }
   #createTaskModal .modal-footer .file-selection-info {
     flex: 1 1 100%;
@@ -5044,8 +5059,10 @@ html.theme-light .tasklist-failed-chip.active {
        手柄的接缝上，手柄只盖住中间 112px，上下两端就露出一条竖线。 */
     border: 0;
     /* 抽屉顶部让开状态栏：玻璃面板仍铺到屏幕顶，只把菜单项下移。
-       增量与主内容用同一个系数，抽屉与页面同步下移，相对位置保持不变。 */
+       增量与主内容用同一个系数，抽屉与页面同步下移，相对位置保持不变。
+       底部同理：最后一项（主题切换）不能被 Home 指示条压住。 */
     padding-top: calc(18px + var(--safe-top) + var(--safe-top-extra));
+    padding-bottom: calc(18px + var(--safe-bottom));
   }
   .glass-sidebar.collapse.show {
     transform: translateX(0);
@@ -5235,7 +5252,7 @@ html.theme-light .tasklist-failed-chip.active {
   /* 展开时给侧边栏留空间（无遮罩，保持简洁） */
   .glass-main {
     margin-left: var(--sidebar-offset);
-    padding: 12px 2px 20px;
+    padding: 12px 2px calc(20px + var(--safe-bottom));
     padding-top: calc(12px + var(--safe-top) + var(--safe-top-extra));
   }
   .glass-navbar .navbar-brand {
