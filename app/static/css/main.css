@@ -12,6 +12,15 @@
   --bg-grad-3: #302b63;
   --bg-grad-4: #4a2a6d;
 
+  /* 浏览器栏采样色（iOS 26 Safari 的 Liquid Glass 状态栏 / 底部工具栏底色，
+     同时也是 PWA 独立窗口的窗口底色）。
+     Safari 26 起不再读 <meta name="theme-color">，改为采样页面背景色和
+     「贴近视口上下边缘 4px 内的 fixed/sticky 元素的 background-color」；
+     采样不到就回退成系统默认色（深色模式下是纯黑），页面底部于是出现一条
+     与页面断开的黑边（WebKit bug 325446 / 304952）。
+     这里取渐变底部那一档紫，让工具栏与页面底部连成一片。 */
+  --chrome-bg: #3d2a68;
+
   /* 强调色（蓝紫渐变） */
   --accent-2: #8b5cf6;
   --accent-grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #a855f7 100%);
@@ -243,11 +252,14 @@
 /* --------------- 基础样式 --------------- */
 html {
   height: 100%;
+  /* 根背景必须是显式颜色：Safari 采样到 transparent 会回退成白/黑 */
+  background-color: var(--chrome-bg);
 }
 
 body {
   min-height: 100%;
-  background: var(--bg-deep);
+  /* 画布底色同样显式给值（理由同 html）：它决定滚动溢出与安全区露出的颜色 */
+  background: var(--chrome-bg);
   color: var(--text-primary);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
@@ -261,11 +273,36 @@ body.login-page::before {
   position: fixed;
   inset: 0;
   z-index: -2;
-  background: linear-gradient(135deg,
+  /* 关键：铺满视口的 fixed 图层必须自带 background-color。
+     只写渐变（等价于 background-color: transparent）时，iOS 26 Safari
+     采样不到颜色，会把状态栏/底部工具栏涂成系统默认的纯黑——这就是那条黑边。
+     WebKit bug 325446 已复现：给该图层补上 background-color 后两条栏立即取色。 */
+  background-color: var(--chrome-bg);
+  background-image: linear-gradient(135deg,
       var(--bg-grad-1) 0%,
       var(--bg-grad-2) 38%,
       var(--bg-grad-3) 68%,
       var(--bg-grad-4) 100%);
+}
+
+/* 上下边缘 4px 的取色条：Safari 只认「贴近边缘 4px 内」的 fixed 元素底色，
+   有了这两条，状态栏取页面顶部的深色、底部工具栏取渐变底部的紫色，两端各自贴合。
+   颜色与渐变在该位置的颜色一致，正常渲染下看不出来。 */
+.qas-chrome-edge {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 4px;
+  z-index: 1;
+  pointer-events: none;
+}
+.qas-chrome-edge-top {
+  top: 0;
+  background-color: var(--bg-grad-1);
+}
+.qas-chrome-edge-bottom {
+  bottom: 0;
+  background-color: var(--chrome-bg);
 }
 
 /* 光晕装饰层（仅装饰，不挡交互） */
@@ -5447,6 +5484,7 @@ html:not(.theme-light) {
 html.theme-light {
   color-scheme: light;
   --bg-deep: #dce9f1;
+  --chrome-bg: #e1e0f4;
   --bg-grad-1: #d1e8ff;
   --bg-grad-2: #cdf1e2;
   --bg-grad-3: #f1deed;

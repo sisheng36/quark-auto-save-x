@@ -235,7 +235,7 @@ iOS Safari 不支持 `beforeinstallprompt`，不会出现自动弹出的安装�
 - **顶部**：`env(safe-area-inset-top)` 补偿状态栏，独立窗口下汉堡菜单、首屏卡片顶边、抽屉首项、toast 与弹窗标题栏都不会被遮挡
 - **底部**：`env(safe-area-inset-bottom)` 补偿 Home 指示条，最后一行卡片、右下角悬浮按钮组、PWA 提示条、弹窗底部按钮与抽屉末项都会整体让开，不会压在系统手势区上
 - 两者都是 CSS 变量（`--safe-top` / `--safe-bottom`）：桌面与 Android 下取 0，布局与补偿前完全一致
-- 主题色（`<meta name="theme-color">`、manifest 的 `theme_color` / `background_color`）取页面渐变底部那一档紫色，避免 iOS Safari 的底部工具栏区与 PWA 窗口底色露出近黑色、被看成一条与页面断开的「黑边」；浅色主题会同步切换
+- 浏览器栏配色：iOS 26 的 Safari 不再读 `<meta name="theme-color">`，改为采样页面背景色与「贴近视口上下边缘 4px 内的 fixed/sticky 元素」的 `background-color`，采样不到就回退成系统默认色（深色模式下是纯黑，页面底部于是出现一条与页面断开的黑边，见 WebKit bug 325446 / 304952）。因此 `html`/`body` 与固定渐变层都显式给了 `--chrome-bg` 底色，并加了上下两条 4px 的 `.qas-chrome-edge` 取色条；浅色主题同步切换，`theme-color` 保留给 Android 与旧版 iOS
 
 ### 离线能力与限制
 

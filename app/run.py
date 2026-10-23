@@ -2778,7 +2778,7 @@ def favicon():
 # ---------------------------------------------------------------------------
 # Service Worker 逻辑结构版本：改动 sw.js 的缓存策略时 +1，
 # 缓存名随版本变化，发版后浏览器会自动重建整套缓存。
-PWA_SCHEMA_VERSION = 5
+PWA_SCHEMA_VERSION = 6
 # PWA 静态资源目录（manifest / sw.js 模板 / 离线页）
 PWA_DIR = os.path.join(app.root_path, "static", "pwa")
 
