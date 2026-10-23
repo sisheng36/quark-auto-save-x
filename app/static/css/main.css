@@ -1298,8 +1298,8 @@ input[type="color"] {
    且共用边框，看起来像四个图标被挤在一条连续色块里。这里把每格收窄到 36px、
    彼此留 8px 间隙、各自独立圆角，并在输入框与按钮之间也留出同样间隙，
    让它们从「拼成一整条」变成输入框后面的一排独立小按钮。
-   窄屏（≤767.98px）改为输入框独占一行、四个按钮固定在 44px 并靠右，
-   不再被拉成占满整行的四个大块（见本段末尾的媒体查询）。 */
+   窄屏（≤767.98px）沿用「输入框独占一行、四个按钮平分整行」的布局，
+   只是同样留出 8px 间隙，不再首尾相贴。 */
 .input-group.task-search-group > .form-control {
   border-radius: var(--control-radius);
 }
@@ -1318,32 +1318,6 @@ input[type="color"] {
   justify-content: center;
   border: 1px solid var(--glass-border);
   border-radius: var(--control-radius-sm);
-}
-
-@media (max-width: 767.98px) {
-  /* 窄屏：输入框独占一行，四个搜索按钮在下方收成固定小格并靠右，
-     不再被拉成占满整行的四个大块（原先每格 80px 以上、彼此紧贴）。 */
-  .task-search-group {
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .task-search-group > .form-control {
-    flex: 1 1 100%;
-    width: 100%;
-    border-radius: var(--control-radius);
-  }
-  .task-search-actions {
-    width: 100%;
-    margin: 0;
-    justify-content: flex-end;
-  }
-  .input-group.task-search-group .task-search-actions > .btn,
-  .input-group.task-search-group .task-search-actions > .input-group-text {
-    flex: 0 0 auto;
-    width: 44px;
-    min-width: 44px;
-    border-radius: var(--control-radius);
-  }
 }
 
 /* 表单组/检查 */
@@ -4343,16 +4317,6 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   }
   #createTaskModal .create-task-wide-group .input-group-append .input-group-text {
     border-left: 1px solid var(--glass-border);
-  }
-  /* 任务名称右侧的四个搜索按钮不随整行拉伸：固定 44px 并靠右对齐 */
-  #createTaskModal .create-task-wide-group .task-search-actions {
-    justify-content: flex-end;
-  }
-  #createTaskModal .create-task-wide-group .task-search-actions > .btn,
-  #createTaskModal .create-task-wide-group .task-search-actions > .input-group-text {
-    flex: 0 0 auto;
-    width: 44px;
-    min-width: 44px;
   }
   #createTaskModal .task-suggestions {
     max-height: 40vh;
