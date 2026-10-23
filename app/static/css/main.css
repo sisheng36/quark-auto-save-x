@@ -1309,6 +1309,9 @@ input[type="color"] {
   gap: 8px;
   margin-left: 8px;
 }
+/* Bootstrap 的 .input-group 会把「非最后一格」的右圆角去掉，用来拼成
+   一条连续按钮；这里的四个按钮是独立小格，必须用 !important 盖掉那条
+   分段圆角规则，否则只有最左侧的搜索按钮右侧是直角。 */
 .input-group.task-search-group .task-search-actions > .btn,
 .input-group.task-search-group .task-search-actions > .input-group-text {
   flex: 0 0 auto;
@@ -1317,7 +1320,7 @@ input[type="color"] {
   padding: 0;
   justify-content: center;
   border: 1px solid var(--glass-border);
-  border-radius: var(--control-radius-sm);
+  border-radius: var(--control-radius-sm) !important;
 }
 
 @media (max-width: 767.98px) {
@@ -1338,7 +1341,7 @@ input[type="color"] {
   .task-card-body .input-group.task-search-group .task-search-actions > .btn,
   .task-card-body .input-group.task-search-group .task-search-actions > .input-group-text {
     flex: 1 1 auto;
-    border-radius: var(--control-radius);
+    border-radius: var(--control-radius) !important;
   }
 }
 
@@ -4331,7 +4334,7 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   #createTaskModal .create-task-wide-group .input-group-append .input-group-text {
     flex: 1 1 auto;
     justify-content: center;
-    border-radius: 10px;
+    border-radius: 10px !important;
     border: 1px solid var(--glass-border);
   }
   #createTaskModal .create-task-wide-group .input-group-prepend .btn {
