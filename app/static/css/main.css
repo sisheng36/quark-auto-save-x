@@ -5011,7 +5011,7 @@ html.theme-light .tasklist-failed-chip.active {
     z-index: 1045;
     margin: 0;
     /* 移动端抽屉贴屏幕四边，四边都不该有边线：右缘那条 1px 描边正好落在
-       手柄的接缝上，手柄只盖住中间 112px，上下两端就露出一条竖线。 */
+       手柄的接缝上，手柄只盖住中间 149px，上下两端就露出一条竖线。 */
     border: 0;
     /* 抽屉顶部让开状态栏：玻璃面板仍铺到屏幕顶，只把菜单项下移。
        增量与主内容用同一个系数，抽屉与页面同步下移，相对位置保持不变。
@@ -5080,8 +5080,11 @@ html.theme-light .tasklist-failed-chip.active {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 112px;
+    /* 尺寸比最初的手柄再“上下长 1/3、左右窄 1/3”：112 → 149.33、28 → 18.67。
+       SVG 用 preserveAspectRatio="none" 铺满按钮，viewBox 仍是 0 0 28 112，
+       因此轮廓随盒体等比拉伸，反圆角与凸起弧度同步变陡，不会出现直角。 */
+    width: 18.67px;
+    height: 149.33px;
     padding: 0;
     background: none;
     border: 0;
@@ -5142,7 +5145,7 @@ html.theme-light .tasklist-failed-chip.active {
   .mobile-sidebar-toggle.is-open {
     /* 舌片右侧贴住抽屉右缘：终点比抽屉宽度内收 1px，与抽屉的行程（自身宽度）
        严格等长，因此开合全程重叠恒为 1px，反圆角始终从面板边缘“长出”。
-       注意 translate 的百分比按**元素自身宽度**（28px）解析，不能照抄抽屉的 78%；
+       注意 translate 的百分比按**元素自身宽度**（18.67px）解析，不能照抄抽屉的 78%；
        固定定位元素的百分比宽度等价于视口宽度，所以这里用 78vw 与同一个 300px 上限。 */
     transform: translate3d(calc(min(78vw, 300px) - 1px), -50%, 0);
   }
