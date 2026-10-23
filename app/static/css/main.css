@@ -1293,6 +1293,59 @@ input[type="color"] {
   box-shadow: var(--control-ring);
 }
 
+/* --------------- 任务名称右侧的搜索入口 ---------------
+   资源搜索 / 谷歌 / TMDB / 豆瓣 四个按钮原先在输入组里首尾相接：每格 40px 上下
+   且共用边框，看起来像四个图标被挤在一条连续色块里。这里把每格收窄到 36px、
+   彼此留 8px 间隙、各自独立圆角，并在输入框与按钮之间也留出同样间隙，
+   让它们从「拼成一整条」变成输入框后面的一排独立小按钮。
+   窄屏（≤767.98px）改为输入框独占一行、四个按钮固定在 44px 并靠右，
+   不再被拉成占满整行的四个大块（见本段末尾的媒体查询）。 */
+.input-group.task-search-group > .form-control {
+  border-radius: var(--control-radius);
+}
+.task-search-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+.input-group.task-search-group .task-search-actions > .btn,
+.input-group.task-search-group .task-search-actions > .input-group-text {
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  justify-content: center;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--control-radius-sm);
+}
+
+@media (max-width: 767.98px) {
+  /* 窄屏：输入框独占一行，四个搜索按钮在下方收成固定小格并靠右，
+     不再被拉成占满整行的四个大块（原先每格 80px 以上、彼此紧贴）。 */
+  .task-search-group {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .task-search-group > .form-control {
+    flex: 1 1 100%;
+    width: 100%;
+    border-radius: var(--control-radius);
+  }
+  .task-search-actions {
+    width: 100%;
+    margin: 0;
+    justify-content: flex-end;
+  }
+  .input-group.task-search-group .task-search-actions > .btn,
+  .input-group.task-search-group .task-search-actions > .input-group-text {
+    flex: 0 0 auto;
+    width: 44px;
+    min-width: 44px;
+    border-radius: var(--control-radius);
+  }
+}
+
 /* 表单组/检查 */
 .form-group {
   margin-bottom: 1rem;
@@ -4291,6 +4344,16 @@ html.theme-light .tasklist-poster-edit .tasklist-edit-task-btn:hover i {
   #createTaskModal .create-task-wide-group .input-group-append .input-group-text {
     border-left: 1px solid var(--glass-border);
   }
+  /* 任务名称右侧的四个搜索按钮不随整行拉伸：固定 44px 并靠右对齐 */
+  #createTaskModal .create-task-wide-group .task-search-actions {
+    justify-content: flex-end;
+  }
+  #createTaskModal .create-task-wide-group .task-search-actions > .btn,
+  #createTaskModal .create-task-wide-group .task-search-actions > .input-group-text {
+    flex: 0 0 auto;
+    width: 44px;
+    min-width: 44px;
+  }
   #createTaskModal .task-suggestions {
     max-height: 40vh;
   }
@@ -4510,16 +4573,44 @@ html.theme-light .tasklist-failed-chip.active {
   color: #fff;
   text-decoration: underline;
 }
+/* 四个搜索入口（资源 / 谷歌 / TMDB / 豆瓣）的图标统一成一套单色规格：
+   资源与谷歌是字体图标，跟随文字色；TMDB、豆瓣改成用 mask 上色，
+   同样取 currentColor。这样深浅两套主题下四个图标都跟所在格子文字同色，
+   不再出现「谷歌蓝 + 豆瓣/TMDB 滤镜灰」两三种颜色混排的情况。
+   TMDB 新图是官方「胶囊 + TMDB 字」标（字母在 SVG 里镂空），
+   旧资源只有胶囊底色没有字，反色后就是一条横杠。
+   胶囊是横向宽标（74:29.9），所以单独给宽高并保持比例。 */
+.task-search-actions .input-group-text a,
+.task-search-actions .input-group-text a:hover {
+  color: inherit;
+}
+.task-search-actions .input-group-text:hover a {
+  color: var(--text-primary);
+}
 .tmdb-icon,
+.douban-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+}
+.tmdb-icon {
+  width: 26px;
+  height: 26px;
+  /* 图标内容换了，带上版本参数，避开 static 目录一年期 immutable 缓存 */
+  -webkit-mask-image: url("../images/TMDB.svg?v=2");
+  mask-image: url("../images/TMDB.svg?v=2");
+}
 .douban-icon {
   width: 16px;
   height: 16px;
-  vertical-align: -2px;
-  filter: brightness(0) saturate(100%) invert(0.75);
-}
-.tmdb-icon:hover,
-.douban-icon:hover {
-  filter: brightness(0) saturate(100%) invert(1);
+  -webkit-mask-image: url("../images/Douban.svg");
+  mask-image: url("../images/Douban.svg");
 }
 .tmdb-link {
   color: #a5b4fc;
