@@ -19,6 +19,15 @@
      补铺 72px（≈1.5×）让纯色一直铺到屏幕底边之外，覆盖机型差异。 */
   --bg-bleed: 72px;
 
+  /* 「屏幕底 − 布局视口底」的差值，与 --bg-bleed 是一件事的两面：
+     --bg-bleed 让底板「多铺一截」盖住缝；这个变量让抽屉/遮罩/手柄/悬浮按钮
+     「按屏幕真实高度铺」，而不是停在布局视口底。
+     iOS 26 独立窗口下 fixed 元素的包含块（布局视口）只有 797px，屏幕是 844px，
+     差值 47px —— 这就是抽屉下缘上方那条浅紫带的来源。
+     取值见下方 @supports (height: 100dvh)：那里用 100dvh - 100% 算出真实差值；
+     不支持 dvh 的环境保持 0，所有用到它的 calc 都退化成原值（桌面/Android 行为不变）。 */
+  --viewport-bottom-gap: 0px;
+
   /* 强调色（蓝紫渐变） */
   --accent-2: #8b5cf6;
   --accent-grad: linear-gradient(135deg, #6366f1 0%, #8b5cf6 55%, #a855f7 100%);
@@ -246,6 +255,14 @@
     --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
+/* 布局视口比屏幕矮多少：100dvh 是可见视口高度（= 屏幕），100% 在下面三处
+   （抽屉高度 / 遮罩高度 / 手柄 top）按各自的百分比基准解析，基准正是 fixed 的
+   包含块，也就是布局视口。两者相等时（桌面、Android、普通浏览器）为 0。 */
+@supports (height: 100dvh) {
+  :root {
+    --viewport-bottom-gap: max(0px, 100dvh - 100%);
+  }
+}
 
 /* --------------- 基础样式 --------------- */
 html {
@@ -420,8 +437,9 @@ a:hover {
   position: fixed;
   right: 20px;
   top: auto;
-  /* 底部安全区：Home 指示条压在按钮组下沿时点不到 */
-  bottom: calc(20px + var(--safe-bottom));
+  /* 底部安全区 + 布局视口缺口：100% 的基准是布局视口，屏幕底还在它下方 gap 处，
+     所以这里要用减号把按钮组推到屏幕真实底边（gap 为 0 的环境与原值完全一致） */
+  bottom: calc(20px + var(--safe-bottom) - var(--viewport-bottom-gap));
   transform: none;
   display: flex;
   flex-direction: column;
@@ -514,7 +532,7 @@ a:hover {
   .floating-action-buttons {
     right: 10px;
     top: auto;
-    bottom: calc(20px + var(--safe-bottom));
+    bottom: calc(20px + var(--safe-bottom) - var(--viewport-bottom-gap));
     transform: none;
     flex-direction: column;
     padding: 6px;
@@ -886,7 +904,8 @@ a:hover {
   position: fixed;
   left: 0;
   right: 92px;
-  bottom: 0;
+  /* 与抽屉同一套贴边逻辑：百分比基准是布局视口，屏幕底在它下方 gap 处 */
+  bottom: calc(-1 * var(--viewport-bottom-gap));
   z-index: 1085;
   display: flex;
   flex-direction: column;
@@ -5157,7 +5176,15 @@ html.theme-light .tasklist-failed-chip.active {
     position: fixed;
     top: 0;
     left: 0;
-    bottom: 0;
+    /* 高度按「屏幕真实高度」给，而不是 bottom: 0：
+       iOS 26 独立窗口里 fixed 的包含块只有布局视口高（比屏幕矮 46.7px），
+       写 bottom: 0 面板就停在布局视口底，下方露出底板色 —— 就是用户看到的
+       「抽屉底部一条浅紫带」。height 用 100% + --viewport-bottom-gap 直接铺到
+       屏幕底边之外，多出的那一截落在屏幕外、看不见。
+       注意不能用「bottom: -gap + padding-bottom: +gap」：盒子会被撑高装下全部
+       内容，短视口下抽屉不再滚动（实测「退出」按钮会滚不到）。 */
+    bottom: auto;
+    height: calc(100% + var(--viewport-bottom-gap));
     width: 78%;
     max-width: 300px;
     border-radius: 0 20px 20px 0;
@@ -5189,9 +5216,10 @@ html.theme-light .tasklist-failed-chip.active {
      纵向溢出，让收起过程只做横向位移动画。 */
   .glass-sidebar.collapsing {
     display: block !important;
-    height: auto !important;
+    /* 与展开态同一套高度：动画面板不能比最终状态矮一截，否则收起瞬间底部会闪一下 */
+    height: calc(100% + var(--viewport-bottom-gap)) !important;
     top: 0;
-    bottom: 0;
+    bottom: auto;
     overflow-y: auto;
     overflow-x: hidden;
     transform: translateX(-100%);
@@ -5230,7 +5258,9 @@ html.theme-light .tasklist-failed-chip.active {
      点击开合由 Bootstrap data-api 负责，手柄负责外观、位置与箭头方向。 */
   .mobile-sidebar-toggle {
     position: fixed;
-    top: 50%;
+    /* 50% 是布局视口的中线，比屏幕中线高 half-gap：补回来，手柄才真正居中。
+       配合后面的 translateY(-50%)，中心落在屏幕真实中线。 */
+    top: calc(50% + var(--viewport-bottom-gap) / 2);
     left: 0; /* 位置完全交给 transform：left 动画走主线程，会落后于抽屉的合成层动画 */
     z-index: 1046; /* 高于抽屉(1045)与遮罩(1044)，低于弹窗/悬浮按钮(1050) */
     display: flex;
@@ -5329,7 +5359,10 @@ html.theme-light .tasklist-failed-chip.active {
     top: 0;
     left: 0;
     right: 0;
-    bottom: 0;
+    /* 与抽屉同一套高度：遮罩也必须盖到屏幕真实底边，否则底部会露出一条
+       未被压暗的底板（和抽屉那条浅紫带是同一处缝） */
+    bottom: auto;
+    height: calc(100% + var(--viewport-bottom-gap));
     z-index: 1044; /* 低于抽屉(1045)，高于页面内容 */
     background: var(--navbar-mobile-overlay);
   }

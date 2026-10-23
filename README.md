@@ -237,6 +237,7 @@ iOS Safari 不支持 `beforeinstallprompt`，不会出现自动弹出的安装�
 - 两者都是 CSS 变量（`--safe-top` / `--safe-bottom`）：桌面与 Android 下取 0，布局与补偿前完全一致
 - 页面背景是**一块纯色**（`--chrome-bg`）：画布（`html`）、`body`、以及铺满视口的固定取色层用的是同一个颜色。取色层保留 `background-color` 是给 iOS 26 的浏览器栏取色用 —— Safari 26 不再读 `<meta name="theme-color">`，改为采样页面背景色与「贴近视口边缘的 fixed/sticky 元素」的 `background-color`，采样不到就回退成系统默认色（深色模式下是纯黑，见 WebKit bug 325446 / 304952）；`theme-color` 保留给 Android 与旧版 iOS
 - 取色层向下补铺 `--bg-bleed`（72px）：iOS 26 独立窗口 / PWA 下 `position: fixed` 按「布局视口」铺，而布局视口比屏幕矮 46.7px（真机实测：固定层止于 y=797.3、屏高 844），够不到屏幕最底那一条；内容不足一屏时回弹会把 `body` 色块抬起来，正好露出这条缝。补铺后纯色一直盖到屏幕底边之外，观感是「整块一起往上走」
+- 同一个 46.7px 缺口也影响「按真实屏幕高度铺满」的元素：抽屉（`.glass-sidebar`）、遮罩（`.sidebar-backdrop`）、垂直居中的抽屉手柄、右下角悬浮按钮组与 PWA 提示条，原先都停在布局视口底，下方露出一条底板色。现在统一用 `--viewport-bottom-gap`（`max(0px, 100dvh - 100%)`，支持 dvh 时才有值，其余环境恒为 0）：抽屉/遮罩用 `height: calc(100% + var(--viewport-bottom-gap))` 铺到屏幕真实底边之外，手柄与悬浮按钮按差值回补，桌面与 Android 行为完全不变
 - 背景栈里只允许存在这一种颜色：早先的 135° 渐变 + 光晕小球在内容不足一屏、回弹露出底部时会变成一条卡在屏幕中间的色带（即「底部分裂」），已一并移除（短页面场景已加入本地回归脚本，测试脚本不随仓库分发）
 
 ### 离线能力与限制
