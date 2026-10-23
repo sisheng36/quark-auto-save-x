@@ -134,7 +134,7 @@
 }
 .boot-skeleton-sidebar {
   flex: 0 0 var(--sidebar-width);
-  border-radius: 18px;
+  border-radius: 20px;
   background: var(--glass-bg-strong);
   border: 1px solid var(--glass-border);
 }
@@ -537,7 +537,13 @@ a:hover {
   }
 }
 
-/* --------------- 悬浮侧边栏 --------------- */
+/* --------------- 悬浮侧边栏 ---------------
+   设计要点：
+   - 每项左侧是 28×28 的圆角「图标胶囊」：柔和的浅色底 + 对应色文字，
+     整个侧栏因此有一列稳定的彩色锚点，比裸线框图标更亲切；
+   - 悬停只做胶囊放大与加亮、链接底色微亮，不做位移，避免滚动时抽搐；
+   - 选中态保留原来的蓝紫渐变药丸，补一层内高光与柔光，胶囊同步变白；
+   - 退出从主列表移到底部，做成独立白色药丸（与参考图一致）。 */
 .glass-sidebar {
   position: fixed;
   top: calc(var(--sidebar-offset) + var(--safe-top) + var(--safe-top-extra));
@@ -550,9 +556,9 @@ a:hover {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
-  border-radius: 18px;
+  border-radius: 20px;
   box-shadow: var(--glass-shadow);
-  padding: 14px 10px;
+  padding: 12px 10px 14px;
   overflow-y: auto;
   overflow-x: hidden;
   transition: width 0.25s ease;
@@ -567,39 +573,124 @@ a:hover {
   display: flex;
   flex-direction: column;
 }
+
+/* 品牌块：渐变方块 + 名称，给侧栏一个「应用身份」的落点；
+   折叠时名称由 .nav-text 规则隐藏，只剩方块居中。 */
+.glass-sidebar .sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 6px 12px;
+  margin-bottom: 2px;
+  min-height: 42px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.glass-sidebar .sidebar-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 10px;
+  background: var(--accent-grad);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+.glass-sidebar .sidebar-brand-mark i {
+  font-size: 1rem;
+  line-height: 1;
+}
+.glass-sidebar .sidebar-brand-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
 .glass-sidebar .nav {
   flex: 1;
-  gap: 3px;
+  gap: 4px;
 }
 .glass-sidebar .nav-link {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 11px;
+  gap: 10px;
+  min-height: 42px;
+  padding: 7px 9px;
+  border-radius: 12px;
   color: var(--text-secondary);
-  font-size: 0.94rem;
+  font-size: 0.93rem;
   transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
   white-space: nowrap;
   overflow: hidden;
 }
-.glass-sidebar .nav-link i {
-  font-size: 1.15rem;
-  width: 24px;
-  text-align: center;
-  flex-shrink: 0;
+/* 图标胶囊：底色与字形色由下面的 data-nav 逐项给出，缺省时退回淡蓝紫 */
+.glass-sidebar .nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 9px;
+  background: var(--nav-tint, rgba(165, 180, 252, 0.16));
+  color: var(--nav-ink, #c7d2fe);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+              transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) ease;
 }
+.glass-sidebar .nav-icon i {
+  font-size: 0.92rem;
+  line-height: 1;
+  width: auto;
+}
+/* 逐项配色：同一明度、低饱和的糖果色系，深色主题用亮字形、浅底；
+   浅色主题在「Light theme」段落整体换成深字形 + 更淡的底。 */
+.glass-sidebar .nav-link[data-nav="overview"]    { --nav-tint: rgba(99, 102, 241, 0.22);  --nav-ink: #c7d2fe; }
+.glass-sidebar .nav-link[data-nav="tasklist"]    { --nav-tint: rgba(56, 189, 248, 0.16);  --nav-ink: #7dd3fc; }
+.glass-sidebar .nav-link[data-nav="discovery"]   { --nav-tint: rgba(244, 114, 182, 0.18); --nav-ink: #f9a8d4; }
+.glass-sidebar .nav-link[data-nav="calendar"]    { --nav-tint: rgba(251, 191, 36, 0.18);  --nav-ink: #fcd34d; }
+.glass-sidebar .nav-link[data-nav="history"]     { --nav-tint: rgba(168, 85, 247, 0.20);  --nav-ink: #d8b4fe; }
+.glass-sidebar .nav-link[data-nav="filemanager"] { --nav-tint: rgba(52, 211, 153, 0.16);  --nav-ink: #6ee7b7; }
+.glass-sidebar .nav-link[data-nav="config"]      { --nav-tint: rgba(59, 130, 246, 0.18);  --nav-ink: #93c5fd; }
+.glass-sidebar .nav-link[data-nav="runlogs"]     { --nav-tint: rgba(148, 163, 184, 0.18); --nav-ink: #cbd5e1; }
+
 .glass-sidebar .nav-link:hover {
-  color: #fff;
+  color: var(--text-primary);
   background: rgba(255, 255, 255, 0.07);
+}
+.glass-sidebar .nav-link:hover .nav-icon {
+  transform: scale(1.06);
+  filter: brightness(1.12);
 }
 .glass-sidebar .nav-link.active {
   color: #fff;
   background: var(--accent-grad);
-  box-shadow: 0 4px 18px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.glass-sidebar .nav-link.active .nav-icon {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  filter: none;
+}
+.glass-sidebar .nav-link.active:hover .nav-icon {
+  filter: none;
+}
+/* 键盘聚焦：侧栏此前没有焦点环，纯键盘操作时无法判断当前停在哪一项 */
+.glass-sidebar .nav-link:focus-visible {
+  outline: 2px solid var(--focus-border-color);
+  outline-offset: 2px;
 }
 .glass-sidebar .nav-text {
+  display: block;
+  min-width: 0;
   opacity: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition: opacity 0.18s ease;
 }
 /* 版本更新提示徽标：与本地版本号保持同一水平线、垂直居中 */
@@ -611,23 +702,38 @@ a:hover {
   font-size: 0.75em;
 }
 
-/* 侧边栏底部链接 */
+/* 侧边栏底部链接：分隔线两端淡出，避免一条硬横线把侧栏切成两半 */
 .glass-sidebar .bottom-links {
   margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--glass-border);
+  padding-top: 2px;
+}
+.glass-sidebar .bottom-links::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin: 0 4px 8px;
+  background: linear-gradient(90deg, transparent, var(--glass-border) 12%, var(--glass-border) 88%, transparent);
 }
 .glass-sidebar .bottom-links .nav-link {
-  padding: 8px 12px;
-  font-size: 0.85rem;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  gap: 9px;
+  font-size: 0.82rem;
   color: var(--text-tertiary);
+}
+.glass-sidebar .bottom-links .nav-link i {
+  font-size: 0.95rem;
+  width: 20px;
+  flex: 0 0 20px;
+  text-align: center;
 }
 .glass-sidebar .bottom-links .nav-link:hover {
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.05);
 }
 .theme-toggle-item {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 .glass-sidebar .theme-toggle {
   width: 100%;
@@ -637,14 +743,47 @@ a:hover {
   font-family: inherit;
   cursor: pointer;
 }
+/* 退出药丸：白色实心、居中对齐，和上面的半透明菜单形成明确层级。
+   选择器带 .bottom-links：底部链接的 0,3,0 规则会覆盖同名属性，
+   必须同权重且排在它后面才能生效。 */
+.glass-sidebar .bottom-links .nav-logout {
+  justify-content: center;
+  min-height: 38px;
+  padding: 6px 12px;
+  margin-top: 4px;
+  border-radius: 12px;
+  /* 透明描边：深浅主题的按钮高度一致（浅色主题会把它换成可见描边） */
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.92);
+  color: #4a2f83;
+  font-size: 0.86rem;
+  font-weight: 600;
+  box-shadow: 0 6px 16px rgba(4, 3, 18, 0.28);
+}
+.glass-sidebar .bottom-links .nav-logout:hover {
+  background: #fff;
+  color: #3b2568;
+  box-shadow: 0 8px 20px rgba(4, 3, 18, 0.34);
+}
+.glass-sidebar .bottom-links .nav-logout .nav-icon {
+  background: rgba(124, 92, 214, 0.14);
+  color: #6d4fc4;
+  box-shadow: none;
+  filter: none;
+}
 
 /* 折叠状态 */
 .glass-sidebar.sidebar-collapsed {
   width: var(--sidebar-collapsed-width);
 }
+.glass-sidebar.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
 .glass-sidebar.sidebar-collapsed .nav-link {
   justify-content: center;
-  padding: 10px 0;
+  padding: 7px 0;
 }
 .glass-sidebar.sidebar-collapsed .nav-text,
 .glass-sidebar.sidebar-collapsed .bottom-links .nav-text {
@@ -654,7 +793,24 @@ a:hover {
 }
 .glass-sidebar.sidebar-collapsed .bottom-links .nav-link {
   justify-content: center;
-  padding: 8px 0;
+  padding: 6px 0;
+}
+.glass-sidebar.sidebar-collapsed .bottom-links .nav-logout {
+  padding: 6px 0;
+}
+
+/* 动效降级：系统开启「减少动态效果」时，取消胶囊的缩放与全部过渡 */
+@media (prefers-reduced-motion: reduce) {
+  .glass-sidebar .nav-link,
+  .glass-sidebar .nav-icon,
+  .glass-sidebar .nav-text,
+  .glass-sidebar .nav-logout {
+    transition: none;
+  }
+  .glass-sidebar .nav-link:hover .nav-icon {
+    transform: none;
+    filter: none;
+  }
 }
 
 /* --------------- 主内容区 --------------- */
@@ -5004,7 +5160,7 @@ html.theme-light .tasklist-failed-chip.active {
     bottom: 0;
     width: 78%;
     max-width: 300px;
-    border-radius: 0 18px 18px 0;
+    border-radius: 0 20px 20px 0;
     display: block;
     transform: translateX(-100%);
     transition: transform var(--drawer-motion-duration) var(--drawer-motion-easing);
@@ -5195,17 +5351,28 @@ html.theme-light .tasklist-failed-chip.active {
   /* 抽屉展开时，即使桌面端保存过“折叠”状态也显示完整文字标签 */
   .glass-sidebar.sidebar-collapsed .nav-link {
     justify-content: flex-start;
-    padding: 10px 12px;
+    padding: 7px 9px;
   }
   .glass-sidebar.sidebar-collapsed .bottom-links .nav-link {
     justify-content: flex-start;
-    padding: 8px 12px;
+    padding: 6px 10px;
   }
   .glass-sidebar.sidebar-collapsed .nav-text,
   .glass-sidebar.sidebar-collapsed .bottom-links .nav-text {
     opacity: 1;
     width: auto;
-    display: inline;
+    display: block;
+  }
+  /* 触摸目标：抽屉里主菜单不低于 44px，底部链接 38px，退出药丸 42px。
+     图标胶囊尺寸与桌面一致，不随行高放大，保持同一套视觉比例。 */
+  .glass-sidebar .nav-link {
+    min-height: 44px;
+  }
+  .glass-sidebar .bottom-links .nav-link {
+    min-height: 38px;
+  }
+  .glass-sidebar .bottom-links .nav-logout {
+    min-height: 42px;
   }
   /* 展开时给侧边栏留空间（无遮罩，保持简洁） */
   .glass-main {
@@ -5459,6 +5626,45 @@ html.theme-light .glass-sidebar {
   -webkit-backdrop-filter: blur(28px) saturate(130%);
   backdrop-filter: blur(28px) saturate(130%);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+/* 侧栏浅色主题：图标胶囊换成「深字形 + 更淡的底」，
+   选中药丸的柔光从紫色换成蓝色系，与浅色主题的 --accent-grad 对齐。 */
+html.theme-light .glass-sidebar .nav-link[data-nav="overview"]    { --nav-tint: rgba(79, 70, 229, 0.12);   --nav-ink: #4f46e5; }
+html.theme-light .glass-sidebar .nav-link[data-nav="tasklist"]    { --nav-tint: rgba(2, 132, 199, 0.12);   --nav-ink: #0284c7; }
+html.theme-light .glass-sidebar .nav-link[data-nav="discovery"]   { --nav-tint: rgba(219, 39, 119, 0.12);  --nav-ink: #db2777; }
+html.theme-light .glass-sidebar .nav-link[data-nav="calendar"]    { --nav-tint: rgba(180, 83, 9, 0.12);    --nav-ink: #b45309; }
+html.theme-light .glass-sidebar .nav-link[data-nav="history"]     { --nav-tint: rgba(124, 58, 237, 0.12);  --nav-ink: #7c3aed; }
+html.theme-light .glass-sidebar .nav-link[data-nav="filemanager"] { --nav-tint: rgba(4, 120, 87, 0.12);    --nav-ink: #047857; }
+html.theme-light .glass-sidebar .nav-link[data-nav="config"]      { --nav-tint: rgba(37, 99, 235, 0.12);   --nav-ink: #2563eb; }
+html.theme-light .glass-sidebar .nav-link[data-nav="runlogs"]     { --nav-tint: rgba(71, 85, 105, 0.14);   --nav-ink: #475569; }
+html.theme-light .glass-sidebar .nav-icon {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+html.theme-light .glass-sidebar .nav-link.active {
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+html.theme-light .glass-sidebar .nav-link.active .nav-icon {
+  background: rgba(255, 255, 255, 0.3);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+html.theme-light .glass-sidebar .nav-logout {
+  background: #fff;
+  color: var(--accent-2);
+  border: 1px solid var(--glass-border-strong);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
+}
+html.theme-light .glass-sidebar .nav-logout:hover {
+  background: #fff;
+  color: #1e40af;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+}
+html.theme-light .glass-sidebar .nav-logout .nav-icon {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--accent-2);
+}
+html.theme-light .glass-sidebar .bottom-links::before {
+  background: linear-gradient(90deg, transparent, var(--glass-border) 12%, var(--glass-border) 88%, transparent);
 }
 html.theme-light .glass-tab {
   background: rgba(255, 255, 255, 0.34);
