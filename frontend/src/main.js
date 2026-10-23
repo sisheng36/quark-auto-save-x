@@ -1,6 +1,9 @@
 import { createApp } from 'vue/dist/vue.esm-bundler.js';
 import App, { setupApp } from './app.js';
 import FilterSelect from './components/FilterSelect.vue';
+import { installViewportBottomInset } from './viewportInsets.js';
+
+installViewportBottomInset();
 
 const app = createApp(App);
 // 压缩模板编译产物中的空白文本节点，减少首次挂载时的 DOM 创建量
