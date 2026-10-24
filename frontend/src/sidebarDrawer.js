@@ -1,11 +1,14 @@
 // 移动端侧边栏抽屉：左缘箭头手柄 + 触摸手势。
 // 点击开合由模板上的 Bootstrap data-api 负责；本模块只做状态同步、
-// 把手柄贴到抽屉右缘，以及识别“右滑展开 / 左滑收起”。
+// 把手柄贴到抽屉右缘、识别“右滑展开 / 左滑收起”，以及手柄拖拽跟手：
+// 轴锁定后抽屉与手柄的内联 transform 逐帧跟随手指，松手按位置与速度
+// 吸附到开或关，动画从中途位置无缝续接到 Bootstrap collapse 的终态。
 
 const MOBILE_MEDIA_QUERY = '(max-width: 767.98px)';
 const AXIS_LOCK_PX = 8;
 const SWIPE_THRESHOLD_PX = 42;
 const CLICK_SUPPRESS_MS = 500;
+const FLICK_VELOCITY_PX_PER_MS = 0.55;
 
 export function initSidebarDrawer() {
   if (typeof document === 'undefined' || typeof window === 'undefined') {
@@ -14,6 +17,7 @@ export function initSidebarDrawer() {
 
   const sidebar = document.getElementById('sidebarMenu');
   const handle = document.querySelector('.mobile-sidebar-toggle');
+  const backdrop = document.querySelector('.sidebar-backdrop');
   if (!sidebar || !handle) {
     return () => {};
   }
@@ -28,6 +32,7 @@ export function initSidebarDrawer() {
   let suppressClick = false;
   let suppressTimer = 0;
   let gesture = null;
+  let drag = null;
 
   function isMobile() {
     if (mobileQuery) return mobileQuery.matches;
@@ -116,6 +121,81 @@ export function initSidebarDrawer() {
     event.stopPropagation();
   }
 
+  /* ---------- 手柄拖拽跟手 ---------- */
+
+  // 抽屉与手柄共用同一行程 W（= min(78vw, 300px)）：抽屉从 -W 滑到 0，
+  // 手柄从 -1px 滑到 W-1px，与 CSS 类定义的终态严格一致，松手清内联后
+  // 过渡能精确接续。遮罩透明度随展开比例渐显。
+  function applyDrag(fraction) {
+    const x = fraction * drag.width - 1;
+    sidebar.style.transform = 'translateX(' + ((fraction - 1) * drag.width).toFixed(2) + 'px)';
+    handle.style.transform = 'translate3d(' + x.toFixed(2) + 'px, -50%, 0)';
+    if (backdrop) backdrop.style.opacity = fraction.toFixed(3);
+  }
+
+  function startDrag(startX) {
+    // Bootstrap 动画进行中不接管：open 标记与实际视觉位置对不上，
+    // 退回“松手看总位移”的阈值手势（与旧版行为一致）。
+    if (isTransitioning()) return;
+    const width = sidebar.getBoundingClientRect().width;
+    if (!(width > 0)) return;
+    drag = {
+      width,
+      fromOpen: open,
+      fraction: open ? 1 : 0,
+      startX,
+      lastX: startX,
+      lastT: 0,
+      velocity: 0
+    };
+    // 先把内联样式钉在当前视觉位置、再加类关过渡；顺序反了的话，
+    // 关过渡的那一次 recalc 会直接跳到类定义的终态。
+    applyDrag(drag.fraction);
+    sidebar.classList.add('is-dragging');
+    handle.classList.add('is-dragging');
+  }
+
+  function updateDrag(x, timeStamp) {
+    const base = drag.fromOpen ? 1 : 0;
+    drag.fraction = Math.max(0, Math.min(1, base + (x - drag.startX) / drag.width));
+    // 合成事件里相邻 timeStamp 可能相同，只在时间前进时刷新速度
+    if (drag.lastT && timeStamp > drag.lastT) {
+      drag.velocity = (x - drag.lastX) / (timeStamp - drag.lastT);
+    }
+    drag.lastX = x;
+    drag.lastT = timeStamp;
+    applyDrag(drag.fraction);
+  }
+
+  function clearDragStyles() {
+    sidebar.classList.remove('is-dragging');
+    handle.classList.remove('is-dragging');
+    sidebar.style.transform = '';
+    handle.style.transform = '';
+    if (backdrop) backdrop.style.opacity = '';
+  }
+
+  // 松手吸附：过半程、或朝该方向快速轻扫，就吸附过去；否则弹回。
+  // 释放顺序是关键——同一同步任务内：先摘 is-dragging（恢复过渡，
+  // Bootstrap 读过渡时长也正确）→ 再走 collapse show/hide（类变更与
+  // show/hide.bs 事件全部同步完成，手柄 is-open 即刻就位）→ 最后清内联。
+  // 浏览器只做一次 recalc，过渡便从拖拽位置平滑续接到终态。
+  function endDrag() {
+    const current = drag;
+    drag = null;
+    const wantOpen = (current.fraction >= 0.5 && current.velocity > -FLICK_VELOCITY_PX_PER_MS)
+      || current.velocity > FLICK_VELOCITY_PX_PER_MS;
+    sidebar.classList.remove('is-dragging');
+    handle.classList.remove('is-dragging');
+    if (wantOpen !== current.fromOpen) {
+      if (wantOpen) openDrawer();
+      else closeDrawer();
+    }
+    sidebar.style.transform = '';
+    handle.style.transform = '';
+    if (backdrop) backdrop.style.opacity = '';
+  }
+
   function beginGesture(target, event) {
     if (!isMobile() || event.touches.length !== 1) return;
     if (target === 'sidebar' && !open) return;
@@ -146,6 +226,9 @@ export function initSidebarDrawer() {
       }
     }
     if (gesture.axis !== 'x') return;
+    // 手柄：轴锁定后进入跟手拖拽（isTransitioning 时 startDrag 自行让位）
+    if (gesture.target === 'handle' && !drag) startDrag(gesture.startX);
+    if (drag && gesture.target === 'handle') updateDrag(touch.clientX, event.timeStamp);
     gesture.lastX = touch.clientX;
     gesture.lastY = touch.clientY;
     if (event.cancelable) event.preventDefault();
@@ -173,6 +256,14 @@ export function initSidebarDrawer() {
 
     if (event.cancelable) event.preventDefault();
     markSuppressClick();
+
+    // 手柄跟手路径：按松手时的位置与速度吸附，不看总位移阈值
+    // （拖过半程再拽回来的场景，总位移会误判方向）。
+    if (drag && current.target === 'handle') {
+      endDrag();
+      return;
+    }
+
     if (Math.abs(dx) < SWIPE_THRESHOLD_PX) return;
 
     if (dx > 0) {
@@ -185,6 +276,11 @@ export function initSidebarDrawer() {
 
   function cancelGesture() {
     gesture = null;
+    if (drag) {
+      drag = null;
+      // 来电/系统手势抢占等中断：带过渡弹回当前状态
+      clearDragStyles();
+    }
   }
 
   function onHandleTouchStart(event) { beginGesture('handle', event); }
@@ -209,6 +305,8 @@ export function initSidebarDrawer() {
     clearTimeout(suppressTimer);
     suppressTimer = 0;
     gesture = null;
+    drag = null;
+    clearDragStyles();
     if (hasJQuery && typeof $(sidebar).off === 'function') {
       $(sidebar).off('.qasDrawer');
     }

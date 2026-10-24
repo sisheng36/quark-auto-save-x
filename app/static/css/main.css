@@ -5418,6 +5418,35 @@ html.theme-light .tasklist-failed-chip.active {
   html.theme-light .sidebar-backdrop {
     background: rgba(15, 23, 42, 0.32);
   }
+  /* 手柄拖拽跟手（JS 在手柄轴锁定后给抽屉与手柄加上 .is-dragging）：
+     拖动期间位移由 JS 内联 transform 逐帧驱动，过渡必须关掉，否则每一帧
+     都会启动一段 0.25s 的过渡、手柄永远追不上手指；毛玻璃在持续
+     transform 时会复用旧背景快照（与 .collapsing 同坑），改为不透明底色。 */
+  .glass-sidebar.is-dragging {
+    transition: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: #14123a;
+  }
+  html.theme-light .glass-sidebar.is-dragging {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: #f2f6fb;
+  }
+  /* 从收起态拖出时抽屉还没有 .show/.collapsing，遮罩靠这个类亮出；
+     透明度由 JS 按展开比例内联控制，松手后清掉回到默认 1。 */
+  .glass-sidebar.is-dragging ~ .sidebar-backdrop {
+    display: block;
+  }
+  /* 拖拽中恢复投影：收起态的去投影规则是 4 个类权重（.collapse:not(.show)
+     :not(.collapsing)），这里必须更高才能在从关到开的拖拽途中盖过它。 */
+  .glass-sidebar.collapse.is-dragging:not(.show):not(.collapsing) {
+    box-shadow: var(--glass-shadow);
+  }
+  .mobile-sidebar-toggle.is-dragging {
+    transition: none;
+    cursor: grabbing;
+  }
   /* 浅色主题：同样从抽屉底色过渡到更亮的外缘，保持材质连续 */
   html.theme-light .mobile-sidebar-toggle {
     --handle-stop-1: rgba(203, 210, 219, 0.96);
