@@ -15,24 +15,27 @@
       } catch (e) {}
     }());
   </script>
-  <!-- iOS 主屏启动标记。
-       iOS 26 独立窗口里有一个和「页面能不能滚动」绑定在一起的坑：
-       内容不足一屏、整页不可滚动时，position: fixed 的包含块会被压到 797px
-       （屏幕 844px），抽屉/遮罩只画到 797，下面露出 47px 的页面底色；
-       内容够长、页面可滚动时包含块就是 844，一切都正常
-       （真机对照：IMG_0358 内容多无带子 / IMG_0359 内容少有带子；
-        侧边栏展开时往下拖，带子会缩到没有、松手又回来 —— 同一个包含块高度差）。
-       既然触发条件是「不可滚动」，就在这个环境里永远留 1px 的可滚动余量
-       （见 main.css 的 html.ios-standalone 规则），包含块稳定在屏幕高度，
-       抽屉就能一直铺到屏幕底边。这里只负责打标记，其余环境不受影响。 -->
+  <!-- iOS 主屏启动标记（必须早于样式表执行）。
+       iOS 26 独立窗口里，innerHeight / 100% / svh / dvh 都按「屏幕高 − 顶部安全区」
+       计算（390×844 实测为 797），fixed 元素的百分比高度也跟着变矮；只有
+       vh / lvh 仍是真实屏幕高度（844）。于是贴底的抽屉、遮罩、悬浮按钮会在
+       屏幕最底留下约 47px 的页面底色（和页面能否滚动无关，短页面只是更容易看到）。
+       这里提前把环境标记打到 <html>，样式表据此用 vh/lvh 补偿（见 main.css 的
+       --fixed-viewport-gap）。判定同时覆盖 navigator.standalone 与
+       display-mode: standalone/fullscreen：真机上存在 navigator.standalone 为 true、
+       而 display-mode 媒体查询不匹配的情况；manifest 又优先声明了 fullscreen。
+       仅 iOS 主屏启动生效，桌面 / Android / iOS 普通标签页都不打标记。 -->
   <script>
     (function () {
       try {
         var platform = navigator.platform || '';
         var isIOS = /iPad|iPhone|iPod/.test(platform) ||
           (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        var standalone = navigator.standalone === true ||
-          (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+        var standalone = navigator.standalone === true;
+        if (!standalone && window.matchMedia) {
+          standalone = window.matchMedia('(display-mode: standalone)').matches ||
+            window.matchMedia('(display-mode: fullscreen)').matches;
+        }
         if (isIOS && standalone) {
           document.documentElement.classList.add('ios-standalone');
         }
@@ -43,7 +46,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=3">
-  <link rel="stylesheet" href="./static/css/main.css?v=76">
+  <link rel="stylesheet" href="./static/css/main.css?v=77">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">

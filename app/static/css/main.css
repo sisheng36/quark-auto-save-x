@@ -13,11 +13,18 @@
      拽进可视区，变成一条卡在屏幕中间的色带（成因见下方「固定背景层」注释）。 */
   --chrome-bg: #3d2a68;
 
-  /* 固定背景层向下多铺的高度。iOS 26 独立窗口 / PWA 下 position: fixed 按「布局视口」
-     铺，而布局视口比屏幕矮 46.7px（真机实测：固定层止于 y=797.3，屏高 844），够不到
-     屏幕最底那一条；内容不足一屏时回弹会把 body 色块抬起来，正好露出这条缝。
+  /* 固定背景层向下多铺的高度。iOS 26 独立窗口 / PWA 下 position: fixed 的百分比
+     基准（以及 innerHeight / 100% / svh / dvh）按「屏幕高 − 顶部安全区」计算，
+     390×844 真机实测为 797，比屏幕矮 47px；只有 vh/lvh 仍是真实屏幕高。
      补铺 72px（≈1.5×）让纯色一直铺到屏幕底边之外，覆盖机型差异。 */
   --bg-bleed: 72px;
+
+  /* iOS 主屏启动时「真实屏幕高 − fixed 百分比基准」的差值。
+     普通浏览器 / Safari 标签页 / Android 下为 0，所有用到它的 calc 都退化为原值；
+     主屏环境由下面的媒体查询和 html.ios-standalone 置为 calc(100vh - 100%)。
+     注意：自定义属性里保留百分比，真正使用它的属性（height/top/bottom）才解析，
+     因此对 fixed 元素来说 100% 就是那个变矮的包含块，正好用来算缺口。 */
+  --fixed-viewport-gap: 0px;
 
   /* 强调色（蓝紫渐变） */
   --accent-2: #8b5cf6;
@@ -246,6 +253,28 @@
     --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
+/* iOS 26 主屏启动（standalone / fullscreen）：fixed 的包含块和百分比高度按
+   「屏幕高 − 顶部安全区」算，100vh/lvh 才是真实屏幕高。CSS 媒体查询与 JS 标记
+   同时设置，互为兜底 —— 真机上 navigator.standalone 为 true 而 display-mode
+   不匹配的情况确实存在（manifest 又优先声明了 fullscreen）。 */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  :root {
+    --fixed-viewport-gap: calc(100vh - 100%);
+  }
+}
+html.ios-standalone {
+  --fixed-viewport-gap: calc(100vh - 100%);
+}
+@supports (height: 100lvh) {
+  @media (display-mode: standalone), (display-mode: fullscreen) {
+    :root {
+      --fixed-viewport-gap: calc(100lvh - 100%);
+    }
+  }
+  html.ios-standalone {
+    --fixed-viewport-gap: calc(100lvh - 100%);
+  }
+}
 
 /* --------------- 基础样式 --------------- */
 html {
@@ -420,8 +449,9 @@ a:hover {
   position: fixed;
   right: 20px;
   top: auto;
-  /* 底部安全区：Home 指示条压在按钮组下沿时点不到 */
-  bottom: calc(20px + var(--safe-bottom));
+  /* 底部安全区：Home 指示条压在按钮组下沿时点不到；再减去主屏环境的
+     视口缺口，按钮组才会贴着真实屏幕底而不是 797 那条线。 */
+  bottom: calc(20px + var(--safe-bottom) - var(--fixed-viewport-gap));
   transform: none;
   display: flex;
   flex-direction: column;
@@ -514,7 +544,7 @@ a:hover {
   .floating-action-buttons {
     right: 10px;
     top: auto;
-    bottom: calc(20px + var(--safe-bottom));
+    bottom: calc(20px + var(--safe-bottom) - var(--fixed-viewport-gap));
     transform: none;
     flex-direction: column;
     padding: 6px;
@@ -886,7 +916,8 @@ a:hover {
   position: fixed;
   left: 0;
   right: 92px;
-  bottom: 0;
+  /* 主屏环境下 fixed 底部基准比真实屏幕高 47px，补到真实屏幕底边 */
+  bottom: calc(-1 * var(--fixed-viewport-gap));
   z-index: 1085;
   display: flex;
   flex-direction: column;
@@ -5157,9 +5188,13 @@ html.theme-light .tasklist-failed-chip.active {
     position: fixed;
     top: 0;
     left: 0;
-    /* 向下多铺一截（与底板同一个 --bg-bleed），原因见 padding-bottom 处。
-       bottom 为负值时面板仍然铺到布局视口底之外，把那条缝盖住。 */
-    bottom: calc(-1 * var(--bg-bleed));
+    /* 用显式高度铺到屏幕底，而不是 bottom: 0 / 负 bottom：
+       iOS 26 主屏环境里 fixed 的百分比高度直接按变矮的包含块（797）解析，
+       负 bottom 与溢出的边框也会被裁在那条线上。height = 包含块高 + 缺口 +
+       向下补铺；边框在 border-box 内，扣掉后内容区正好是真实屏幕高。
+       普通环境 gap = 0，退化为原来的 100% + --bg-bleed。 */
+    bottom: auto;
+    height: calc(100% + var(--fixed-viewport-gap) + var(--bg-bleed));
     width: 78%;
     max-width: 300px;
     border-radius: 0 20px 20px 0;
@@ -5190,18 +5225,10 @@ html.theme-light .tasklist-failed-chip.active {
   html.theme-light .glass-sidebar.collapse {
     border-bottom-color: #c6c7d7;
   }
-  /* 根治：iOS 主屏启动时让整页「永远可滚动」。
-     真机对照（IMG_0358 内容多 / IMG_0359 内容少）证明带子只在「整页不可滚动」时
-     出现：那种状态下 iOS 把 fixed 的包含块压到 797px，并把整个图层裁在那条线上，
-     抽屉、遮罩、连它们向下补铺的背景都画不进屏幕最底那 47px（只有画布色能画进去，
-     所以看到的是页面底色）。一旦页面可滚动，包含块恢复 844，抽屉就铺满了。
-     做法是给 html 留 1px 的滚动余量：内容再少也判定为「可滚动」，
-     iOS 因此始终用屏幕高度铺 fixed 图层。1px 看不见、也不会让页面真的滑动。
-     副作用检查：body 的 min-height 仍是 100%，内容排版不动；仅 iOS 主屏启动生效，
-     桌面 / Android / iOS 普通标签页均不打这个标记。 */
-  html.ios-standalone {
-    min-height: calc(100% + 1px);
-  }
+  /* 主屏环境的兜底说明：
+     此前试过给 html 留 1px 滚动余量，让页面「永远可滚动」。真机上文档高度确实
+     变成 845，但 fixed 的包含块仍是 797，带子没有消失 —— 说明「可滚动」不是
+     包含块变高的原因，1px 方案已移除。现在改为上面的显式高度 + vh 补偿。 */
   .glass-sidebar.collapse.show {
     transform: translateX(0);
   }
@@ -5216,10 +5243,10 @@ html.theme-light .tasklist-failed-chip.active {
      纵向溢出，让收起过程只做横向位移动画。 */
   .glass-sidebar.collapsing {
     display: block !important;
-    height: auto !important;
+    height: calc(100% + var(--fixed-viewport-gap) + var(--bg-bleed)) !important;
     top: 0;
     /* 与展开态同一套上下边界，收起过程面板高度不塌、底部不会闪 */
-    bottom: calc(-1 * var(--bg-bleed));
+    bottom: auto;
     overflow-y: auto;
     overflow-x: hidden;
     transform: translateX(-100%);
@@ -5258,7 +5285,8 @@ html.theme-light .tasklist-failed-chip.active {
      点击开合由 Bootstrap data-api 负责，手柄负责外观、位置与箭头方向。 */
   .mobile-sidebar-toggle {
     position: fixed;
-    top: 50%;
+    /* 50% 是变矮的包含块中线，主屏环境下补半个缺口才落在真实屏幕中线 */
+    top: calc(50% + var(--fixed-viewport-gap) / 2);
     left: 0; /* 位置完全交给 transform：left 动画走主线程，会落后于抽屉的合成层动画 */
     z-index: 1046; /* 高于抽屉(1045)与遮罩(1044)，低于弹窗/悬浮按钮(1050) */
     display: flex;
@@ -5357,9 +5385,10 @@ html.theme-light .tasklist-failed-chip.active {
     top: 0;
     left: 0;
     right: 0;
-    /* 与抽屉同步多铺一截：遮罩没有内容，加高不影响任何布局，
-       只是把底部那一段也压暗，避免抽屉补铺后旁边仍露出未压暗的底板 */
-    bottom: calc(-1 * var(--bg-bleed));
+    /* 与抽屉同一套高度：遮罩也必须盖到屏幕真实底边，否则底部会露出一条
+       未被压暗的底板（和抽屉那条浅紫带是同一处缝）。 */
+    bottom: auto;
+    height: calc(100% + var(--fixed-viewport-gap) + var(--bg-bleed));
     z-index: 1044; /* 低于抽屉(1045)，高于页面内容 */
     background: var(--navbar-mobile-overlay);
   }
