@@ -606,6 +606,11 @@ a:hover {
   padding: 12px 10px 14px;
   overflow-y: auto;
   overflow-x: hidden;
+  /* 毛玻璃会把面板提为合成层：曾出现内容溢出时后代绘制绕过 overflow
+     圆角裁剪、直接画到卡片外（退出药丸挂在底边之下）。布局层已改为
+     中部菜单独立滚动、底部链接不收缩，正常不会再溢出；contain: paint
+     作为兜底，保证任何残余溢出都被钉在面板边框内。 */
+  contain: paint;
   transition: width 0.25s ease;
 }
 /* 覆盖 Bootstrap collapse 的 display:none（桌面端始终可见） */
@@ -630,6 +635,8 @@ a:hover {
   min-height: 42px;
   white-space: nowrap;
   overflow: hidden;
+  /* 侧栏三段式：品牌与底部链接固定，只有中间菜单伸缩/滚动 */
+  flex-shrink: 0;
 }
 .glass-sidebar .sidebar-brand-mark {
   display: flex;
@@ -657,6 +664,15 @@ a:hover {
 .glass-sidebar .nav {
   flex: 1;
   gap: 4px;
+  /* 窗口矮/内容变高（如版本号带更新徽标）时，菜单在这里独立滚动，
+     品牌与底部链接保持钉在面板内——否则底部链接会被推出卡片外
+     （毛玻璃合成层还会让溢出画到卡片外，见 .glass-sidebar 的 contain 注释）。
+     Bootstrap 的 .nav 自带 flex-wrap: wrap，限高后装不下的项会换到
+     右边第二列而不是溢出滚动，必须显式关掉。 */
+  flex-wrap: nowrap;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .glass-sidebar .nav-link {
   display: flex;
@@ -751,6 +767,8 @@ a:hover {
 .glass-sidebar .bottom-links {
   margin-top: 10px;
   padding-top: 2px;
+  /* 底部链接（版本号/主题/退出）钉死在面板底，不参与压缩 */
+  flex-shrink: 0;
 }
 .glass-sidebar .bottom-links::before {
   content: "";
