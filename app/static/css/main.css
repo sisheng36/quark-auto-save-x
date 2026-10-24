@@ -199,6 +199,9 @@
 @media (max-width: 767.98px) {
   .boot-skeleton {
     flex-direction: column;
+    /* 两侧留白与挂载后的 .glass-main 对齐（10px），避免骨架→页面切换时跳位 */
+    padding-left: 10px;
+    padding-right: 10px;
   }
   .boot-skeleton-sidebar {
     display: none;
@@ -5499,11 +5502,27 @@ html.theme-light .tasklist-failed-chip.active {
   .glass-sidebar .bottom-links .nav-logout {
     min-height: 42px;
   }
-  /* 展开时给侧边栏留空间（无遮罩，保持简洁） */
+  /* 展开时给侧边栏留空间（无遮罩，保持简洁）
+     移动端两侧留白收紧：原先每侧 = container-fluid 15px + 本处外边距 14px +
+     水平内边距 2px = 31px，偏宽。整体缩小 2/3，取整为 10px——由外边距独占
+     （8px）+ 原有 2px 内边距组成；container-fluid 的 15px 在下方清零，
+     抽屉/手柄/遮罩都是 fixed 定位，不受影响。 */
+  .container-fluid {
+    padding-left: 0;
+    padding-right: 0;
+  }
   .glass-main {
-    margin-left: var(--sidebar-offset);
+    margin-left: 8px;
+    margin-right: 8px;
     padding: 12px 2px calc(20px + var(--safe-bottom));
     padding-top: calc(12px + var(--safe-top) + var(--safe-top-extra));
+  }
+  /* 上面那条折叠态外边距规则（.glass-sidebar.sidebar-collapsed ~ .glass-main，
+     特异性 0,3,0）比移动端的 .glass-main 高，会盖掉本块；sidebarCollapsed
+     是从 localStorage 无条件恢复的，桌面收起过侧栏的手机上会把左留白顶成
+     94px。这里用同特异性 + 靠后的源顺序在移动端把它压回 8px。 */
+  .glass-sidebar.sidebar-collapsed ~ .glass-main {
+    margin-left: 8px;
   }
   .glass-navbar .navbar-brand {
     width: auto;
