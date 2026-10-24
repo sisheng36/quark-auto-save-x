@@ -5476,10 +5476,11 @@ html.theme-light .tasklist-failed-chip.active {
     --handle-stroke: rgba(15, 23, 42, 0.12);
     --handle-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
   }
-  /* 抽屉展开时，即使桌面端保存过“折叠”状态也显示完整文字标签 */
+  /* 抽屉展开时，即使桌面端保存过“折叠”状态也显示完整文字标签
+     （内边距与下方放大后的菜单项同值，折叠态恢复规则特异性更高，须同步） */
   .glass-sidebar.sidebar-collapsed .nav-link {
     justify-content: flex-start;
-    padding: 7px 9px;
+    padding: 10.5px 13.5px;
   }
   .glass-sidebar.sidebar-collapsed .bottom-links .nav-link {
     justify-content: flex-start;
@@ -5491,16 +5492,67 @@ html.theme-light .tasklist-failed-chip.active {
     width: auto;
     display: block;
   }
-  /* 触摸目标：抽屉里主菜单不低于 44px，底部链接 38px，退出药丸 42px。
-     图标胶囊尺寸与桌面一致，不随行高放大，保持同一套视觉比例。 */
-  .glass-sidebar .nav-link {
-    min-height: 44px;
+  /* 抽屉内容整体放大 1/2（×1.5）：顶部品牌（渐变方块 + 标题）与中部各级
+     菜单按钮、按钮内的图标胶囊与文字全部同比例放大，间距/圆角随尺寸等比
+     （10→15、4→6、7×9→10.5×13.5、12→18、9→13.5、30→45、28→42）。
+     触摸目标随行高抬到 66px（原 44px），仍高于 iOS 44pt 建议值；
+     底部链接（主题切换/版本/退出）不在放大范围，保持原尺寸。
+     桌面端侧栏不受影响。 */
+  .glass-sidebar .sidebar-brand {
+    gap: 15px;
+    padding: 3px 9px 18px;
+    min-height: 63px;
   }
+  .glass-sidebar .sidebar-brand-mark {
+    width: 45px;
+    height: 45px;
+    flex-basis: 45px;
+    border-radius: 15px;
+  }
+  .glass-sidebar .sidebar-brand-mark i {
+    font-size: 1.5rem;
+  }
+  .glass-sidebar .sidebar-brand-name {
+    font-size: 1.425rem;
+  }
+  .glass-sidebar .nav {
+    gap: 6px;
+  }
+  .glass-sidebar .nav-link {
+    min-height: 66px;
+    gap: 15px;
+    padding: 10.5px 13.5px;
+    border-radius: 18px;
+    font-size: 1.395rem;
+  }
+  .glass-sidebar .nav-icon {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+    border-radius: 13.5px;
+  }
+  .glass-sidebar .nav-icon i {
+    font-size: 1.38rem;
+  }
+  /* 底部链接（GitHub/版本/主题切换）不放大，触摸目标下限维持原值 */
   .glass-sidebar .bottom-links .nav-link {
     min-height: 38px;
   }
+  /* 退出药丸随整体 ×1.5：它的图标胶囊已由上面的 .glass-sidebar .nav-icon
+     规则一并放大到 42px，药丸本体的字号/内边距/行高/圆角/间距同步放大，
+     否则就是「大图标 + 小字」的失衡观感 */
   .glass-sidebar .bottom-links .nav-logout {
-    min-height: 42px;
+    min-height: 63px;
+    margin-top: 6px;
+    padding: 9px 18px;
+    gap: 13.5px;
+    border-radius: 18px;
+    font-size: 1.29rem;
+  }
+  /* 折叠态恢复规则的特异性（0,4,0）比 .nav-logout（0,3,0）高，会把内边距
+     顶回 6px 10px；同特异性 + 靠后源顺序在移动端压回放大值 */
+  .glass-sidebar.sidebar-collapsed .bottom-links .nav-logout {
+    padding: 9px 18px;
   }
   /* 展开时给侧边栏留空间（无遮罩，保持简洁）
      移动端两侧留白收紧：原先每侧 = container-fluid 15px + 本处外边距 14px +
@@ -6391,10 +6443,23 @@ html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
     grid-template-columns: repeat(3, 1fr);
   }
 
-  /* ---------- 6) 魔法匹配：每条规则改为纵向排列 ---------- */
+  /* ---------- 6) 魔法匹配：每条规则一张玻璃小卡 ----------
+     卡片取全站嵌套元素（glass-config-toggle / task-card）同一套材质：
+     深色 = 半透明白底 + 细边，不加模糊（嵌套在 glass-tab 内，模糊层数
+     已够，性能优先）；浅色主题在文件后段单独适配 */
+  .glass-config-body .magic-regex-item {
+    margin: 0 0 10px;
+    padding: 10px 12px 12px;
+    background: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 12px;
+  }
+  .glass-config-body .magic-regex-item:last-child {
+    margin-bottom: 0;
+  }
   .glass-config-body .input-group.magic-regex-row {
     flex-wrap: wrap;
-    row-gap: 6px;
+    row-gap: 8px;
     align-items: center;
   }
   /* 「魔法名」跟随输入框同一行；「正则命名」单独起一行，作为下方两个表达式的小标题 */
@@ -6419,27 +6484,52 @@ html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
   /* 「正则命名」是下方两个表达式的标题，不再是输入框的一部分：
      去掉胶囊底色与描边，只保留小号说明文字 */
   .magic-regex-row > .magic-pattern-label .input-group-text {
-    padding: 0;
+    padding: 0 0 0 2px;
     border: none;
     background: transparent;
     color: var(--text-tertiary);
     font-size: 0.78rem;
     line-height: 1.4;
+    letter-spacing: 0.02em;
   }
   .magic-regex-row > .magic-name-input {
     flex: 1 1 auto;
     min-width: 0;
   }
-  /* 匹配/替换表达式各占一整行，不再被压成一条缝 */
+  /* 与「魔法名」胶囊相接，只圆外侧（右侧）；选择器带上 .glass-config-body
+     提到 0,3,0，才能盖过 Bootstrap 剥圆角的 .input-group > .form-control:not(...) */
+  .glass-config-body .magic-regex-row > .magic-name-input {
+    border-radius: 0 var(--control-radius) var(--control-radius) 0;
+  }
+  /* 匹配/替换表达式各占一整行，不再被压成一条缝；
+     换行后是独立输入框，补回被 Bootstrap input-group 剥掉的全圆角 */
   .magic-regex-row > .form-control:not(.magic-name-input) {
     flex: 1 1 100%;
     min-width: 0;
+    border-radius: var(--control-radius);
   }
+  /* 增删按钮：右下角成对，触屏目标加大到 44×38 */
   .magic-regex-row > .magic-regex-actions {
     flex: 0 0 100%;
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
     margin: 0;
+  }
+  .magic-regex-row > .magic-regex-actions .btn {
+    min-width: 44px;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+@media (max-width: 767.98px) {
+  /* 浅色主题：卡片换成白底 + 亮边 + 内侧高光，与 task-card / display-setting-row 一致 */
+  html.theme-light .glass-config-body .magic-regex-item {
+    background: rgba(255, 255, 255, 0.55);
+    border-color: rgba(255, 255, 255, 0.75);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   }
 }
 
