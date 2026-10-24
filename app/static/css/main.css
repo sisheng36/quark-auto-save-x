@@ -5480,7 +5480,7 @@ html.theme-light .tasklist-failed-chip.active {
      （内边距与下方放大后的菜单项同值，折叠态恢复规则特异性更高，须同步） */
   .glass-sidebar.sidebar-collapsed .nav-link {
     justify-content: flex-start;
-    padding: 10.5px 13.5px;
+    padding: 8.75px 11.25px;
   }
   .glass-sidebar.sidebar-collapsed .bottom-links .nav-link {
     justify-content: flex-start;
@@ -5492,67 +5492,67 @@ html.theme-light .tasklist-failed-chip.active {
     width: auto;
     display: block;
   }
-  /* 抽屉内容整体放大 1/2（×1.5）：顶部品牌（渐变方块 + 标题）与中部各级
+  /* 抽屉内容整体放大 1/4（×1.25）：顶部品牌（渐变方块 + 标题）与中部各级
      菜单按钮、按钮内的图标胶囊与文字全部同比例放大，间距/圆角随尺寸等比
-     （10→15、4→6、7×9→10.5×13.5、12→18、9→13.5、30→45、28→42）。
-     触摸目标随行高抬到 66px（原 44px），仍高于 iOS 44pt 建议值；
-     底部链接（主题切换/版本/退出）不在放大范围，保持原尺寸。
+     （10→12.5、4→5、7×9→8.75×11.25、12→15、9→11.25、30→37.5、28→35）。
+     触摸目标随行高抬到 55px（原 44px），仍高于 iOS 44pt 建议值；
+     底部链接（主题切换/版本/退出链接）不在放大范围，保持原尺寸。
      桌面端侧栏不受影响。 */
   .glass-sidebar .sidebar-brand {
-    gap: 15px;
-    padding: 3px 9px 18px;
-    min-height: 63px;
+    gap: 12.5px;
+    padding: 2.5px 7.5px 15px;
+    min-height: 52.5px;
   }
   .glass-sidebar .sidebar-brand-mark {
-    width: 45px;
-    height: 45px;
-    flex-basis: 45px;
-    border-radius: 15px;
+    width: 37.5px;
+    height: 37.5px;
+    flex-basis: 37.5px;
+    border-radius: 12.5px;
   }
   .glass-sidebar .sidebar-brand-mark i {
-    font-size: 1.5rem;
+    font-size: 1.25rem;
   }
   .glass-sidebar .sidebar-brand-name {
-    font-size: 1.425rem;
+    font-size: 1.1875rem;
   }
   .glass-sidebar .nav {
-    gap: 6px;
+    gap: 5px;
   }
   .glass-sidebar .nav-link {
-    min-height: 66px;
-    gap: 15px;
-    padding: 10.5px 13.5px;
-    border-radius: 18px;
-    font-size: 1.395rem;
+    min-height: 55px;
+    gap: 12.5px;
+    padding: 8.75px 11.25px;
+    border-radius: 15px;
+    font-size: 1.1625rem;
   }
   .glass-sidebar .nav-icon {
-    width: 42px;
-    height: 42px;
-    flex-basis: 42px;
-    border-radius: 13.5px;
+    width: 35px;
+    height: 35px;
+    flex-basis: 35px;
+    border-radius: 11.25px;
   }
   .glass-sidebar .nav-icon i {
-    font-size: 1.38rem;
+    font-size: 1.15rem;
   }
   /* 底部链接（GitHub/版本/主题切换）不放大，触摸目标下限维持原值 */
   .glass-sidebar .bottom-links .nav-link {
     min-height: 38px;
   }
-  /* 退出药丸随整体 ×1.5：它的图标胶囊已由上面的 .glass-sidebar .nav-icon
-     规则一并放大到 42px，药丸本体的字号/内边距/行高/圆角/间距同步放大，
+  /* 退出药丸随整体 ×1.25：它的图标胶囊已由上面的 .glass-sidebar .nav-icon
+     规则一并放大到 35px，药丸本体的字号/内边距/行高/圆角/间距同步放大，
      否则就是「大图标 + 小字」的失衡观感 */
   .glass-sidebar .bottom-links .nav-logout {
-    min-height: 63px;
-    margin-top: 6px;
-    padding: 9px 18px;
-    gap: 13.5px;
-    border-radius: 18px;
-    font-size: 1.29rem;
+    min-height: 52.5px;
+    margin-top: 5px;
+    padding: 7.5px 15px;
+    gap: 11.25px;
+    border-radius: 15px;
+    font-size: 1.075rem;
   }
   /* 折叠态恢复规则的特异性（0,4,0）比 .nav-logout（0,3,0）高，会把内边距
      顶回 6px 10px；同特异性 + 靠后源顺序在移动端压回放大值 */
   .glass-sidebar.sidebar-collapsed .bottom-links .nav-logout {
-    padding: 9px 18px;
+    padding: 7.5px 15px;
   }
   /* 展开时给侧边栏留空间（无遮罩，保持简洁）
      移动端两侧留白收紧：原先每侧 = container-fluid 15px + 本处外边距 14px +
