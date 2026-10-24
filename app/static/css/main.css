@@ -276,6 +276,21 @@ html.ios-standalone {
   }
 }
 
+/* 组合修法的第一半：让主屏环境「永远可滚动」。长页面（真机对照 IMG_0358）
+   证明可滚动状态下 fixed 图层能一路画到屏幕底（844），短页面正是缺这一点
+   才被裁在 797（第二轮真机证据：带子跟随回弹移动 = 裁剪线锚在文档底）。
+   历史教训：e4e352d 曾单独用过这条规则、真机上被判无效移除，但当时的标记
+   检测漏了 display-mode: fullscreen，标记很可能根本没打上 —— v77 修好检测后
+   gap 补偿在真机可见生效，证明标记现在能打上，因此恢复本规则合并重测。
+   若 1px 余量让包含块恢复 844：上面的 gap 自动归零，抽屉/遮罩的显式高度
+   全部退化为 100% + --bg-bleed，且可滚动状态下绘制不再被裁，紫带彻底消失。
+   若仍恢复不了，说明裁剪另有触发条件，改走「短页面用文档流定位」的路线 B。
+   副作用只有整页多 1px 可滚动，视觉不可感知；仅 iOS 主屏启动生效，
+   桌面 / Android / iOS 普通标签页不受影响。 */
+html.ios-standalone {
+  min-height: calc(100% + 1px);
+}
+
 /* --------------- 基础样式 --------------- */
 html {
   height: 100%;
@@ -5225,10 +5240,13 @@ html.theme-light .tasklist-failed-chip.active {
   html.theme-light .glass-sidebar.collapse {
     border-bottom-color: #c6c7d7;
   }
-  /* 主屏环境的兜底说明：
-     此前试过给 html 留 1px 滚动余量，让页面「永远可滚动」。真机上文档高度确实
-     变成 845，但 fixed 的包含块仍是 797，带子没有消失 —— 说明「可滚动」不是
-     包含块变高的原因，1px 方案已移除。现在改为上面的显式高度 + vh 补偿。 */
+  /* 主屏环境的组合拳（上半在文件顶部的 min-height 处）：
+     1）html.ios-standalone 留 1px 滚动余量，让页面永远可滚动 ——
+        e4e352d 曾单独用过、被判无效移除，但当时的标记检测漏了
+        display-mode: fullscreen，标记很可能没打上；v77 修好检测后恢复重测；
+     2）本块的显式高度 + --fixed-viewport-gap 把布局铺到真实屏幕底。
+     若 1px 让包含块恢复 844，gap 自动归零、这里退化为 100% + --bg-bleed，
+     且可滚动状态下 fixed 不再被裁（长页面已证明），底部紫带彻底消失。 */
   .glass-sidebar.collapse.show {
     transform: translateX(0);
   }
