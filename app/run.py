@@ -346,6 +346,19 @@ def get_localized_show_status(tmdb_id, latest_season_number, raw_status):
         return localize_show_status(raw_status)
 
 
+def _normalize_stored_show_status(raw_status):
+    """归一化 shows.status 里历史版本存下的派生快照（本季终/播出中）。
+
+    旧写入端把「当时的本季终判定」本地化后写进库里，数据源随后补集/续播会失真
+    （如本季总集数 6→10 后仍显示本季终）。读取时统一还原为 returning_series，
+    由展示层按真实季的 finale 标记与已播/总集数实时判定。
+    """
+    text = str(raw_status or '').strip()
+    if text in ('本季终', '播出中'):
+        return 'returning_series'
+    return text
+
+
 # 电影判定复用 quark_auto_save.is_movie_task（顶部已导入）：优先看 match.media_type / content_type，
 # 缺失时按保存路径关键词兜底。原先 Web 端另有一份近乎相同的实现，两边判定口径容易走偏，已删除。
 
@@ -568,7 +581,11 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
         # 预取 shows 与 seasons 数据
         cur.execute('SELECT tmdb_id, status, latest_season_number FROM shows')
         rows = cur.fetchall() or []
-        show_meta = {int(r[0]): {'status': r[1], 'latest_season_number': int(r[2])} for r in rows}
+        # 归一化历史派生快照（本季终/播出中 → returning_series），后续按真实季实时判定
+        show_meta = {
+            int(r[0]): {'status': _normalize_stored_show_status(r[1]), 'latest_season_number': int(r[2])}
+            for r in rows
+        }
 
         cur.execute('SELECT tmdb_id, season_number, season_name, episode_count FROM seasons')
         rows = cur.fetchall() or []
@@ -6636,7 +6653,7 @@ def load_overview_calendar_index(tasklist):
                     tid = int(tmdb_id)
                 except Exception:
                     continue
-                show = {"tmdb_id": tid, "status": status, "content_type": content_type}
+                show = {"tmdb_id": tid, "status": _normalize_stored_show_status(status), "content_type": content_type}
                 shows_by_id[tid] = show
                 for bound_name in _parse_bound_task_names(bound_task_names):
                     shows_by_task[bound_name] = show
@@ -8917,11 +8934,10 @@ def process_single_task_async(task, tmdb_service, cal_db):
                         logging.warning(f"保存已选 TMDB 元数据失败: task={task.get('taskname', '')}, err={save_error}")
 
                 raw_status = (details.get('status') or '')
-                try:
-                    localized_status = get_localized_show_status(int(tmdb_id), int(latest_season_number or 1), raw_status)
-                    status = localized_status
-                except Exception:
-                    status = raw_status
+                # shows.status 存 TMDB 原始状态：本季终/播出中是「按季+按天」的派生结论，
+                # 快照进库会随数据源补集失真（如本季总集数 6→10 后仍显示本季终），
+                # 读取时按真实季的 finale 标记与已播/总集数实时判定
+                status = raw_status
                 # 使用海报语言设置获取海报路径
                 poster_path = tmdb_service.get_poster_path_with_language(int(tmdb_id)) if tmdb_service else (details.get('poster_path') or '')
                 latest_season_number = latest_season_number or 1
@@ -9109,11 +9125,8 @@ def do_calendar_bootstrap() -> tuple:
             first_air = (details.get('first_air_date') or '')[:4]
             # 将原始状态转换为本地化中文，且对 returning_series 场景做本季终/播出中判断
             raw_status = (details.get('status') or '')
-            try:
-                localized_status = get_localized_show_status(int(tmdb_id), int(match.get('latest_season_number') or 1), raw_status)
-                status = localized_status
-            except Exception:
-                status = raw_status
+            # shows.status 存 TMDB 原始状态，本季终/播出中由读取侧按真实季实时判定
+            status = raw_status
             # 使用海报语言设置获取海报路径
             poster_path = tmdb_service.get_poster_path_with_language(int(tmdb_id)) if tmdb_service else (details.get('poster_path') or '')
             latest_season_number = match.get('latest_season_number') or 1
@@ -10318,11 +10331,8 @@ def calendar_refresh_show():
 
         first_air = (details.get('first_air_date') or '')[:4]
         raw_status = (details.get('status') or '')
-        try:
-            latest_sn_for_status = int((existing_show or {}).get('latest_season_number') or 1)
-            localized_status = get_localized_show_status(int(tmdb_id), latest_sn_for_status, raw_status)
-        except Exception:
-            localized_status = raw_status
+        # shows.status 存 TMDB 原始状态，本季终/播出中由读取侧按真实季实时判定
+        localized_status = raw_status
 
         referenced_seasons = [
             season
@@ -11284,7 +11294,8 @@ def get_calendar_show_info():
                 "tmdb_id": show['tmdb_id'],
                 "name": show['name'],
                 "year": show['year'],
-                "status": show['status'],
+                # 存储值可能为原始英文或历史派生快照，统一归一化+本地化后返回
+                "status": localize_show_status(_normalize_stored_show_status(show['status'])),
                 "latest_season_number": show['latest_season_number'],
                 "poster_local_path": show['poster_local_path']
             }
@@ -11465,7 +11476,9 @@ def run_calendar_refresh_all_internal():
                 with app.app_context():
                     current_show = db.get_show(int(tmdb_id)) or {}
                     current_show_status = str(current_show.get('status') or '').strip()
-                    if current_show_status in ('本季终', '已完结', '已取消', '已上映'):
+                    # 兼容中/英两种存储形态：归一化派生快照后本地化，再判断是否终态跳过刷新
+                    terminal_like = localize_show_status(_normalize_stored_show_status(current_show_status))
+                    if terminal_like in ('本季终', '已完结', '已取消', '已上映'):
                         continue
 
                     referenced = []
@@ -11558,25 +11571,21 @@ def run_calendar_refresh_all_internal():
                     except Exception:
                         pass
 
-                    # 新增：节目状态变更检测与更新（如 Returning → 本季终/已完结 等）
+                    # 新增：节目状态变更检测与更新（存 TMDB 原始状态；本季终/播出中由读取侧按真实季实时判定。
+                    # 旧数据存的是当时的派生快照/本地化值，与原始状态不一致时一并迁移为原始值）
                     try:
                         existing_show = db.get_show(int(tmdb_id)) or {}
                         raw_details = tmdb_service.get_tv_show_details(int(tmdb_id)) or {}
                         raw_status = (raw_details.get('status') or '')
-                        latest_sn_for_status = int((existing_show or {}).get('latest_season_number') or 1)
-                        try:
-                            localized_status = get_localized_show_status(int(tmdb_id), latest_sn_for_status, raw_status)
-                        except Exception:
-                            localized_status = raw_status
 
                         old_status = (existing_show or {}).get('status') or ''
-                        if localized_status and localized_status != old_status:
+                        if raw_status and raw_status != old_status:
                             # 仅更新 status 等必要字段，其他沿用原值
                             db.upsert_show(
                                 tmdb_id=int(tmdb_id),
                                 name=(existing_show or {}).get('name') or '',
                                 year=(existing_show or {}).get('year') or '',
-                                status=localized_status,
+                                status=raw_status,
                                 poster_local_path=(existing_show or {}).get('poster_local_path') or '',
                                 latest_season_number=int((existing_show or {}).get('latest_season_number') or 1),
                                 last_refreshed_at=now_ts,
