@@ -418,11 +418,17 @@ def _sweep_orphan_task_data(reason='startup'):
         tasklist = (config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else []
         valid_names = [n for n in (task_display_name(t) for t in tasklist) if n]
         valid_pairs = collect_referenced_seasons(tasklist)
+        name_path_pairs = [(_task_name(t), _task_save_path(t)) for t in tasklist if _task_name(t)]
         swept = False
         try:
             cal_db = CalendarDB()
             try:
                 swept = cal_db.cleanup_orphan_data(valid_pairs, valid_names)
+                try:
+                    if cal_db.cleanup_orphan_task_paths(name_path_pairs):
+                        swept = True
+                except Exception:
+                    pass
             finally:
                 try:
                     cal_db.close()
@@ -3890,8 +3896,23 @@ def update():
                         pass
             try:
                 from app.sdk.db import CalendarDB as _CalDB
-                if _CalDB().cleanup_orphan_data(valid_pairs, valid_names):
-                    changed_in_thread = True
+                _cal = _CalDB()
+                try:
+                    if _cal.cleanup_orphan_data(valid_pairs, valid_names):
+                        changed_in_thread = True
+                    # 按名清扫无法识别同名多季/改路径任务的旧行，这里按 (name, path) 精确兜底
+                    try:
+                        if _cal.cleanup_orphan_task_paths(
+                            [(_task_name(t), _task_save_path(t)) for t in tasks if _task_name(t)]
+                        ):
+                            changed_in_thread = True
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        _cal.close()
+                    except Exception:
+                        pass
                 # 清理孤立数据后，也清理可能残留的孤立海报文件
                 try:
                     cleanup_orphaned_posters()

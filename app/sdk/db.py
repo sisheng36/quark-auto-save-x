@@ -1212,6 +1212,76 @@ class CalendarDB:
         except Exception:
             return deleted
 
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def cleanup_orphan_task_paths(self, valid_name_path_pairs):
+        """按 (任务名, 保存路径) 精确清理换路径/删多季任务留下的旧行。
+
+        同名任务的另一季（或改过保存路径的旧任务）删除后，其 (name, path) 行
+        不会被按名清理识别（任务名仍被存活任务使用）。这里按当前任务的精确
+        (name, path) 集合兜底：状态表按精确键删；转存记录归属判断与展示口径
+        一致（记录路径等于任务路径或在任务路径之下才算归属），其余删除。
+        rename/undo_rename 是重命名操作日志，保留。返回删除行数。
+        """
+        try:
+            valid_pairs = set()
+            valid_paths_by_name = {}
+            for name, path in (valid_name_path_pairs or []):
+                name = str(name or '').strip()
+                if not name:
+                    continue
+                path = normalize_save_path(path)
+                valid_pairs.add((name, path))
+                valid_paths_by_name.setdefault(name, []).append(path)
+            if not valid_pairs:
+                return 0
+            cursor = self.conn.cursor()
+            deleted = 0
+
+            # 状态表：精确 (name, path) 键
+            for table in self._TASK_STATE_TABLES:
+                try:
+                    cursor.execute(f'SELECT task_name, save_path FROM {table}')
+                    for row_name, row_path in (cursor.fetchall() or []):
+                        key = (str(row_name or '').strip(), normalize_save_path(row_path))
+                        if key in valid_pairs:
+                            continue
+                        cursor.execute(
+                            f'DELETE FROM {table} WHERE task_name = ? AND save_path = ?',
+                            (key[0], key[1])
+                        )
+                        deleted += int(cursor.rowcount or 0)
+                except Exception:
+                    continue
+
+            # 转存记录：同名且路径归属（含子目录）才算存活任务的记录
+            try:
+                cursor.execute(
+                    'SELECT id, task_name, save_path FROM transfer_records '
+                    "WHERE task_name NOT IN ('rename', 'undo_rename')"
+                )
+                for record_id, task_name, record_path in (cursor.fetchall() or []):
+                    name = str(task_name or '').strip()
+                    record_path = normalize_save_path(record_path)
+                    owned = False
+                    if record_path:
+                        for task_path in valid_paths_by_name.get(name, []):
+                            if record_path == task_path or record_path.startswith(task_path + '/'):
+                                owned = True
+                                break
+                    else:
+                        # 旧版本空路径记录：任务名仍存活时保留（与展示侧按任务名回退归属的口径一致）
+                        owned = name in valid_paths_by_name
+                    if not owned:
+                        cursor.execute('DELETE FROM transfer_records WHERE id = ?', (record_id,))
+                        deleted += int(cursor.rowcount or 0)
+            except Exception:
+                pass
+
+            self.conn.commit()
+            return deleted
+        except Exception:
+            return 0
+
     # 内容类型管理方法
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def update_show_content_type(self, tmdb_id:int, content_type:str):
