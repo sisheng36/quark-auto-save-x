@@ -1785,7 +1785,9 @@ def get_task_transfer_completion(task, account=None):
     """判断任务是否已转存完成，并返回转存数 / 当前季集数。
 
     电影：有转存记录即完成。
-    剧集：转存数 >= 当前季总集数（total_count > 0）才算完成。
+    剧集：转存数 == 当前季总集数（total_count > 0）才算完成；
+    转存数超过总集数视为脏数据（历史误解析/串数据），不算完成，
+    让任务继续走正常流程以便上游重算修正。
     未匹配或总集数未知：不算完成。
     """
     task = task or {}
@@ -1838,7 +1840,7 @@ def get_task_transfer_completion(task, account=None):
             "has_metrics": True,
             "transferred": transferred,
             "total": total,
-            "complete": total > 0 and transferred >= total,
+            "complete": total > 0 and transferred == total,
         })
     except Exception:
         pass

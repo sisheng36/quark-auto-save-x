@@ -3090,7 +3090,8 @@ export default {
             const status = this.getTasklistFullStatus(task);
             const progress = this.getTaskProgress ? this.getTaskProgress(task) : null;
             const normalizedProgress = (progress === null || progress === undefined) ? null : Number(progress);
-            const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress);
+            const seasonCounts = this.getTaskSeasonCounts ? this.getTaskSeasonCounts(task) : null;
+            const isCompleted = this.isTaskCompletedByStatusAndProgress(status, normalizedProgress, seasonCounts);
             const isMatched = this.isTaskMatchedWithMetadata(task);
             // 失败任务：分享链接失效且转存尚未完成（口径与总览页「待处理」一致）
             if (filter === 'failed') {
@@ -3163,15 +3164,36 @@ export default {
             return false;
           }
         },
-        isTaskCompletedByStatusAndProgress(status, progressValue) {
+        isTaskCompletedByStatusAndProgress(status, progressValue, seasonCounts) {
           try {
             const finalStatuses = ['本季终', '已完结', '已取消', '已上映'];
             if (!finalStatuses.includes(status)) return false;
+            // 总集数已知时与转存引擎同口径：已转存数达到本季总集数才算完成；
+            // 已更到最新集但本季未播完（已转/已播=100%）不算，已转存数超过总集数视为脏数据待重算
+            if (seasonCounts) {
+              const total = Number(seasonCounts.total || 0);
+              if (total > 0) {
+                const transferred = Number(seasonCounts.transferred || 0);
+                return transferred === total;
+              }
+            }
             if (progressValue === null || progressValue === undefined) return false;
             return Number(progressValue) >= 100;
           } catch (e) {
             return false;
           }
+        },
+        // 任务列表季号标注：第 2 季起显示「第N季」徽章，区分同名/同剧的多季任务
+        getTaskSeasonBadge(task) {
+          try {
+            if (!task || this.isMovieTask(task)) return '';
+            const calTask = this.getCalendarTaskForTask(task) || {};
+            const season = Number(
+              calTask.task_season_number || task.task_season_number || calTask.latest_season_number || 0
+            );
+            if (!season || season < 2) return '';
+            return `第${season}季`;
+          } catch (e) { return ''; }
         },
         // 获取根据当前视图筛选条件过滤后的任务中编号最大的任务
         getLastTaskByCurrentFilter() {
@@ -7930,7 +7952,7 @@ export default {
             return;
           }
           // 非一次性任务：先请求后端清理（含数据库与海报文件），再删除任务并保存配置
-          axios.post('/api/calendar/purge_by_task', { task_name: taskName })
+          axios.post('/api/calendar/purge_by_task', { task_name: taskName, save_path: task.savepath || task.save_path || '' })
             .then(() => {
               this.finalizeTaskRemoval(index);
             })
@@ -7981,7 +8003,11 @@ export default {
           if (!confirm(`确定要删除选中的 ${names.length} 个任务吗？\n${preview}`)) return;
           const targets = this.formData.tasklist.filter(t => names.includes(t.taskname || t.task_name));
           // 一次性任务（skip_calendar）不做日历清理；其余任务一次请求批量清理
-          const needPurge = targets.filter(t => t.skip_calendar !== true).map(t => t.taskname || t.task_name);
+          // 带上保存路径，后端可精确清理任务级数据（指标/快照/转存记录）
+          const needPurge = targets.filter(t => t.skip_calendar !== true).map(t => ({
+            task_name: t.taskname || t.task_name,
+            save_path: t.savepath || t.save_path || ''
+          }));
           const finalizeBatchRemoval = () => {
             // 整体过滤移除，避免逐个 splice 的索引错位；purge 失败不阻塞删除（与单删行为一致）
             this.formData.tasklist = this.formData.tasklist.filter(t => !names.includes(t.taskname || t.task_name));
@@ -15913,7 +15939,7 @@ export default {
               return;
             }
             // 非一次性任务：删除前执行清理
-            axios.post('/api/calendar/purge_by_task', { task_name: taskName })
+            axios.post('/api/calendar/purge_by_task', { task_name: taskName, save_path: task.savepath || task.save_path || '' })
               .then(() => {
                 this.finalizeTaskRemoval(index);
               })

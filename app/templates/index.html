@@ -1323,6 +1323,7 @@
                     <i v-if="tasklist.selectMode" class="bi task-select-check" :class="isTaskSelected(task) ? 'bi-check-circle-fill task-select-checked' : 'bi-circle'"></i>
                     <i v-else class="bi bi-caret-right-fill"></i>
                     <span class="task-card-title">#<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span></span>
+                    <span v-if="getTaskSeasonBadge(task)" class="task-season-badge">{{ getTaskSeasonBadge(task) }}</span>
                     <!-- 卡片信息区：桌面端与标题同行，移动端整体掉到第二行 -->
                     <span class="task-card-metrics">
                       <template v-for="key in formData.button_display_order" :key="'header-' + key">

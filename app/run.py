@@ -362,6 +362,51 @@ def _task_save_path(task):
     return normalize_save_path(task.get('save_path') or task.get('savepath') or '')
 
 
+def _purge_task_state_safe(task_name, save_path=None, remaining_tasks=None):
+    """删除任务时同步清理任务级数据：指标/终态快照/手动状态行与转存记录。
+
+    依据 remaining_tasks（删除后的任务列表，默认取当前配置）判断同名任务是否仍存活：
+    - 同名且同保存路径的任务仍存活（多季兄弟共用行）→ 跳过，保护其数据；
+    - 同名但路径不同的任务存活 → 只清理 (name, path) 精确行与该路径下的转存记录；
+    - 名字已无任务使用 → 连带清理该名字全部行与转存记录（含旧版本空路径行）。
+    """
+    try:
+        name = str(task_name or '').strip()
+        if not name:
+            return
+        if remaining_tasks is None:
+            remaining_tasks = (config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else []
+        path = normalize_save_path(save_path) if save_path else ''
+        same_name_survivors = [t for t in (remaining_tasks or []) if _task_name(t) == name]
+        if path and any(_task_save_path(t) == path for t in same_name_survivors):
+            return
+        cal_db = None
+        rdb = None
+        try:
+            cal_db = CalendarDB()
+            rdb = RecordDB()
+            if same_name_survivors:
+                if not path:
+                    # 同名任务仍存活且无路径信息，无法精确区分，保守跳过
+                    return
+                cal_db.delete_task_state(name, save_path=path)
+                rdb.delete_records_by_task(name, save_path=path)
+            else:
+                cal_db.delete_task_state(name, save_path=None)
+                rdb.delete_records_by_task(name, save_path=None)
+        except Exception:
+            pass
+        finally:
+            for db_handle in (cal_db, rdb):
+                if db_handle is not None:
+                    try:
+                        db_handle.close()
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
 def _record_belongs_to_task(record_path, task, same_name_count=1):
     """按任务保存目录归属转存记录；没有路径的旧记录仅在任务名唯一时回退。"""
     task_path = _task_save_path(task)
@@ -923,10 +968,19 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             # 且 metrics 中已经有缓存的 transferred_count > 0，则仅在「该任务在数据库中仍有转存记录」时
             # 才使用缓存（视为获取/解析异常）；若该任务已无任何转存记录（用户清空/删除/重置文件夹），
             # 则显示 0 并依赖下方写回把缓存的已转存集数刷新为 0。
+            # 缓存值超过已知总集数时视为脏数据（历史误解析/清理任务后串数据），不再粘滞沿用。
+            _metrics_row_dirty = False
             try:
-                if (not _effective_transferred) and (locals().get('_cached_transferred') not in (None, 0)):
-                    if task_key in task_keys_with_records:
-                        _effective_transferred = int(locals().get('_cached_transferred') or 0)
+                if _cached_transferred not in (None, 0):
+                    _dirty_total = int(total_count or 0)
+                    if _dirty_total > 0 and int(_cached_transferred) > _dirty_total:
+                        _metrics_row_dirty = True
+            except Exception:
+                _metrics_row_dirty = False
+            try:
+                if (not _effective_transferred) and (_cached_transferred not in (None, 0)):
+                    if (not _metrics_row_dirty) and task_key in task_keys_with_records:
+                        _effective_transferred = int(_cached_transferred or 0)
             except Exception:
                 pass
 
@@ -971,8 +1025,9 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 'status_source': t.get('status_source') or '',
             }
             # 写回 season_metrics（以该任务自身匹配到的季号为键；无匹配则跳过）
+            # 指标行是脏数据（已转存数超过总集数）时即使是终态任务也允许覆写，让脏值自愈
             try:
-                if (not terminal_task) and tmdb_id and latest_sn:
+                if ((not terminal_task) or _metrics_row_dirty) and tmdb_id and latest_sn:
                     from time import time as _now
                     # 计算进度百分比：以 min(aired, total) 为分母；分母<=0 则为 0
                     try:
@@ -987,7 +1042,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             except Exception:
                 pass
             try:
-                if (not terminal_task) and task_name and tmdb_id and latest_sn:
+                if ((not terminal_task) or _metrics_row_dirty) and task_name and tmdb_id and latest_sn:
                     from time import time as _now
                     # 同一套百分比口径
                     try:
@@ -1008,7 +1063,19 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             # 补充最新季号给前端（用于下一集查找逻辑）
             if latest_sn:
                 t['latest_season_number'] = int(latest_sn)
-                
+
+            # 任务自身声明的季号（任务名 > 保存路径 > 命名模板），不依赖 TMDB 匹配，
+            # 供前端在任务列表标注「第N季」，区分同名/同剧的多季任务
+            try:
+                t['task_season_number'] = TaskExtractor().extract_season_number_from_task({
+                    'taskname': t.get('task_name') or t.get('taskname') or '',
+                    'savepath': t.get('save_path') or t.get('savepath') or '',
+                    'replace': t.get('replace') or '',
+                    'episode_naming': t.get('episode_naming') or '',
+                })
+            except Exception:
+                t['task_season_number'] = None
+
             enriched.append(t)
         return enriched
     except Exception:
@@ -2460,7 +2527,7 @@ def _is_task_completed_for_cleanup(task, cal_task, status_override_map, display_
             status = '已完结'
         season_counts = (cal_task or {}).get('season_counts') or task.get('season_counts')
         progress = progress_from_season_counts(season_counts)
-        return is_task_completed_by_status_and_progress(status, progress)
+        return is_task_completed_by_status_and_progress(status, progress, season_counts)
     except Exception:
         return False
 
@@ -2557,6 +2624,17 @@ def auto_cleanup_completed_tasks_job():
                     purge_calendar_by_tmdb_id_internal(tmdb_id, force=False)
                 except Exception as e:
                     logging.warning(f"自动清理已完成任务：清理日历数据失败 tmdb_id={tmdb_id}: {e}")
+            # 任务级数据（指标/终态快照/手动状态/转存记录）一并清理，
+            # 避免残留数据被同名/同路径的新任务继承（进度串数据）
+            for t in to_delete:
+                try:
+                    _purge_task_state_safe(
+                        task_display_name(t),
+                        t.get('savepath') or t.get('save_path') or '',
+                        remaining_tasks=remaining,
+                    )
+                except Exception:
+                    pass
 
         try:
             Config.write_json(CONFIG_PATH, config_data)
@@ -3587,7 +3665,8 @@ def update():
         match = (cal.get("match") or {})
         if name:
             old_task_map[name] = {
-                "tmdb_id": match.get("tmdb_id") or cal.get("tmdb_id")
+                "tmdb_id": match.get("tmdb_id") or cal.get("tmdb_id"),
+                "save_path": t.get("savepath") or t.get("save_path") or "",
             }
     
     # 记录旧的海报语言设置
@@ -3736,6 +3815,12 @@ def update():
                     if tid:
                         purge_calendar_by_tmdb_id_internal(int(tid))
                         changed_in_thread = True
+                    # 任务级数据（指标/终态快照/手动状态/转存记录）一并清理，
+                    # 避免残留数据被同名/同路径的新任务继承（进度串数据）
+                    try:
+                        _purge_task_state_safe(name, info.get('save_path'), remaining_tasks=current_tasks)
+                    except Exception:
+                        pass
             # 绑定变更：旧与新 tmdb_id 不同，清理旧的
             for name, info in (old_task_map_snapshot or {}).items():
                 if name in current_map:
@@ -7294,6 +7379,12 @@ def reset_folder():
             # 删除找到的所有记录
             for record_id in record_ids:
                 deleted_records += db.delete_record(record_id)
+            # 进度缓存（task_metrics/终态快照/手动状态）一并按路径清理：
+            # 否则脏指标残留会让引擎读到「已转存 N/总集数 集」直接跳过转存，重置后也无法恢复追更
+            try:
+                CalendarDB().delete_task_state_by_path(save_path)
+            except Exception:
+                pass
             # 热更新：按保存路径推断任务名集合并触发进度重算
             try:
                 if deleted_records > 0:
@@ -11908,10 +11999,13 @@ def purge_calendar_by_task():
             force = True if str(fv).lower() in ('1', 'true', 'yes') else False
         except Exception:
             force = False
+        save_path = request.args.get('save_path') or (request.json or {}).get('save_path') or ''
         # 在配置中查找对应任务
         tasks = config_data.get('tasklist', [])
         target = next((t for t in tasks if t.get('taskname') == task_name or t.get('task_name') == task_name), None)
         if not target:
+            # 任务已不在配置中：按任务名兜底清理任务级数据（指标/快照/转存记录）
+            _purge_task_state_safe(task_name, save_path or None)
             # 若任务不存在，但用户希望强制清理：尝试按 tmdb_id 反查无引用 show 并清理（更安全）
             if force:
                 # 扫描 shows 表，删除未被任何任务引用的记录（孤儿）
@@ -11923,6 +12017,14 @@ def purge_calendar_by_task():
                     pass
                 return jsonify({'success': True, 'message': f'任务不存在，已强制清理孤儿记录 {purged} 条'})
             return jsonify({'success': True, 'message': '任务不存在，视为已清理'})
+        # 删除任务前的任务级数据清理：指标/终态快照/手动状态与转存记录一并移除，
+        # 避免残留数据被同名/同路径的新任务继承（进度串数据）
+        remaining_tasks = [t for t in tasks if t is not target]
+        _purge_task_state_safe(
+            task_name,
+            save_path or target.get('savepath') or target.get('save_path') or '',
+            remaining_tasks=remaining_tasks,
+        )
         cal = (target or {}).get('calendar_info') or {}
         tmdb_id = cal.get('match', {}).get('tmdb_id') or cal.get('tmdb_id')
         if not tmdb_id:
@@ -11941,13 +12043,27 @@ def purge_calendar_by_task():
 def purge_calendar_by_tasks():
     """批量删除任务前的日历数据清理：一次请求清理多个任务，替代逐任务调用 purge_by_task。"""
     try:
-        task_names = (request.json or {}).get('task_names') or []
-        if not isinstance(task_names, list) or not task_names:
+        raw_items = (request.json or {}).get('task_names') or []
+        if not isinstance(raw_items, list) or not raw_items:
             return jsonify({'success': False, 'message': '缺少 task_names'})
-        name_set = {str(n) for n in task_names if n}
-        if not name_set:
+        # 兼容两种形式：纯任务名列表，或 {task_name, save_path} 对象列表（带路径可精确清理）
+        items = []
+        for raw in raw_items:
+            if isinstance(raw, dict):
+                name = raw.get('task_name') or raw.get('taskname')
+                if name:
+                    items.append((str(name), raw.get('save_path') or raw.get('savepath') or ''))
+            elif raw:
+                items.append((str(raw), ''))
+        if not items:
             return jsonify({'success': False, 'message': '缺少 task_names'})
+        name_set = {name for name, _ in items}
         tasks = config_data.get('tasklist', [])
+        remaining_tasks = [t for t in tasks if (t.get('taskname') or t.get('task_name')) not in name_set]
+        # 任务级数据清理：指标/终态快照/手动状态与转存记录一并移除，
+        # 避免残留数据被同名/同路径的新任务继承（进度串数据）
+        for name, path in items:
+            _purge_task_state_safe(name, path or None, remaining_tasks=remaining_tasks)
         # 多个任务可能绑定同一部剧（tmdb_id 相同），去重后清理一次即可
         tmdb_ids = set()
         for t in tasks:

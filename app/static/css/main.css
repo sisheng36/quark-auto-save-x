@@ -2922,6 +2922,22 @@ html.theme-light .task-card.task-selected:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 多季任务标注「第N季」，第 2 季起显示 */
+.task-season-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--accent-2);
+  background: rgba(139, 92, 246, 0.14);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+}
 .task-card-toggle:hover .task-card-title {
   color: #fff;
 }

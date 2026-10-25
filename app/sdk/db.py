@@ -395,7 +395,34 @@ class RecordDB:
         cursor.execute("DELETE FROM transfer_records WHERE id = ?", (record_id,))
         self.conn.commit()
         return cursor.rowcount
-    
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def delete_records_by_task(self, task_name, save_path=None):
+        """删除任务的转存记录（删除任务时同步清理，避免同名新任务继承旧记录）。
+
+        save_path 为空时删除该任务名的全部记录（任务已不存在时的兜底）；
+        传入路径时只删除该目录（含子目录）下的记录，保护同名多季兄弟任务。
+        返回删除的记录数。
+        """
+        name = str(task_name or '').strip()
+        if not name:
+            return 0
+        cursor = self.conn.cursor()
+        try:
+            if save_path is None or str(save_path).strip() == '':
+                cursor.execute('DELETE FROM transfer_records WHERE task_name = ?', (name,))
+            else:
+                path = normalize_save_path(save_path)
+                cursor.execute(
+                    'DELETE FROM transfer_records WHERE task_name = ? AND (save_path = ? OR save_path LIKE ?)',
+                    (name, path, path + '/%')
+                )
+            deleted = int(cursor.rowcount or 0)
+            self.conn.commit()
+            return deleted
+        except Exception:
+            return 0
+
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def get_records_by_save_path(self, save_path, include_subpaths=False):
         """根据保存路径查询记录
@@ -1097,6 +1124,57 @@ class CalendarDB:
         except Exception:
             # 静默失败，避免影响核心流程
             return False
+
+    # 任务级状态清理（删除任务 / 重置文件夹时调用）
+    _TASK_STATE_TABLES = ('task_metrics', 'task_display_cache', 'task_status_override')
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def delete_task_state(self, task_name, save_path=None):
+        """删除任务级状态行（task_metrics / task_display_cache / task_status_override）。
+
+        save_path 为空时按任务名删除全部行（任务已不存在时的兜底，含旧版本空路径行）；
+        传入路径时仅删除 (task_name, save_path) 精确行，保护同名多季兄弟任务。
+        返回删除的行数。
+        """
+        name = str(task_name or '').strip()
+        if not name:
+            return 0
+        cursor = self.conn.cursor()
+        deleted = 0
+        try:
+            if save_path is None or str(save_path).strip() == '':
+                for table in self._TASK_STATE_TABLES:
+                    cursor.execute(f'DELETE FROM {table} WHERE task_name = ?', (name,))
+                    deleted += int(cursor.rowcount or 0)
+            else:
+                path = normalize_save_path(save_path)
+                for table in self._TASK_STATE_TABLES:
+                    cursor.execute(
+                        f'DELETE FROM {table} WHERE task_name = ? AND save_path = ?',
+                        (name, path)
+                    )
+                    deleted += int(cursor.rowcount or 0)
+            self.conn.commit()
+            return deleted
+        except Exception:
+            return deleted
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def delete_task_state_by_path(self, save_path):
+        """按保存路径删除任务级状态行（重置文件夹时进度归零）。"""
+        path = normalize_save_path(save_path)
+        if not path:
+            return 0
+        cursor = self.conn.cursor()
+        deleted = 0
+        try:
+            for table in self._TASK_STATE_TABLES:
+                cursor.execute(f'DELETE FROM {table} WHERE save_path = ?', (path,))
+                deleted += int(cursor.rowcount or 0)
+            self.conn.commit()
+            return deleted
+        except Exception:
+            return deleted
 
     # 内容类型管理方法
     @retry_on_locked(max_retries=3, base_delay=0.1)

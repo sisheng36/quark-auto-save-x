@@ -199,9 +199,27 @@ def progress_from_season_counts(season_counts):
     return max(0, min(100, transferred * 100 // aired))
 
 
-def is_task_completed_by_status_and_progress(status, progress_value):
+def is_task_completed_by_status_and_progress(status, progress_value, season_counts=None):
+    """终态状态 + 转存进度判定任务已完成。
+
+    总集数已知时以「已转存数 == 本季总集数」为准，与转存引擎的完成口径一致：
+    已更到最新集但本季未播完（已转/已播=100%）不算完成；
+    已转存数超过总集数视为脏数据（历史误解析/串数据），同样按未完成处理等待重算。
+    总集数未知（=0）时回退到进度百分比 >= 100%。
+    """
     if status not in FINAL_STATUSES:
         return False
+    if season_counts:
+        try:
+            total = int(season_counts.get("total_count") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if total > 0:
+            try:
+                transferred = int(season_counts.get("transferred_count") or 0)
+            except (TypeError, ValueError):
+                transferred = 0
+            return transferred == total
     if progress_value is None:
         return False
     try:
@@ -281,7 +299,7 @@ def compute_overview_task_stats(
             failed_tasks.append(_failed_task_entry(name, ban))
 
         status = resolve_task_status(task, cal_task)
-        is_status_completed = is_task_completed_by_status_and_progress(status, progress)
+        is_status_completed = is_task_completed_by_status_and_progress(status, progress, season_counts)
         is_matched = is_task_matched_with_metadata(task, cal_task)
         if status == "播出中":
             stats["status_airing"] += 1
