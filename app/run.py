@@ -11700,6 +11700,52 @@ def purge_calendar_by_task():
         return jsonify({'success': ok})
     except Exception as e:
         return jsonify({'success': False, 'message': f'清理失败: {str(e)}'})
+
+@app.route("/api/calendar/purge_by_tasks", methods=["POST"])
+def purge_calendar_by_tasks():
+    """批量删除任务前的日历数据清理：一次请求清理多个任务，替代逐任务调用 purge_by_task。"""
+    try:
+        task_names = (request.json or {}).get('task_names') or []
+        if not isinstance(task_names, list) or not task_names:
+            return jsonify({'success': False, 'message': '缺少 task_names'})
+        name_set = {str(n) for n in task_names if n}
+        if not name_set:
+            return jsonify({'success': False, 'message': '缺少 task_names'})
+        tasks = config_data.get('tasklist', [])
+        # 多个任务可能绑定同一部剧（tmdb_id 相同），去重后清理一次即可
+        tmdb_ids = set()
+        for t in tasks:
+            name = t.get('taskname') or t.get('task_name')
+            if name not in name_set:
+                continue
+            cal = t.get('calendar_info') or {}
+            tmdb_id = cal.get('match', {}).get('tmdb_id') or cal.get('tmdb_id')
+            if tmdb_id:
+                try:
+                    tmdb_ids.add(int(tmdb_id))
+                except (TypeError, ValueError):
+                    continue
+        purged = 0
+        failed = 0
+        for tmdb_id in tmdb_ids:
+            try:
+                if purge_calendar_by_tmdb_id_internal(tmdb_id, force=False):
+                    purged += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+        try:
+            if purged > 0:
+                notify_calendar_changed('purge_by_task')
+        except Exception:
+            pass
+        message = f'已清理 {purged} 部剧的日历数据'
+        if failed > 0:
+            message += f'，{failed} 部清理失败'
+        return jsonify({'success': True, 'message': message, 'purged_count': purged})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'批量清理失败: {str(e)}'})
 # 影视发现 API 路由
 
 def _normalize_tmdb_search_item(item, media_type):

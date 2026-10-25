@@ -2235,6 +2235,44 @@ body.login-page {
   margin-bottom: 4px;
 }
 
+/* 任务列表多选模式：批量操作栏（已选计数 + 全选可见 + 删除选中 + 退出） */
+.tasklist-batch-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 15px 16px;
+  padding: 8px 14px;
+  border: 1px solid rgba(139, 92, 246, 0.4);
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.08);
+}
+.tasklist-batch-count {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.tasklist-batch-count-num {
+  color: var(--accent-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tasklist-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tasklist-batch-selectall-btn,
+.tasklist-batch-delete-btn {
+  border-radius: 20px;
+}
+html.theme-light .tasklist-batch-bar {
+  background: rgba(139, 92, 246, 0.07);
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
 /* 排序组件 */
 .tasklist-sort-controls {
   align-items: center;
@@ -2825,6 +2863,33 @@ html.theme-light .overview-quick-link:hover {
   background: rgba(255, 255, 255, 0.055);
   border-color: rgba(139, 92, 246, 0.5);
   box-shadow: 0 12px 36px rgba(139, 92, 246, 0.16), 0 6px 22px rgba(4, 3, 18, 0.4);
+}
+/* 多选模式：选中卡片高亮（与转存记录选中态同一主色） */
+.task-card.task-selected {
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(139, 92, 246, 0.55);
+  box-shadow: 0 8px 26px rgba(139, 92, 246, 0.2), 0 6px 22px rgba(4, 3, 18, 0.35);
+}
+.task-card.task-selected:hover {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(139, 92, 246, 0.65);
+}
+html.theme-light .task-card.task-selected,
+html.theme-light .task-card.task-selected:hover {
+  background: rgba(139, 92, 246, 0.12);
+}
+/* 多选模式复选框：占据原展开箭头的位置 */
+.task-card-toggle > i.task-select-check {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color 0.15s ease;
+}
+.task-card-toggle > i.task-select-check.task-select-checked {
+  color: var(--accent-2);
+}
+.task-card-toggle:hover > i.task-select-check {
+  color: var(--accent-2);
 }
 .task-card-header {
   display: flex;
@@ -4820,6 +4885,7 @@ html.theme-light .tasklist-failed-chip.active {
 }
 .tasklist-view-toggle-btn,
 .tasklist-create-task-btn,
+.tasklist-select-toggle-btn,
 .tasklist-run-btn,
 .tasklist-delete-btn,
 .tasklist-plex-btn,
@@ -6363,13 +6429,19 @@ html:not(.theme-light) .runlog-content { background: rgba(8, 7, 26, 0.82); }
     order: 4;
     margin-left: 0 !important;
   }
+  /* 多选按钮：与视图切换同组（同 order 下按 DOM 顺序排在其后） */
+  .tasklist-sort-controls > .tasklist-select-slot {
+    order: 4;
+    margin-left: 0 !important;
+  }
   /* 新建任务：位置不变，仍靠最右 */
   .tasklist-sort-controls > .tasklist-create-slot {
     order: 5;
     margin-left: auto !important;
   }
   .tasklist-view-toggle-btn,
-  .tasklist-create-task-btn {
+  .tasklist-create-task-btn,
+  .tasklist-select-toggle-btn {
     height: 32px;
     min-height: 32px;
   }

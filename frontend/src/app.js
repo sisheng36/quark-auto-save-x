@@ -822,7 +822,10 @@ export default {
           viewMode: (localStorage.getItem('tasklist_view_mode') === 'poster') ? 'poster' : 'list',
           // 任务列表数据加载状态
           isLoadingMetadata: false,
-          hasLoadedMetadata: false
+          hasLoadedMetadata: false,
+          // 多选模式：进入后列表卡片显示复选框，支持批量删除；选择按 taskname 记录，排序/SSE 热更新不影响
+          selectMode: false,
+          selectedTaskNames: []
         },
         // 任务列表海报加载标记：taskname -> boolean（用于优先显示图片，再渐进显示其他信息）
         tasklistPosterLoaded: {},
@@ -1098,6 +1101,13 @@ export default {
           } catch (e) {
             return [];
           }
+        },
+
+        // 多选模式：当前可见任务是否已全部选中（用于「全选可见/取消全选」按钮文案切换）
+        allVisibleTasksSelected() {
+          const visible = this.tasklistVisibleTasks;
+          if (!visible.length) return false;
+          return visible.every(task => this.tasklist.selectedTaskNames.includes(task.taskname || task.task_name));
         },
 
         // 失败任务筛选：按任务名归集「分享失效且转存未完成」的任务
@@ -7927,6 +7937,66 @@ export default {
             .catch(() => {
               this.finalizeTaskRemoval(index);
             });
+        },
+        // ===== 任务列表多选模式（仅列表视图）：批量删除只保存一次配置 =====
+        toggleTasklistSelectMode() {
+          this.tasklist.selectMode = !this.tasklist.selectMode;
+          if (!this.tasklist.selectMode) {
+            this.tasklist.selectedTaskNames = [];
+          } else if (this.tasklist.viewMode !== 'list') {
+            // 多选仅支持列表视图，进入时自动切回
+            this.tasklist.viewMode = 'list';
+          }
+        },
+        isTaskSelected(task) {
+          const name = task && (task.taskname || task.task_name);
+          return !!name && this.tasklist.selectedTaskNames.includes(name);
+        },
+        toggleTaskSelection(task) {
+          const name = task && (task.taskname || task.task_name);
+          if (!name) return;
+          if (this.tasklist.selectedTaskNames.includes(name)) {
+            this.tasklist.selectedTaskNames = this.tasklist.selectedTaskNames.filter(n => n !== name);
+          } else {
+            this.tasklist.selectedTaskNames.push(name);
+          }
+        },
+        // 全选当前筛选条件下可见的任务；已全部选中时取消全选
+        selectAllVisibleTasks() {
+          const visibleNames = this.tasklistVisibleTasks
+            .map(task => task.taskname || task.task_name)
+            .filter(Boolean);
+          const allSelected = visibleNames.length > 0 && visibleNames.every(name => this.tasklist.selectedTaskNames.includes(name));
+          if (allSelected) {
+            const visibleSet = new Set(visibleNames);
+            this.tasklist.selectedTaskNames = this.tasklist.selectedTaskNames.filter(n => !visibleSet.has(n));
+          } else {
+            this.tasklist.selectedTaskNames = Array.from(new Set(this.tasklist.selectedTaskNames.concat(visibleNames)));
+          }
+        },
+        deleteSelectedTasks() {
+          const names = Array.from(new Set(this.tasklist.selectedTaskNames));
+          if (names.length === 0) return;
+          const preview = names.slice(0, 5).join('、') + (names.length > 5 ? ` 等 ${names.length} 个任务` : '');
+          if (!confirm(`确定要删除选中的 ${names.length} 个任务吗？\n${preview}`)) return;
+          const targets = this.formData.tasklist.filter(t => names.includes(t.taskname || t.task_name));
+          // 一次性任务（skip_calendar）不做日历清理；其余任务一次请求批量清理
+          const needPurge = targets.filter(t => t.skip_calendar !== true).map(t => t.taskname || t.task_name);
+          const finalizeBatchRemoval = () => {
+            // 整体过滤移除，避免逐个 splice 的索引错位；purge 失败不阻塞删除（与单删行为一致）
+            this.formData.tasklist = this.formData.tasklist.filter(t => !names.includes(t.taskname || t.task_name));
+            this.snapshotTaskShareResourceIds();
+            this.tasklist.selectedTaskNames = [];
+            this.tasklist.selectMode = false;
+            this.saveConfig();
+          };
+          if (needPurge.length === 0) {
+            finalizeBatchRemoval();
+            return;
+          }
+          axios.post('/api/calendar/purge_by_tasks', { task_names: needPurge })
+            .then(() => { finalizeBatchRemoval(); })
+            .catch(() => { finalizeBatchRemoval(); });
         },
         // 本地日期时间 YYYY-MM-DD HH:MM:SS（用于订阅起始时间戳）
         formatLocalDateTime(date) {

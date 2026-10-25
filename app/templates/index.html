@@ -1260,6 +1260,16 @@
                       <i :class="tasklist.viewMode === 'list' ? 'bi bi-grid-3x3-gap' : 'bi bi-list-ol'"></i>
                     </button>
                   </div>
+                  <!-- 多选模式按钮：批量选择任务删除，一次保存配置 -->
+                  <div class="ml-2 tasklist-select-slot">
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm tasklist-select-toggle-btn"
+                            :class="{active: tasklist.selectMode}"
+                            @click="toggleTasklistSelectMode"
+                            :title="tasklist.selectMode ? '退出多选模式' : '多选任务，批量删除只需保存一次配置'">
+                      <i class="bi bi-ui-checks"></i>
+                    </button>
+                  </div>
                   <!-- 创建任务按钮 -->
                   <div class="ml-2 tasklist-create-slot">
                     <button type="button"
@@ -1271,13 +1281,32 @@
                   </div>
               </div>
             </div>
+            <!-- 多选模式批量操作栏：全选可见 + 批量删除（一次请求清理日历、一次保存配置）+ 退出 -->
+            <div class="tasklist-batch-bar" v-if="tasklist.selectMode">
+              <span class="tasklist-batch-count">已选 <span class="tasklist-batch-count-num">{{ tasklist.selectedTaskNames.length }}</span> 项</span>
+              <div class="tasklist-batch-actions">
+                <button type="button" class="btn btn-outline-secondary btn-sm tasklist-batch-selectall-btn"
+                        @click="selectAllVisibleTasks"
+                        title="选中当前筛选条件下显示的全部任务；已全部选中时点击取消全选">
+                  {{ allVisibleTasksSelected ? '取消全选' : '全选可见' }}
+                </button>
+                <button type="button" class="btn btn-outline-danger btn-sm tasklist-batch-delete-btn"
+                        :disabled="tasklist.selectedTaskNames.length === 0"
+                        @click="deleteSelectedTasks"
+                        :title="'删除选中的 ' + tasklist.selectedTaskNames.length + ' 个任务'">
+                  <i class="bi bi-trash3"></i> 删除选中 ({{ tasklist.selectedTaskNames.length }})
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @click="toggleTasklistSelectMode" title="退出多选模式">退出</button>
+              </div>
+            </div>
             </div>
             <!-- 任务列表：列表视图 -->
             <template v-if="tasklist.viewMode === 'list'">
-            <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task task-card mb-3" :class="{'expanded': !!taskExpandState[index]}" v-show="shouldShowTasklist && (taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
+            <div v-for="(task, index) in sortedTasklist" :key="'list-'+index" class="task task-card mb-3" :class="{'expanded': !!taskExpandState[index], 'task-selected': tasklist.selectMode && isTaskSelected(task)}" v-show="shouldShowTasklist && (taskDirSelected == '' || task.taskname == taskDirSelected) && task.taskname.includes(taskNameFilter) && tasklistFilterByType(task) && tasklistFilterByStatus(task)">
                 <div class="task-card-header">
-                  <div class="task-card-toggle" :aria-expanded="!!taskExpandState[index]" :aria-controls="'collapse_'+index" @click="toggleTaskExpand(index)" :title="getTaskShareSubscriptionHoverText(task)">
-                    <i class="bi bi-caret-right-fill"></i>
+                  <div class="task-card-toggle" :aria-expanded="!!taskExpandState[index]" :aria-controls="'collapse_'+index" @click="tasklist.selectMode ? toggleTaskSelection(task) : toggleTaskExpand(index)" :title="tasklist.selectMode ? (isTaskSelected(task) ? '点击取消选中' : '点击选中') : getTaskShareSubscriptionHoverText(task)">
+                    <i v-if="tasklist.selectMode" class="bi task-select-check" :class="isTaskSelected(task) ? 'bi-check-circle-fill task-select-checked' : 'bi-circle'"></i>
+                    <i v-else class="bi bi-caret-right-fill"></i>
                     <span class="task-card-title">#<span v-html="`${String((task.__originalIndex !== undefined ? task.__originalIndex : index) + 1).padStart(2, '0')} ${task.taskname}`"></span></span>
                     <!-- 卡片信息区：桌面端与标题同行，移动端整体掉到第二行 -->
                     <span class="task-card-metrics">
@@ -1315,7 +1344,7 @@
                       </span>
                     </span>
                   </div>
-                  <div class="task-buttons">
+                  <div class="task-buttons" v-if="!tasklist.selectMode">
                     <template v-for="key in formData.button_display_order" :key="'btns-' + key">
                       <button v-if="key==='refresh_plex' && formData.plugins && formData.plugins.plex && formData.plugins.plex.url && formData.plugins.plex.token && formData.plugins.plex.quark_root_path && formData.button_display.refresh_plex !== 'disabled'" type="button" class="btn btn-outline-plex" :class="{'hover-only': formData.button_display.refresh_plex === 'hover'}" @click="refreshPlexLibrary(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新Plex媒体库"><img src="./static/images/Plex.svg" class="plex-icon"></button>
                       <button v-else-if="key==='refresh_alist' && formData.plugins && formData.plugins.alist && formData.plugins.alist.url && formData.plugins.alist.token && formData.plugins.alist.storage_id && formData.button_display.refresh_alist !== 'disabled'" type="button" class="btn btn-outline-alist" :class="{'hover-only': formData.button_display.refresh_alist === 'hover'}" @click="refreshAlistDirectory(task.__originalIndex !== undefined ? task.__originalIndex : index)" title="刷新AList目录"><img src="https://cdn.jsdelivr.net/gh/alist-org/logo@main/logo.svg" class="alist-icon"></button>
