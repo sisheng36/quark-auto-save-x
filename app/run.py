@@ -407,6 +407,44 @@ def _purge_task_state_safe(task_name, save_path=None, remaining_tasks=None):
         pass
 
 
+def _sweep_orphan_task_data(reason='startup'):
+    """按当前配置清扫孤儿数据：已删除任务残留的转存记录/指标/终态快照/节目绑定。
+
+    删除任务的流程现在会即时清理；这里兜底历史版本删除（以及保存失败、进程中断）
+    留下的孤儿数据，避免同名/同路径的新任务继承旧进度。启动时执行，保存配置的
+    后台链路（cleanup_orphan_data 已扩展）同样覆盖。
+    """
+    try:
+        tasklist = (config_data or {}).get('tasklist', []) if isinstance(config_data, dict) else []
+        valid_names = [n for n in (task_display_name(t) for t in tasklist) if n]
+        valid_pairs = collect_referenced_seasons(tasklist)
+        swept = False
+        try:
+            cal_db = CalendarDB()
+            try:
+                swept = cal_db.cleanup_orphan_data(valid_pairs, valid_names)
+            finally:
+                try:
+                    cal_db.close()
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.debug(f"孤儿数据清扫失败（{reason}）: {e}")
+            return
+        if swept:
+            try:
+                cleanup_orphaned_posters()
+            except Exception:
+                pass
+            try:
+                clear_all_calendar_cache()
+            except Exception:
+                pass
+            logging.info(f"孤儿数据清扫完成（{reason}）")
+    except Exception as e:
+        logging.warning(f"孤儿数据清扫异常（{reason}）: {e}")
+
+
 def _record_belongs_to_task(record_path, task, same_name_count=1):
     """按任务保存目录归属转存记录；没有路径的旧记录仅在任务名唯一时回退。"""
     task_path = _task_save_path(task)
@@ -12695,6 +12733,11 @@ if __name__ == "__main__":
     IS_FLASK_SERVER_PROCESS = True
     init()
     reload_tasks()
+    # 启动时清扫历史遗留的孤儿数据：已删除任务的转存记录/指标/终态快照/节目绑定
+    try:
+        _sweep_orphan_task_data('startup')
+    except Exception:
+        pass
     # 在 reload_tasks() 之后重新注册会被清空的后台任务（避免 remove_all_jobs 的影响）
     try:
         restart_calendar_refresh_job()

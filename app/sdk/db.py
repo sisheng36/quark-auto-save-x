@@ -1007,9 +1007,12 @@ class CalendarDB:
 
         规则:
         - task_metrics/task_display_cache/task_status_override: 删除 task_name 不在当前任务列表中的记录
+        - transfer_records: 删除 task_name 不在当前任务列表中的转存记录（历史版本删除任务时不清理，
+          会把旧进度串给同名/同路径的新任务；rename/undo_rename 是重命名操作日志，保留）
         - seasons/episodes: 仅保留出现在 valid_task_pairs 内的季与对应所有集；其余删除
         - season_metrics: 仅保留出现在 valid_task_pairs 内的记录；其余删除
         - shows: 仅保留出现在 valid_task_pairs 内的 tmdb_id；其余删除（连带删除对应的 seasons/episodes）
+        - shows.bound_task_names: 剔除已删除任务的名字（旧绑定会把同名新任务的匹配改回旧节目）
         """
         try:
             cursor = self.conn.cursor()
@@ -1025,6 +1028,21 @@ class CalendarDB:
                     cursor.execute(f"DELETE FROM task_metrics WHERE task_name NOT IN ({placeholders})", valid_task_names)
                     cursor.execute(f"DELETE FROM task_display_cache WHERE task_name NOT IN ({placeholders})", valid_task_names)
                     cursor.execute(f"DELETE FROM task_status_override WHERE task_name NOT IN ({placeholders})", valid_task_names)
+            except Exception:
+                pass
+
+            # 1b) 清理孤立转存记录：任务已删除时其记录一并移除（与删除任务同口径），
+            # 避免同名/同路径的新任务继承旧记录导致进度串数据。
+            # rename/undo_rename 是重命名操作日志，不属于任何任务，保留。
+            try:
+                if valid_task_names:
+                    placeholders = ','.join(['?'] * len(valid_task_names))
+                    cursor.execute(
+                        f"DELETE FROM transfer_records WHERE task_name NOT IN ({placeholders}, 'rename', 'undo_rename')",
+                        list(valid_task_names)
+                    )
+                else:
+                    cursor.execute("DELETE FROM transfer_records WHERE task_name NOT IN ('rename', 'undo_rename')")
             except Exception:
                 pass
 
@@ -1118,6 +1136,24 @@ class CalendarDB:
                     )
                 except Exception:
                     pass
+
+            # 4) 清理存活节目 bound_task_names 里已删除任务的名字：
+            #    旧绑定会让同名新任务在双向同步时被改回旧节目的 tmdb 匹配
+            try:
+                valid_name_set = {str(n) for n in (valid_task_names or [])}
+                cursor.execute('SELECT tmdb_id, bound_task_names FROM shows')
+                for show_id, bound in (cursor.fetchall() or []):
+                    if not bound:
+                        continue
+                    names = [n.strip() for n in str(bound).split(',') if n and n.strip()]
+                    kept = [n for n in names if n in valid_name_set]
+                    if kept != names:
+                        cursor.execute(
+                            'UPDATE shows SET bound_task_names = ? WHERE tmdb_id = ?',
+                            (','.join(kept), show_id)
+                        )
+            except Exception:
+                pass
 
             self.conn.commit()
             return True
