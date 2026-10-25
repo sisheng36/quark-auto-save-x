@@ -998,24 +998,33 @@ class CalendarDB:
 
     # --------- 孤儿数据清理（seasons / episodes / season_metrics / task_metrics / task_display_cache / shows） ---------
     @retry_on_locked(max_retries=3, base_delay=0.1)
-    def cleanup_orphan_data(self, valid_task_pairs, valid_task_names):
+    def cleanup_orphan_data(self, valid_task_pairs, valid_task_names, keep_tmdb_ids=None):
         """清理不再与任何任务对应的数据
 
         参数:
             valid_task_pairs: 由当前任务映射得到的 (tmdb_id, season_number) 元组列表
             valid_task_names: 当前存在的任务名列表
+            keep_tmdb_ids: 仍被任何任务匹配（match.tmdb_id）的剧集 id 集合。
+                这些剧集的全部季数据保留——异步匹配未完成/未声明季号的任务还引用着它们，
+                按 pairs 清理会误删刚建任务对应季的集数数据（任务列表显示 0/0）。
 
         规则:
         - task_metrics/task_display_cache/task_status_override: 删除 task_name 不在当前任务列表中的记录
         - transfer_records: 删除 task_name 不在当前任务列表中的转存记录（历史版本删除任务时不清理，
           会把旧进度串给同名/同路径的新任务；rename/undo_rename 是重命名操作日志，保留）
-        - seasons/episodes: 仅保留出现在 valid_task_pairs 内的季与对应所有集；其余删除
-        - season_metrics: 仅保留出现在 valid_task_pairs 内的记录；其余删除
-        - shows: 仅保留出现在 valid_task_pairs 内的 tmdb_id；其余删除（连带删除对应的 seasons/episodes）
+        - seasons/episodes/season_metrics: 仅保留出现在 valid_task_pairs 内的记录；其余删除
+          （keep_tmdb_ids 内剧集的全部季保留）
+        - shows: 仅保留出现在 valid_task_pairs 或 keep_tmdb_ids 内的 tmdb_id；其余删除
         - shows.bound_task_names: 剔除已删除任务的名字（旧绑定会把同名新任务的匹配改回旧节目）
         """
         try:
             cursor = self.conn.cursor()
+            keep_ids = set()
+            for tid in (keep_tmdb_ids or []):
+                try:
+                    keep_ids.add(int(tid))
+                except (TypeError, ValueError):
+                    continue
 
             # 1) 清理 task_metrics（孤立任务）
             try:
@@ -1046,16 +1055,27 @@ class CalendarDB:
             except Exception:
                 pass
 
-            # 2) 清理 seasons/episodes 与 season_metrics（仅保留任务声明的 (tmdb_id, season)）
+            # 2) 清理 seasons/episodes 与 season_metrics（仅保留任务声明的 (tmdb_id, season)；
+            #    keep_ids 内剧集的全部季保留，防止误删异步匹配尚未声明季号的任务的数据）
             # 组装参数列表
             pairs = [(int(tid), int(sn)) for (tid, sn) in (valid_task_pairs or []) if tid and sn]
+            keep_clause = ''
+            keep_params = []
+            if keep_ids:
+                keep_placeholders = ','.join(['?'] * len(keep_ids))
+                keep_clause = f' AND tmdb_id NOT IN ({keep_placeholders})'
+                keep_params = list(keep_ids)
 
             if not pairs:
-                # 没有任何有效任务映射：清空 seasons/episodes/season_metrics
+                # 没有任何有效任务映射：清空未被保留剧集的 seasons/episodes/season_metrics
                 try:
-                    cursor.execute('DELETE FROM episodes')
-                    cursor.execute('DELETE FROM seasons')
-                    cursor.execute('DELETE FROM season_metrics')
+                    if not keep_ids:
+                        cursor.execute('DELETE FROM episodes')
+                        cursor.execute('DELETE FROM seasons')
+                        cursor.execute('DELETE FROM season_metrics')
+                    else:
+                        for table in ('episodes', 'seasons', 'season_metrics'):
+                            cursor.execute(f'DELETE FROM {table}{keep_clause}', keep_params)
                 except Exception:
                     pass
             else:
@@ -1070,8 +1090,8 @@ class CalendarDB:
                 try:
                     cursor.execute(
                         f'''DELETE FROM episodes
-                            WHERE (tmdb_id, season_number) NOT IN ({tuple_placeholders})''',
-                        flat_params
+                            WHERE (tmdb_id, season_number) NOT IN ({tuple_placeholders}){keep_clause}''',
+                        flat_params + keep_params
                     )
                 except Exception:
                     pass
@@ -1080,8 +1100,8 @@ class CalendarDB:
                 try:
                     cursor.execute(
                         f'''DELETE FROM seasons
-                            WHERE (tmdb_id, season_number) NOT IN ({tuple_placeholders})''',
-                        flat_params
+                            WHERE (tmdb_id, season_number) NOT IN ({tuple_placeholders}){keep_clause}''',
+                        flat_params + keep_params
                     )
                 except Exception:
                     pass
@@ -1090,18 +1110,19 @@ class CalendarDB:
                 try:
                     cursor.execute(
                         f'''DELETE FROM season_metrics
-                            WHERE (tmdb_id, season_number) NOT IN ({tuple_placeholders})''',
-                        flat_params
+                            WHERE (tmdb_id, season_number) NOT IN ({tuple_placeholders}){keep_clause}''',
+                        flat_params + keep_params
                     )
                 except Exception:
                     pass
 
-            # 3) 清理孤立的 shows（仅保留出现在 valid_task_pairs 中的 tmdb_id）
+            # 3) 清理孤立的 shows（仅保留出现在 valid_task_pairs / keep_tmdb_ids 中的 tmdb_id）
             # 从 valid_task_pairs 中提取所有有效的 tmdb_id
             valid_tmdb_ids = set()
             for tid, sn in pairs:
                 if tid:
                     valid_tmdb_ids.add(int(tid))
+            valid_tmdb_ids |= keep_ids
 
             if not valid_tmdb_ids:
                 # 没有任何有效的 tmdb_id：清空所有 shows

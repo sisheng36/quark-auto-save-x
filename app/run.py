@@ -420,6 +420,27 @@ def _purge_task_state_safe(task_name, save_path=None, remaining_tasks=None):
         pass
 
 
+def _matched_tmdb_ids(tasklist):
+    """仍被任何任务匹配（match.tmdb_id）的剧集 id 集合。
+
+    清理孤儿季数据时这些剧集的全部季保留：异步匹配尚未完成/未声明季号的任务
+    也引用着它们，按 (tmdb, season) 对清理会误删刚建任务对应季的集数数据，
+    导致任务列表显示 0/0 直到下轮定时刷新才恢复。
+    """
+    ids = set()
+    for t in (tasklist or []):
+        if not isinstance(t, dict):
+            continue
+        cal = t.get('calendar_info') or {}
+        tid = (cal.get('match') or {}).get('tmdb_id') or cal.get('tmdb_id')
+        if tid:
+            try:
+                ids.add(int(tid))
+            except (TypeError, ValueError):
+                continue
+    return ids
+
+
 def _sweep_orphan_task_data(reason='startup'):
     """按当前配置清扫孤儿数据：已删除任务残留的转存记录/指标/终态快照/节目绑定。
 
@@ -436,7 +457,9 @@ def _sweep_orphan_task_data(reason='startup'):
         try:
             cal_db = CalendarDB()
             try:
-                swept = cal_db.cleanup_orphan_data(valid_pairs, valid_names)
+                swept = cal_db.cleanup_orphan_data(
+                    valid_pairs, valid_names, keep_tmdb_ids=_matched_tmdb_ids(tasklist)
+                )
                 try:
                     if cal_db.cleanup_orphan_task_paths(name_path_pairs):
                         swept = True
@@ -877,6 +900,33 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
             if task_key in transferred_by_task:
                 transferred_count = transferred_by_task[task_key]
 
+            # 本季 finale 检测：TMDB 给本季标了「本季大结局」即代表本季总集数已定
+            # （大结局集号就是本季最终集数），总集数不再按「在播未知」的临时口径（+）展示。
+            season_finale_episode = None
+            has_finale = False
+            try:
+                if tmdb_id and latest_sn and not movie_task:
+                    cur.execute(
+                        """
+                        SELECT MAX(CAST(episode_number AS INTEGER)) FROM episodes
+                        WHERE tmdb_id=? AND season_number=? AND LOWER(COALESCE(type, '')) LIKE '%finale%'
+                        """,
+                        (int(tmdb_id), int(latest_sn))
+                    )
+                    _finale_row = cur.fetchone()
+                    if _finale_row and _finale_row[0] is not None:
+                        season_finale_episode = int(_finale_row[0])
+                        has_finale = True
+            except Exception:
+                season_finale_episode = None
+                has_finale = False
+            # 总集数兜底：季表集数滞后于 finale 标记时，用大结局集号补齐
+            try:
+                if season_finale_episode and int(total_count or 0) < season_finale_episode:
+                    total_count = season_finale_episode
+            except Exception:
+                pass
+
             # 将状态本地化：returning_series 用本地已播/总集数判断；其余走静态状态映射表
             try:
                 raw = (status or '').strip()
@@ -885,21 +935,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                     status = raw or '电影'
                 elif key == 'returning_series':
                     # 新规则：存在 finale 类型 且 已播出集数 ≥ 本季总集数 => 本季终；否则 播出中
-                    has_finale = False
-                    try:
-                        if tmdb_id and latest_sn:
-                            cur.execute(
-                                """
-                                SELECT 1 FROM episodes
-                                WHERE tmdb_id=? AND season_number=? AND LOWER(COALESCE(type, '')) LIKE '%finale%'
-                                LIMIT 1
-                                """,
-                                (int(tmdb_id), int(latest_sn))
-                            )
-                            has_finale = cur.fetchone() is not None
-                    except Exception:
-                        has_finale = False
-
+                    # finale 检测已前置（has_finale/season_finale_episode），此处直接使用
                     try:
                         aired = int(aired_count or 0)
                         total = int(total_count or 0)
@@ -939,6 +975,8 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 and not terminal_task
                 and status not in ('本季终', '已完结', '已取消')
                 and raw_status_key not in ('ended', 'canceled', 'cancelled')
+                # TMDB 已给本季标记大结局 → 总集数已定，不再是「在播未知总数」的临时口径
+                and not has_finale
             )
 
             if cached_terminal:
@@ -2716,7 +2754,10 @@ def auto_cleanup_completed_tasks_job():
                     n for n in (task_display_name(t) for t in (config_data.get('tasklist') or []))
                     if n
                 ]
-                CalendarDB().cleanup_orphan_data(valid_pairs, valid_names)
+                CalendarDB().cleanup_orphan_data(
+                    valid_pairs, valid_names,
+                    keep_tmdb_ids=_matched_tmdb_ids(config_data.get('tasklist') or []),
+                )
             except Exception as e:
                 logging.warning(f"自动清理已完成任务：清理孤儿数据失败: {e}")
             try:
@@ -3916,7 +3957,9 @@ def update():
                 from app.sdk.db import CalendarDB as _CalDB
                 _cal = _CalDB()
                 try:
-                    if _cal.cleanup_orphan_data(valid_pairs, valid_names):
+                    if _cal.cleanup_orphan_data(
+                        valid_pairs, valid_names, keep_tmdb_ids=_matched_tmdb_ids(tasks)
+                    ):
                         changed_in_thread = True
                     # 按名清扫无法识别同名多季/改路径任务的旧行，这里按 (name, path) 精确兜底
                     try:
@@ -4446,11 +4489,20 @@ def _ensure_season_metadata(cal_db, tmdb_service, tmdb_id, season_number) -> str
 
 
 def reconcile_task_seasons(tasks=None, tmdb_service=None, cal_db=None) -> bool:
-    """名称或路径能提取出季号、且用户没有手动锁定时，把错误的最新季改回该季。"""
+    """名称或路径能提取出季号、且用户没有手动锁定时，把错误的最新季改回该季。
+
+    季号未变但本地缺该季数据行（如曾被孤儿清理误删）时也会触发补拉，
+    避免任务列表显示 0/0 直到下轮定时刷新才恢复。
+    """
     if tasks is None:
         tasks = config_data.get('tasklist', []) or []
     changed = False
     to_fetch = []
+    seen_pairs = set()
+    opened_db = None
+    if cal_db is None:
+        opened_db = CalendarDB()
+        cal_db = opened_db
     for task in tasks:
         if not isinstance(task, dict) or task.get('skip_calendar') is True:
             continue
@@ -4459,17 +4511,31 @@ def reconcile_task_seasons(tasks=None, tmdb_service=None, cal_db=None) -> bool:
                 continue
         except Exception:
             pass
-        if not correct_stored_season(task):
-            continue
-        changed = True
+        corrected = correct_stored_season(task)
+        if corrected:
+            changed = True
         match = (task.get('calendar_info') or {}).get('match') or {}
         tmdb_id = match.get('tmdb_id')
         season_number = match.get('latest_season_number')
-        if tmdb_id and season_number:
-            try:
-                to_fetch.append((int(tmdb_id), int(season_number)))
-            except (TypeError, ValueError):
-                pass
+        if not (tmdb_id and season_number):
+            continue
+        try:
+            pair = (int(tmdb_id), int(season_number))
+        except (TypeError, ValueError):
+            continue
+        if pair in seen_pairs:
+            continue
+        if corrected:
+            seen_pairs.add(pair)
+            to_fetch.append(pair)
+            continue
+        # 季号未变但本地缺该季数据行 → 立即补拉（一次性行为：拉取后会写入季行）
+        try:
+            if not cal_db.get_season(pair[0], pair[1]):
+                seen_pairs.add(pair)
+                to_fetch.append(pair)
+        except Exception:
+            pass
     if changed:
         try:
             Config.write_json(CONFIG_PATH, config_data)
@@ -4479,36 +4545,41 @@ def reconcile_task_seasons(tasks=None, tmdb_service=None, cal_db=None) -> bool:
             clear_calendar_tasks_cache()
         except Exception:
             pass
-    if not to_fetch:
-        return changed
-    if tmdb_service is None:
-        api_key = (config_data.get('tmdb_api_key') or '').strip()
-        if api_key:
+    try:
+        if not to_fetch:
+            return changed
+        if tmdb_service is None:
+            api_key = (config_data.get('tmdb_api_key') or '').strip()
+            if api_key:
+                try:
+                    tmdb_service = TMDBService(api_key, get_poster_language_setting())
+                except Exception:
+                    tmdb_service = None
+        if not tmdb_service:
+            return changed
+        seen = set()
+        touched_shows = set()
+        for tmdb_id, season_number in to_fetch:
+            key = (tmdb_id, season_number)
+            if key in seen:
+                continue
+            seen.add(key)
+            touched_shows.add(tmdb_id)
             try:
-                tmdb_service = TMDBService(api_key, get_poster_language_setting())
+                _ensure_season_metadata(cal_db, tmdb_service, tmdb_id, season_number)
+            except Exception as e:
+                logging.debug(f"补拉任务季元数据失败 tmdb_id={tmdb_id} season={season_number}: {e}")
+        for tmdb_id in touched_shows:
+            try:
+                cal_db.update_show_latest_season_number(int(tmdb_id), int(show_season_for_upsert(tmdb_id)))
             except Exception:
-                tmdb_service = None
-    if not tmdb_service:
-        return changed
-    if cal_db is None:
-        cal_db = CalendarDB()
-    seen = set()
-    touched_shows = set()
-    for tmdb_id, season_number in to_fetch:
-        key = (tmdb_id, season_number)
-        if key in seen:
-            continue
-        seen.add(key)
-        touched_shows.add(tmdb_id)
-        try:
-            _ensure_season_metadata(cal_db, tmdb_service, tmdb_id, season_number)
-        except Exception as e:
-            logging.debug(f"补拉任务季元数据失败 tmdb_id={tmdb_id} season={season_number}: {e}")
-    for tmdb_id in touched_shows:
-        try:
-            cal_db.update_show_latest_season_number(int(tmdb_id), int(show_season_for_upsert(tmdb_id)))
-        except Exception:
-            pass
+                pass
+    finally:
+        if opened_db is not None:
+            try:
+                opened_db.close()
+            except Exception:
+                pass
     return changed
 
 
