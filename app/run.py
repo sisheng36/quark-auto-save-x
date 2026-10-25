@@ -81,7 +81,10 @@ from utils.season_match import (
 from utils.overview_task_stats import (
     compute_overview_task_stats,
     format_shareurl_ban_message,
+    is_task_completed_by_status_and_progress,
     localize_show_status,
+    progress_from_season_counts,
+    resolve_task_status,
     task_display_name,
 )
 from utils.auto_backup import ensure_daily_backup_if_due
@@ -2408,9 +2411,223 @@ def restart_daily_aired_update_job():
         logging.warning(f"启动播出集数自动刷新失败: {e}")
 
 
+# --------- 自动清理已完成任务（可选，默认关闭） ---------
+
+def _auto_cleanup_completed_enabled():
+    """读取「自动清理已完成任务」开关；宽容解析 enabled/true/1/on 等写法。"""
+    try:
+        task_settings = config_data.get('task_settings', {}) if isinstance(config_data, dict) else {}
+        value = task_settings.get('auto_cleanup_completed_tasks', 'disabled')
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ('enabled', 'true', '1', 'on', 'yes')
+    except Exception:
+        return False
+
+
+def _auto_cleanup_completed_days():
+    """读取保留天数（默认 7，范围 1-365）。"""
+    try:
+        task_settings = config_data.get('task_settings', {}) if isinstance(config_data, dict) else {}
+        days = int(task_settings.get('auto_cleanup_completed_days') or 7)
+    except (TypeError, ValueError):
+        days = 7
+    return max(1, min(365, days))
+
+
+def _is_task_completed_for_cleanup(task, cal_task, status_override_map, display_cache_map):
+    """与任务列表「已完成」状态筛选同口径：
+    状态为本季终/已完结/已取消/已上映（含手动「标记为已完结」）且转存进度 >= 100%。
+    判定只读本地数据库（总览统计的轻量索引），不做网络请求。
+    """
+    try:
+        if not isinstance(task, dict) or task.get('skip_calendar') is True:
+            # 一次性任务有自己的完成即删流程，不参与自动清理
+            return False
+        status = resolve_task_status(task, cal_task)
+        task_name = _task_name(task)
+        save_path = _task_save_path(task)
+        override = (status_override_map or {}).get((task_name, save_path))
+        display_cache = (display_cache_map or {}).get((task_name, save_path)) or {}
+        cache_season = display_cache.get('season_number')
+        try:
+            cache_season = int(cache_season) if cache_season not in (None, '') else None
+        except (TypeError, ValueError):
+            cache_season = None
+        tmdb_id = (cal_task or {}).get('match_tmdb_id')
+        # 手动「标记为已完结」优先，与任务列表页展示口径一致
+        if _valid_task_status_override(override, tmdb_id, cache_season):
+            status = '已完结'
+        season_counts = (cal_task or {}).get('season_counts') or task.get('season_counts')
+        progress = progress_from_season_counts(season_counts)
+        return is_task_completed_by_status_and_progress(status, progress)
+    except Exception:
+        return False
+
+
+def auto_cleanup_completed_tasks_job():
+    """每天凌晨自动清理「已完成」状态持续超过保留天数的任务。
+
+    判定口径与任务列表「已完成」筛选一致；首次满足条件时在任务对象上记录
+    completion_time，持续满 N 天才删除，中途不再满足（续追新季、进度回落）
+    会清除标记重新计时。删除时同步清理日历数据，并通知已打开的前端刷新。
+    """
+    try:
+        if not _auto_cleanup_completed_enabled():
+            return
+        if _crontab_task_process is not None:
+            logging.info("自动清理已完成任务：转存任务运行中，本轮跳过")
+            return
+        tasklist = config_data.get('tasklist') or []
+        if not tasklist:
+            return
+        days = _auto_cleanup_completed_days()
+        now = int(time.time())
+        threshold = days * 86400
+        try:
+            calendar_by_name, _complete_by_name = load_overview_calendar_index(tasklist)
+        except Exception as e:
+            logging.warning(f"自动清理已完成任务：读取任务指标失败: {e}")
+            return
+        status_override_map = {}
+        display_cache_map = {}
+        try:
+            cal_db = CalendarDB()
+            try:
+                status_override_map = cal_db.get_task_status_override_map()
+                display_cache_map = cal_db.get_task_display_cache_map()
+            finally:
+                try:
+                    cal_db.close()
+                except Exception:
+                    pass
+        except Exception:
+            status_override_map = {}
+            display_cache_map = {}
+
+        to_delete = []
+        dirty = False
+        for task in tasklist:
+            if not isinstance(task, dict):
+                continue
+            # calendar_by_name 由 load_overview_calendar_index 按 task_display_name 建键，查找需同键
+            lookup_name = task_display_name(task)
+            cal_task = calendar_by_name.get(lookup_name) if lookup_name else None
+            completed = _is_task_completed_for_cleanup(task, cal_task, status_override_map, display_cache_map)
+            marked = task.get('completion_time')
+            if completed:
+                try:
+                    marked_at = int(marked) if marked not in (None, '') else None
+                except (TypeError, ValueError):
+                    marked_at = None
+                if marked_at is not None and now - marked_at >= threshold:
+                    to_delete.append(task)
+                elif marked_at is None:
+                    task['completion_time'] = now
+                    dirty = True
+            elif marked not in (None, ''):
+                try:
+                    del task['completion_time']
+                except KeyError:
+                    pass
+                dirty = True
+
+        if not to_delete and not dirty:
+            return
+
+        deleted_names = []
+        if to_delete:
+            deleted_ids = {id(t) for t in to_delete}
+            remaining = [t for t in tasklist if id(t) not in deleted_ids]
+            deleted_names = [n for n in (task_display_name(t) for t in to_delete) if n]
+            # 先从任务列表移除再按 tmdb_id 清理日历数据；
+            # force=False 会自动保护仍被其他任务引用的共享剧集
+            tmdb_ids = set()
+            for t in to_delete:
+                cal = t.get('calendar_info') or {}
+                tmdb_id = (cal.get('match') or {}).get('tmdb_id') or cal.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_ids.add(int(tmdb_id))
+                    except (TypeError, ValueError):
+                        continue
+            config_data['tasklist'] = remaining
+            for tmdb_id in tmdb_ids:
+                try:
+                    purge_calendar_by_tmdb_id_internal(tmdb_id, force=False)
+                except Exception as e:
+                    logging.warning(f"自动清理已完成任务：清理日历数据失败 tmdb_id={tmdb_id}: {e}")
+
+        try:
+            Config.write_json(CONFIG_PATH, config_data)
+        except Exception as e:
+            logging.warning(f"自动清理已完成任务：写入配置失败: {e}")
+            return
+
+        if to_delete:
+            preview = '、'.join(deleted_names[:10])
+            if len(deleted_names) > 10:
+                preview += f' 等 {len(deleted_names)} 个'
+            logging.info(f"自动清理已完成任务：已删除 {len(to_delete)} 个（{preview}）")
+            # 与保存配置后的后台清理链一致：清孤儿数据/海报并刷新日历缓存
+            try:
+                valid_pairs = collect_referenced_seasons(config_data.get('tasklist') or [])
+                valid_names = [
+                    n for n in (task_display_name(t) for t in (config_data.get('tasklist') or []))
+                    if n
+                ]
+                CalendarDB().cleanup_orphan_data(valid_pairs, valid_names)
+            except Exception as e:
+                logging.warning(f"自动清理已完成任务：清理孤儿数据失败: {e}")
+            try:
+                cleanup_orphaned_posters()
+            except Exception:
+                pass
+            try:
+                clear_all_calendar_cache()
+            except Exception:
+                pass
+            try:
+                # 已打开的前端页面通过现有 SSE 自动重拉任务列表
+                notify_calendar_changed('task_updated')
+            except Exception:
+                pass
+        else:
+            logging.debug("自动清理已完成任务：本轮仅记录完成时间标记")
+    except Exception as e:
+        logging.warning(f"自动清理已完成任务异常: {e}")
+
+
+def restart_auto_cleanup_completed_job():
+    """按配置注册/移除「自动清理已完成任务」每日任务（凌晨 4:00，避开 0 点的日历刷新高峰）。"""
+    try:
+        try:
+            scheduler.remove_job('auto_cleanup_completed_tasks')
+        except Exception:
+            pass
+        if not _auto_cleanup_completed_enabled():
+            return
+        scheduler.add_job(
+            auto_cleanup_completed_tasks_job,
+            trigger=CronTrigger(hour=4, minute=0),
+            id='auto_cleanup_completed_tasks',
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=None,
+        )
+        if scheduler.state == 0:
+            scheduler.start()
+        if IS_FLASK_SERVER_PROCESS:
+            logging.info(f"已启动自动清理已完成任务，每天 04:00 检查，保留 {_auto_cleanup_completed_days()} 天")
+    except Exception as e:
+        logging.warning(f"启动自动清理已完成任务失败: {e}")
+
+
 # 应用启动时注册每日任务
 try:
     restart_daily_aired_update_job()
+    restart_auto_cleanup_completed_job()
     # 启动时做一次极简按需补偿检查（仅一次）
     ensure_today_aired_done_if_due_once('startup')
     # 启动时同步一次播出时间触发调度，确保新一集能按播出时间刷新
@@ -3158,7 +3375,16 @@ def get_data():
             data['performance']['backup_max_count'] = 4
         if 'emby_library_refresh_interval_seconds' not in perf:
             data['performance']['emby_library_refresh_interval_seconds'] = DEFAULT_EMBY_REFRESH_SECONDS
-    
+
+    # 任务设置：自动清理已完成任务默认值（默认关闭，保留 7 天）
+    task_settings = data.get('task_settings') if isinstance(data, dict) else None
+    if not isinstance(task_settings, dict):
+        data['task_settings'] = task_settings = {}
+    if 'auto_cleanup_completed_tasks' not in task_settings:
+        data['task_settings']['auto_cleanup_completed_tasks'] = 'disabled'
+    if 'auto_cleanup_completed_days' not in task_settings or task_settings.get('auto_cleanup_completed_days') in [None, ""]:
+        data['task_settings']['auto_cleanup_completed_days'] = 7
+
     # 确保海报语言有默认值
     if 'poster_language' not in data:
         data['poster_language'] = 'zh-CN'
@@ -3581,6 +3807,12 @@ def update():
             restart_daily_aired_update_job()
         except Exception as e:
             logging.warning(f"重启已播出集数更新任务失败: {e}")
+
+        # 根据最新任务设置重启自动清理已完成任务
+        try:
+            restart_auto_cleanup_completed_job()
+        except Exception as e:
+            logging.warning(f"重启自动清理已完成任务失败: {e}")
 
         # 若首次配置 Trakt Client ID，则为所有节目补齐播出时间
         try:
@@ -6017,6 +6249,10 @@ def reload_tasks():
             pass
         try:
             restart_daily_aired_update_job()
+        except Exception:
+            pass
+        try:
+            restart_auto_cleanup_completed_job()
         except Exception:
             pass
         try:

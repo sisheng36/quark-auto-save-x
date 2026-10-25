@@ -755,6 +755,21 @@
               <filter-select v-model="formData.task_settings.auto_extract_archive" label="自动解压压缩包" title="启用后，转存压缩包时将自动进行云解压（仅限夸克高级会员），支持zip、rar、7z、tar、gz等格式，若压缩包过大无法完成云解压，可通过夸克客户端进行解压"
                            :options="[{value:'keep_structure_keep_archive',text:'保持原目录结构，保留压缩包'},{value:'flat_files_keep_archive',text:'扁平化提取文件，保留压缩包'},{value:'keep_structure_delete_archive',text:'保持原目录结构，删除压缩包'},{value:'flat_files_delete_archive',text:'扁平化提取文件，删除压缩包'},{value:'disabled',text:'禁用'}]"></filter-select>
             </div>
+
+            <div class="form-group task-auto-search-group">
+              <div class="task-auto-search-item">
+                <filter-select v-model="formData.task_settings.auto_cleanup_completed_tasks" label="自动清理已完成任务" title="启用后，每天凌晨4点自动检查，删除「已完成」状态（本季终/已完结/已取消/已上映，含手动标记已完结，口径与任务列表状态筛选一致）且转存进度100%、持续超过保留天数的任务，并同步清理其日历数据；转存未完成的任务不会被删除"
+                               :options="[{value:'enabled',text:'启用'},{value:'disabled',text:'禁用'}]"></filter-select>
+              </div>
+              <div class="task-auto-search-item" title="已完成状态持续该天数后才自动删除，范围 1-365，默认 7 天">
+                <div class="input-group input-group-sm">
+                  <div class="input-group-prepend">
+                    <span class="input-group-text">保留天数</span>
+                  </div>
+                  <input type="number" min="1" max="365" class="form-control" style="width: 90px" v-model.number="formData.task_settings.auto_cleanup_completed_days">
+                </div>
+              </div>
+            </div>
             </div>
 
             <div data-toggle="collapse" class="glass-config-toggle-wrap" data-target="#cfg_display" aria-expanded="false" aria-controls="cfg_display" @click="syncConfigExpandAll">
