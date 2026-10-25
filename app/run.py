@@ -1026,9 +1026,10 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 _effective_transferred = 0
 
             # 保护：如果本次解析不到有效集数（_effective_transferred 为 0），
-            # 且 metrics 中已经有缓存的 transferred_count > 0，则仅在「该任务在数据库中仍有转存记录」时
-            # 才使用缓存（视为获取/解析异常）；若该任务已无任何转存记录（用户清空/删除/重置文件夹），
-            # 则显示 0 并依赖下方写回把缓存的已转存集数刷新为 0。
+            # 且 metrics 中已经有缓存的 transferred_count > 0，则沿用缓存。
+            # 缓存来源有二：转存记录解析（recompute）与保存目录实际文件回填（引擎），
+            # 重建任务没有转存记录也能显示真实进度。用户清空/重置文件夹时，
+            # 重置流程会删除指标行并触发重算归零，因此无需记录存在性门槛。
             # 缓存值超过已知总集数时视为脏数据（历史误解析/清理任务后串数据），不再粘滞沿用。
             _metrics_row_dirty = False
             try:
@@ -1040,7 +1041,7 @@ def enrich_tasks_with_calendar_meta(tasks_info: list) -> list:
                 _metrics_row_dirty = False
             try:
                 if (not _effective_transferred) and (_cached_transferred not in (None, 0)):
-                    if (not _metrics_row_dirty) and task_key in task_keys_with_records:
+                    if not _metrics_row_dirty:
                         _effective_transferred = int(_cached_transferred or 0)
             except Exception:
                 pass

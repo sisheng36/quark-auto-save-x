@@ -53,9 +53,15 @@ except ImportError:
         class CalendarDB:
             def __init__(self, *args, **kwargs):
                 self.enabled = False
-            
+
             def get_task_metrics(self, *args, **kwargs):
                 return None
+
+            def upsert_task_metrics(self, *args, **kwargs):
+                pass
+
+            def close(self):
+                pass
 
 _SCRIPT_LOGGER = None
 
@@ -1319,6 +1325,88 @@ def mark_episode_seen(index, file_name):
         index["seasons"].add(season)
     else:
         index["ep"].setdefault(episode, set()).add(category)
+
+
+def backfill_task_metrics_from_dir(task, episode_index):
+    """用保存目录的实际文件回填任务进度指标（task_metrics）。
+
+    重建任务（转存记录为空）时任务列表原本会显示 0/N；引擎每轮运行都会扫描
+    保存目录做集数查重，顺手把目录中该任务本季已有的最高集数写回指标，
+    展示与完成判定即可恢复正确。只在目录值比现有指标更有利时写入，不向下覆盖。
+    仅处理已匹配 TMDB 的任务（未匹配时总集数无从获取，回填不参与完成判定）。
+    """
+    try:
+        if not episode_index:
+            return
+        task_name = (task or {}).get("taskname") or (task or {}).get("task_name") or ""
+        save_path = (task or {}).get("savepath") or (task or {}).get("save_path") or ""
+        if not task_name or not save_path:
+            return
+        cal = task.get("calendar_info") or {}
+        match = cal.get("match") or {}
+        tmdb_id = match.get("tmdb_id") or cal.get("tmdb_id")
+        try:
+            tmdb_id = int(tmdb_id) if tmdb_id not in (None, "") else None
+        except (TypeError, ValueError):
+            tmdb_id = None
+        if tmdb_id is None:
+            return
+        season = extract_task_season(task)
+        if season is None:
+            # 模板/任务名无季标记时，按保存路径的季目录（Season 02 / 第2季）归季，
+            # 与查重归季（extract_task_season）不冲突：仅在它取不到时兜底
+            for seg in reversed(str(save_path).replace("\\", "/").split("/")):
+                if seg:
+                    season = _extract_season_marker(seg, loose=True)
+                    if season is not None:
+                        break
+        if season is None:
+            season = match.get("latest_season_number")
+        try:
+            season = int(season) if season not in (None, "") else None
+        except (TypeError, ValueError):
+            season = None
+
+        media_eps = []
+        if season is not None:
+            media_eps = [
+                ep
+                for (s, ep), cats in (episode_index.get("se") or {}).items()
+                if s == season and "media" in cats
+            ]
+        if not media_eps:
+            # 目录文件无季标记时，仅在目录单一季与本任务季不冲突的情况下按集号回退
+            seasons = episode_index.get("seasons") or set()
+            if not seasons or (season is not None and seasons <= {season}):
+                media_eps = [
+                    ep for ep, cats in (episode_index.get("ep") or {}).items()
+                    if "media" in cats
+                ]
+        if not media_eps:
+            return
+        max_ep = max(media_eps)
+        if max_ep <= 0:
+            return
+
+        cal_db = CalendarDB()
+        try:
+            current = cal_db.get_task_metrics(task_name, normalize_save_path(save_path)) or {}
+            try:
+                current_ep = int(current.get("transferred_count") or 0)
+            except (TypeError, ValueError):
+                current_ep = 0
+            if max_ep > current_ep:
+                cal_db.upsert_task_metrics(
+                    task_name, tmdb_id, int(season or 1), max_ep, None, int(time.time()),
+                    save_path=save_path,
+                )
+        finally:
+            try:
+                cal_db.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 # 全局变量
 VERSION = "2.9.0"
@@ -3988,6 +4076,8 @@ class Quark:
             # 构建"已转存集数"索引：更换分享链接（洗码重传）后 fid/文件名/大小都会变，
             # 按"季+集"身份查重，已有的集不再重复转存
             existing_episode_index = build_existing_episode_index(dir_file_list)
+            # 目录回填：无转存记录的重建任务按保存目录实际文件恢复进度显示
+            backfill_task_metrics_from_dir(task, existing_episode_index)
 
             # 预先过滤分享文件列表，去除已存在的文件
             filtered_share_files = []
@@ -4206,6 +4296,8 @@ class Quark:
             # 构建"已转存集数"索引：更换分享链接（洗码重传）后 fid/文件名/大小都会变，
             # 按"季+集"身份查重，已有的集不再重复转存
             existing_episode_index = build_existing_episode_index(dir_file_list)
+            # 目录回填：无转存记录的重建任务按保存目录实际文件恢复进度显示
+            backfill_task_metrics_from_dir(task, existing_episode_index)
 
             # 应用起始文件过滤逻辑
             start_fid = task.get("startfid", "")
@@ -5050,6 +5142,8 @@ class Quark:
             # 构建"已转存集数"索引：更换分享链接（洗码重传）后 fid/文件名/大小都会变，
             # 按"季+集"身份查重，已有的集不再重复转存
             existing_episode_index = build_existing_episode_index(dir_file_list)
+            # 目录回填：无转存记录的重建任务按保存目录实际文件恢复进度显示
+            backfill_task_metrics_from_dir(task, existing_episode_index)
             
             # 检查是否需要从分享链接获取数据
             if task.get("shareurl"):
