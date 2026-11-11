@@ -1766,12 +1766,23 @@ except Exception:
 # 添加过滤器，过滤HTTP访问日志（格式：IP - - [时间] "METHOD /path HTTP/1.1" 状态码）
 class _HTTPAccessLogFilter(logging.Filter):
     """过滤HTTP访问日志，避免输出到日志文件"""
+    # 明文端口收到 TLS 握手 / 非 HTTP 字节时，http.server 会以 400 记录：
+    #   code 400, message Bad request version ('À\x13À')
+    #   code 400, message Bad HTTP/0.9 request type ('\x16\x03\x01...')
+    #   code 400, message Bad request syntax ('\x16\x03\x01...')
+    # 这类记录来自协议错配或端口扫描，不含任何业务信息，不应写入运行日志。
+    _BAD_REQUEST_RE = re.compile(
+        r'code 400, message Bad (request version|request syntax|HTTP/0\.9 request type)'
+    )
+
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = str(record.getMessage())
             # 匹配HTTP访问日志格式：IP - - [时间] "METHOD /path HTTP/1.1" 状态码
             if re.match(r'^\d+\.\d+\.\d+\.\d+\s+-\s+-\s+\[.*?\]\s+"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+.*?\s+HTTP/1\.\d"\s+\d+', msg):
                 return False  # 过滤掉HTTP访问日志
+            if self._BAD_REQUEST_RE.search(msg):
+                return False  # 过滤掉协议错配产生的 400 坏请求记录
         except Exception:
             pass
         return True
