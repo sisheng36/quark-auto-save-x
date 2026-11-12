@@ -5793,6 +5793,22 @@ def get_share_detail():
     def preview_regex(share_detail):
         regex = request.json.get("regex")
 
+        # 「正则规则」下：文件夹里（含子文件夹）没有任何命中文件时同样不转存，
+        # 与真实转存保持一致（预览列显示 ×）。需要按 fid 读取分享目录内容判断。
+        folder_match_cache = {}
+
+        def list_share_folder_children(folder_fid):
+            if not folder_fid:
+                return None
+            try:
+                detail = account.get_detail(pwd_id, stoken, folder_fid)
+            except Exception:
+                return None
+            if not isinstance(detail, dict) or detail.get("error"):
+                return None
+            children = detail.get("list")
+            return children if isinstance(children, list) else None
+
         def mark_filtered_files(file_list, set_name_re_x=False):
             kept = apply_task_file_filters(
                 file_list,
@@ -5802,9 +5818,13 @@ def get_share_detail():
                     "keep_regex": regex.get("keep_regex", ""),
                 },
                 config_data.get("task_settings") or {},
+                # 没有命中文件的文件夹同样标 ×（读不到目录内容时保守保留）
+                folder_lister=list_share_folder_children,
+                folder_match_cache=folder_match_cache,
             )
+            kept_ids = {id(item) for item in kept}
             for item in file_list:
-                if item not in kept:
+                if id(item) not in kept_ids:
                     item["filtered"] = True
                     if set_name_re_x:
                         item["file_name_re"] = "×"

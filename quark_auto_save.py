@@ -242,6 +242,23 @@ def advanced_filter_files(file_list, filterwords):
     return file_list
 
 
+def _compile_keep_regex(keep_regex, quiet=False):
+    """
+    编译任务级「正则规则」。
+
+    留空返回 None；正则非法时打印提示（quiet=True 时不打印）并返回 None。
+    """
+    if not keep_regex or not str(keep_regex).strip():
+        return None
+    rule = str(keep_regex).strip()
+    try:
+        return re.compile(rule)
+    except re.error as exc:
+        if not quiet:
+            print(f"[正则规则] 正则表达式无效，本次不启用：{rule}（{exc}）")
+        return None
+
+
 def filter_files_by_keep_regex(file_list, keep_regex):
     """
     任务级「正则规则」：只保留文件名匹配该正则的文件（过滤规则的反向规则）。
@@ -249,7 +266,8 @@ def filter_files_by_keep_regex(file_list, keep_regex):
     用于同一部资源分享了好几种规格（1080p/4K/mkv/mp4 等）时只转存其中一个。
 
     - 文件：file_name 命中（re.search，部分匹配即可）则保留，否则剔除；
-    - 文件夹：一律保留，是否递归由单文件夹分享 / 更新目录逻辑决定；
+    - 文件夹：这一层先原样保留，是否转存由 filter_folders_by_keep_regex 按
+      「文件夹里（含子文件夹）有没有命中文件」决定；读不到目录内容时保守保留；
     - 正则非法或留空：打印提示并原样返回，不影响原有转存行为。
 
     Args:
@@ -261,11 +279,8 @@ def filter_files_by_keep_regex(file_list, keep_regex):
     """
     if not file_list or not keep_regex or not str(keep_regex).strip():
         return file_list
-    rule = str(keep_regex).strip()
-    try:
-        pattern = re.compile(rule)
-    except re.error as exc:
-        print(f"[正则规则] 正则表达式无效，本次不启用：{rule}（{exc}）")
+    pattern = _compile_keep_regex(keep_regex)
+    if pattern is None:
         return file_list
     kept = []
     for item in file_list:
@@ -280,7 +295,145 @@ def filter_files_by_keep_regex(file_list, keep_regex):
     return kept
 
 
-def apply_task_file_filters(file_list, task=None, task_settings=None, apply_keep_regex=True):
+def folder_has_keep_regex_match(
+    list_children,
+    folder_fid,
+    pattern,
+    task=None,
+    task_settings=None,
+    cache=None,
+    max_depth=10,
+    max_folders=200,
+):
+    """
+    判断一个分享文件夹（含任意层级子文件夹）里是否有文件命中「正则规则」。
+
+    判定口径与转存引擎一致：每一层目录先应用全局过滤规则、任务过滤规则，
+    再从剩余文件里找匹配正则的文件；文件夹本身的名字不参与匹配。
+
+    Args:
+        list_children: 读取分享目录内容的回调，接收文件夹 fid，返回目录条目列表；
+            读取失败返回 None
+        folder_fid: 待判断的文件夹 fid
+        pattern: 已编译的「正则规则」
+        task: 任务配置（读取 filterwords）
+        task_settings: 全局任务设置（读取 filterwords）
+        cache: 结果缓存 {fid: bool}，同一任务/同一次预览内复用，避免重复请求
+        max_depth: 递归深度上限，超过后保守视为有命中
+        max_folders: 单次判断最多读取的文件夹数，超过后保守视为有命中
+
+    Returns:
+        True 表示有命中文件（或无法确认时保守返回 True），False 表示可以跳过该文件夹
+    """
+    if pattern is None or not folder_fid:
+        return True
+    cache = cache if cache is not None else {}
+
+    def _has_match(fid, depth):
+        if fid in cache:
+            return cache[fid]
+        if len(cache) >= max_folders:
+            # 探测次数到上限：保守保留，避免为超大分享发起过多请求
+            return True
+        try:
+            children = list_children(fid)
+        except Exception:
+            children = None
+        if not isinstance(children, list):
+            # 读取失败：保守保留，行为和未启用剪枝时一致
+            cache[fid] = True
+            return True
+        children = apply_task_file_filters(
+            [item for item in children if isinstance(item, dict)],
+            task,
+            task_settings,
+            apply_keep_regex=False,
+        )
+        sub_dirs = []
+        has_match = False
+        for item in children:
+            if item.get("dir"):
+                sub_dirs.append(item)
+            elif pattern.search(str(item.get("file_name", "") or "")):
+                has_match = True
+                break
+        if not has_match and sub_dirs:
+            if depth >= max_depth:
+                # 还有更深的子目录没读：无法确认是否命中，保守保留
+                has_match = True
+            else:
+                for sub_dir in sub_dirs:
+                    sub_fid = sub_dir.get("fid")
+                    if sub_fid and _has_match(sub_fid, depth + 1):
+                        has_match = True
+                        break
+        cache[fid] = has_match
+        return has_match
+
+    return _has_match(folder_fid, 0)
+
+
+def filter_folders_by_keep_regex(
+    file_list,
+    task=None,
+    task_settings=None,
+    list_children=None,
+    cache=None,
+    verbose=False,
+):
+    """
+    「正则规则」下的文件夹剪枝：文件夹里（含子文件夹）没有任何命中文件时整条剔除。
+
+    文件夹本身不参与正则匹配，但只要里面没有文件命中「正则规则」，该文件夹就不会
+    被转存——修复「没命中规则的文件夹也被转存（预览里还被重命名）」的问题。
+
+    Args:
+        file_list: 已按过滤规则/正则规则筛过的列表（文件夹条目此前是原样保留的）
+        task: 任务配置
+        task_settings: 全局任务设置
+        list_children: 读取分享目录内容的回调；为 None 时不做剪枝（保持原行为）
+        cache: 文件夹命中结果缓存
+        verbose: 是否打印被剪掉的文件夹
+
+    Returns:
+        剪枝后的列表
+    """
+    if not file_list or list_children is None:
+        return file_list
+    pattern = _compile_keep_regex((task or {}).get("keep_regex"), quiet=True)
+    if pattern is None:
+        return file_list
+    if not any(isinstance(item, dict) and item.get("dir") for item in file_list):
+        return file_list
+    kept = []
+    cache = cache if cache is not None else {}
+    for item in file_list:
+        if not isinstance(item, dict) or not item.get("dir"):
+            kept.append(item)
+            continue
+        if folder_has_keep_regex_match(
+            list_children,
+            item.get("fid"),
+            pattern,
+            task,
+            task_settings,
+            cache=cache,
+        ):
+            kept.append(item)
+        elif verbose:
+            print(f"📁 文件夹「{item.get('file_name', '')}」内没有命中正则规则的文件，跳过转存")
+    return kept
+
+
+def apply_task_file_filters(
+    file_list,
+    task=None,
+    task_settings=None,
+    apply_keep_regex=True,
+    folder_lister=None,
+    folder_match_cache=None,
+    folder_prune_verbose=False,
+):
     """
     先应用全局过滤规则，再应用任务级过滤规则（叠加，不合并字符串），
     最后应用任务级「正则规则」只保留匹配项（优先级最低：过滤规则先剔除的不再回来）。
@@ -291,6 +444,11 @@ def apply_task_file_filters(file_list, task=None, task_settings=None, apply_keep
         task_settings: 全局任务设置；缺省时使用 CONFIG_DATA["task_settings"]
         apply_keep_regex: 是否应用「正则规则」。本地保存目录的文件列表传 False：
             正则规则只决定"转存哪些分享文件"，不应影响本地已有文件的重命名。
+        folder_lister: 读取分享文件夹内容的回调（转存引擎 / 命名预览传入）：
+            「正则规则」下，里面没有任何命中文件的文件夹会被剔除；为 None 时
+            （如本地保存目录列表）不做剪枝，保持原行为。
+        folder_match_cache: 文件夹命中结果缓存，避免同一轮重复读取目录
+        folder_prune_verbose: 是否打印被剪掉的文件夹
     """
     settings = task_settings if task_settings is not None else CONFIG_DATA.get("task_settings", {})
     global_fw = (settings or {}).get("filterwords") or ""
@@ -301,7 +459,17 @@ def apply_task_file_filters(file_list, task=None, task_settings=None, apply_keep
         file_list = advanced_filter_files(file_list, task_fw)
     if not apply_keep_regex:
         return file_list
-    return filter_files_by_keep_regex(file_list, (task or {}).get("keep_regex"))
+    file_list = filter_files_by_keep_regex(file_list, (task or {}).get("keep_regex"))
+    if folder_lister is not None:
+        file_list = filter_folders_by_keep_regex(
+            file_list,
+            task,
+            settings,
+            folder_lister,
+            cache=folder_match_cache,
+            verbose=folder_prune_verbose,
+        )
+    return file_list
 
 
 def filter_files_by_episode_range(share_file_list, task):
@@ -2104,6 +2272,8 @@ class Quark:
         self.nickname = ""
         self.mparam = self._match_mparam_form_cookie(cookie)
         self.savepath_fid = {"/": "0"}
+        # 「正则规则」文件夹剪枝的目录内容缓存：{文件夹fid: 是否有命中文件}
+        self._keep_regex_folder_cache = {}
 
     def _match_mparam_form_cookie(self, cookie):
         mparam = {}
@@ -2356,6 +2526,18 @@ class Quark:
         if share_info is not None:
             data["share"] = share_info
         return data
+
+    def get_share_folder_children(self, pwd_id, stoken, folder_fid):
+        """
+        读取分享文件夹的子项，供「正则规则」判断文件夹里是否有命中文件。
+
+        返回目录条目列表；读取失败返回 None（调用方会保守保留该文件夹）。
+        """
+        detail = self.get_detail(pwd_id, stoken, folder_fid)
+        if not isinstance(detail, dict) or detail.get("error"):
+            return None
+        children = detail.get("list")
+        return children if isinstance(children, list) else None
 
     @staticmethod
     def parse_share_summary(share_detail):
@@ -3623,6 +3805,8 @@ class Quark:
     def do_save_task(self, task):
         # 每轮任务重置：更新目录下「转存轮询仅提示一次」（实例级，子任务 copy 不影响）
         self._transfer_poll_ui_done = False
+        # 每轮任务重置：「正则规则」文件夹剪枝的目录内容缓存
+        self._keep_regex_folder_cache = {}
         task.pop("_transfer_poll_progress_shown", None)  # 兼容旧版写在 task 上的键
         # 判断资源失效记录
         if task.get("shareurl_ban"):
@@ -3770,7 +3954,26 @@ class Quark:
         share_file_list.sort(key=sort_file_by_name, reverse=True)
 
         # 应用过滤词过滤（全局 + 任务级）
-        share_file_list = apply_task_file_filters(share_file_list, task)
+        # 「正则规则」下：文件夹里（含子文件夹）没有任何命中文件时整条不转存，
+        # 避免「没命中规则的文件夹被整包转存、预览里还被重命名」。
+        # 顺序/剧集命名模式、更新目录模式下的文件夹都会走递归转存，递归内部会执行
+        # 同样的剪枝，这里不再重复读取分享目录（省掉一轮重复请求）。
+        _is_naming_mode = bool(
+            (task.get("use_sequence_naming") and task.get("sequence_naming"))
+            or (task.get("use_episode_naming") and task.get("episode_naming"))
+        )
+        _skip_folder_probe = _is_naming_mode or bool(task.get("update_subdir"))
+        share_file_list = apply_task_file_filters(
+            share_file_list,
+            task,
+            folder_lister=(
+                None
+                if _skip_folder_probe
+                else lambda fid: self.get_share_folder_children(pwd_id, stoken, fid)
+            ),
+            folder_match_cache=getattr(self, "_keep_regex_folder_cache", None),
+            folder_prune_verbose=True,
+        )
 
         # 应用集数范围过滤：只转存配置区间内的集（episode_start/episode_end，含边界）
         # 仅在至少一个字段能解析为整数时启用，避免前端空字符串触发无意义的过滤与日志
