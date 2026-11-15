@@ -50,6 +50,8 @@ def empty_overview_task_stats():
         "status_ended": 0,
         "status_unmatched": 0,
         "failed_tasks": [],
+        "error_tasks": [],
+        "error_count": 0,
     }
 
 
@@ -250,25 +252,41 @@ def _failed_task_entry(task_name, ban_message):
     }
 
 
+def _error_task_entry(task_name, message, occurred_at=None):
+    """运行期错误任务条目：同一任务只出现一次，不带次数。"""
+    return {
+        "taskname": task_name,
+        "message": str(message or "").strip(),
+        "occurred_at": occurred_at,
+    }
+
+
 def compute_overview_task_stats(
     tasks,
     calendar_by_name=None,
     complete_by_name=None,
     today=None,
+    error_tasks_by_name=None,
 ):
     """按总览页口径汇总全部任务。
 
     calendar_by_name: 任务名 -> {content_type, matched_status, status, season_counts, match_tmdb_id, tmdb_id}
     complete_by_name: 任务名 -> 转存是否已全部完成（电影有记录 / 剧集转存数达总集数）
     today: YYYY-MM-DD，默认不统计「今日加入」除非传入
+    error_tasks_by_name: 任务名 -> {message, occurred_at}，运行期失败登记（每任务一条，不含次数）。
+        「待处理」= 分享失效未完成 ∪ 运行期出错未完成，两者按任务名去重。
     """
     stats = empty_overview_task_stats()
     calendar_by_name = calendar_by_name or {}
     complete_by_name = complete_by_name or {}
+    error_tasks_by_name = error_tasks_by_name or {}
     failed_tasks = []
+    error_tasks = []
+    failed_names = set()
 
     if not tasks:
         stats["failed_tasks"] = failed_tasks
+        stats["error_tasks"] = error_tasks
         return stats
 
     for task in tasks:
@@ -297,6 +315,15 @@ def compute_overview_task_stats(
         ban = task.get("shareurl_ban")
         if (not is_complete) and should_count_shareurl_ban(ban):
             failed_tasks.append(_failed_task_entry(name, ban))
+            if name:
+                failed_names.add(name)
+
+        # 运行期失败登记：同一任务反复失败只有一条，转存已完成的不再提示
+        error_entry = error_tasks_by_name.get(name) if name else None
+        if error_entry and not is_complete:
+            error_tasks.append(_error_task_entry(
+                name, error_entry.get("message"), error_entry.get("occurred_at")
+            ))
 
         status = resolve_task_status(task, cal_task)
         is_status_completed = is_task_completed_by_status_and_progress(status, progress, season_counts)
@@ -312,6 +339,13 @@ def compute_overview_task_stats(
         elif not is_matched:
             stats["status_unmatched"] += 1
 
-    stats["failed_count"] = len(failed_tasks)
+    # 两类待处理按任务名取并集：同一任务既失效又出错时只算一个任务。
+    # 分享失效清单保持原样逐条计数（无任务名的旧数据也照旧计入），
+    # 运行期错误只补上「还没被判失效」的任务，避免同一任务被重复计数。
+    extra_error_names = {e["taskname"] for e in error_tasks if e["taskname"]}
+    extra_error_names -= failed_names
+    stats["failed_count"] = len(failed_tasks) + len(extra_error_names)
     stats["failed_tasks"] = failed_tasks
+    stats["error_tasks"] = error_tasks
+    stats["error_count"] = len(error_tasks)
     return stats

@@ -60,6 +60,15 @@ except ImportError:
             def upsert_task_metrics(self, *args, **kwargs):
                 pass
 
+            def upsert_task_error(self, *args, **kwargs):
+                return False
+
+            def clear_task_error(self, *args, **kwargs):
+                return 0
+
+            def get_task_errors(self, *args, **kwargs):
+                return []
+
             def close(self):
                 pass
 
@@ -1716,9 +1725,163 @@ def send_ql_notify(title, body):
             print("发送通知消息失败！")
 
 
+# ---------------------------------------------------------------------------
+# 运行期任务错误登记（只记「哪些任务出错」，不记次数）
+# ---------------------------------------------------------------------------
+# 同一任务反复失败（定时周期短、重试多次）只保留一行：总览页「有 N 个任务需要你处理」
+# 统计的是出错任务数，次数对用户没有意义。
+_TASK_ERROR_STATE = {
+    "taskname": "",
+    "save_path": "",
+    "attempted": False,
+    "failed": False,
+    "message": "",
+    "recorded": False,   # 本轮是否已经写过 DB（避免同一任务多条失败日志重复写库/重复通知）
+}
+
+
+def _task_error_db():
+    try:
+        return CalendarDB()
+    except Exception:
+        return None
+
+
+def _record_task_error(task_name, save_path, message, source="runner"):
+    """登记任务错误（同名 + 同路径覆盖写，不累计次数）。"""
+    name = str(task_name or "").strip()
+    if not name:
+        return False
+    try:
+        db = _task_error_db()
+        if db is None:
+            return False
+        try:
+            ok = db.upsert_task_error(
+                name, message, save_path=save_path, source=source
+            )
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+        if ok:
+            # 通知已打开的页面刷新待处理数量（SSE 不可用时前端仍会自行刷新）
+            try:
+                notify_calendar_changed_safe("task_error")
+            except Exception:
+                pass
+        return bool(ok)
+    except Exception as e:
+        print(f"登记任务错误失败: {e}")
+        return False
+
+
+def _clear_task_error(task_name, save_path=None):
+    """清除任务错误登记（任务跑通 / 修好链接 / 删除任务时调用）。"""
+    name = str(task_name or "").strip()
+    if not name:
+        return 0
+    try:
+        db = _task_error_db()
+        if db is None:
+            return 0
+        try:
+            cleared = db.clear_task_error(name, save_path=save_path)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+        if cleared:
+            try:
+                notify_calendar_changed_safe("task_error")
+            except Exception:
+                pass
+        return int(cleared or 0)
+    except Exception:
+        return 0
+
+
+def _is_failure_notify_line(text):
+    """判断一条通知是否为任务失败/错误提示（与 add_notify 的推送分级同口径）。"""
+    if not text:
+        return False
+    body = str(text)
+    if body.startswith("❌") or body.startswith("❗"):
+        return True
+    if body.startswith("✅"):
+        return False
+    # 文件树行里的“失败”可能只是文件名的一部分，不能当作任务失败
+    if "├── " in body or "└── " in body:
+        return False
+    return any(key in body for key in ("失败", "失效", "错误", "异常", "无效"))
+
+
+def _begin_task_run(task):
+    """任务循环的光标：上一个任务没失败就清掉它的历史错误登记。"""
+    _finish_task_run()
+    _TASK_ERROR_STATE.update({
+        "taskname": str((task or {}).get("taskname") or (task or {}).get("task_name") or "").strip(),
+        "save_path": (task or {}).get("savepath") or (task or {}).get("save_path") or "",
+        "attempted": False,
+        "failed": False,
+        "message": "",
+        "recorded": False,
+    })
+
+
+def _mark_task_attempted():
+    """标记当前任务真的执行过（被周期/已完成跳过的不算）。"""
+    _TASK_ERROR_STATE["attempted"] = True
+
+
+def _mark_task_failed(message):
+    """记录当前任务本轮失败文案（同一任务只保留最后一条）。
+
+    同一任务本轮可能连续产生多条失败日志（失效 + 转存失败…），
+    只在第一条时写库并通知页面，后续只更新内存里的最终文案，
+    避免刷库与刷 SSE。
+    """
+    text = str(message or "").strip()
+    if not text:
+        text = "任务执行失败"
+    _TASK_ERROR_STATE["failed"] = True
+    _TASK_ERROR_STATE["message"] = text
+    if _TASK_ERROR_STATE.get("recorded"):
+        return
+    _TASK_ERROR_STATE["recorded"] = True
+    _record_task_error(
+        _TASK_ERROR_STATE.get("taskname"),
+        _TASK_ERROR_STATE.get("save_path"),
+        text,
+    )
+
+
+def _finish_task_run():
+    """收尾当前任务：执行过且没有失败 → 之前的错误登记已经解决，清掉。"""
+    name = _TASK_ERROR_STATE.get("taskname") or ""
+    if not name:
+        _TASK_ERROR_STATE.update({
+            "taskname": "", "save_path": "", "attempted": False, "failed": False,
+            "message": "", "recorded": False,
+        })
+        return
+    if _TASK_ERROR_STATE.get("attempted") and not _TASK_ERROR_STATE.get("failed"):
+        _clear_task_error(name, save_path=_TASK_ERROR_STATE.get("save_path") or None)
+    _TASK_ERROR_STATE.update({
+        "taskname": "", "save_path": "", "attempted": False, "failed": False,
+        "message": "", "recorded": False,
+    })
+
+
 # 添加消息
 def add_notify(text):
     global NOTIFYS
+    # 失败提示顺手登记到「出错任务」表：复用同一条通知，不再在每个失败分支各写一遍。
+    # 同一任务反复失败只覆盖一行，所以总览统计的是任务数而不是次数。
+    if _is_failure_notify_line(text) and _TASK_ERROR_STATE.get("taskname"):
+        _mark_task_failed(text)
     # 防止重复添加相同的通知
     # 但是对于文件树显示，允许相同文本（因为可能是不同目录下的同名文件）
     # 通过检查文本是否包含文件树前缀（├── 或 └──）来判断
@@ -6294,6 +6457,8 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
 
     # 执行任务
     for index, task in enumerate(tasklist):
+        # 任务错误登记光标：上一个任务成功则清掉它的历史错误，本任务失败会写回
+        _begin_task_run(task)
         # 检查环境变量获取真实的任务索引（用于显示）
         if len(tasklist) == 1 and os.environ.get("ORIGINAL_TASK_INDEX"):
             try:
@@ -6438,8 +6603,15 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                         else "全部集数"
                     )
                     print(f"⏭️ 《{task['taskname']}》已转存 {count_text}，无需追更，跳过链接有效性检测")
+                # 已全部完成的任务不再算「需要处理」：清掉历史错误登记
+                _clear_task_error(task.get("taskname"), save_path=task.get("savepath") or None)
+                _TASK_ERROR_STATE.update({"attempted": False, "failed": False, "message": ""})
                 continue
 
+            # 真的执行了本任务（被周期/完成态跳过的不算，不能据此清错误）。
+            # 不在开跑前预清：本轮若再次失败会覆盖同一行，若跑通由 _finish_task_run
+            # 收尾清除；预清只会让页面数字抖动一下（先归零再回弹）。
+            _mark_task_attempted()
             # 执行保存任务
             is_new_tree = account.do_save_task(task)
             
@@ -8145,6 +8317,8 @@ def do_save(account, tasklist=[], ignore_execution_rules=False):
                         )
             elif is_new_tree is False:  # 明确没有新文件
                 print("任务完成: 没有新的文件需要转存")
+        # 本任务收尾：跑过且未失败 → 之前的错误登记已解决
+        _finish_task_run()
     print()
 
 
@@ -8226,10 +8400,21 @@ def main():
         if tasklist_from_env:
             # 若通过环境变量传入任务列表，视为手动运行，可由外层控制是否忽略执行周期/进度限制
             ignore_execution_rules = os.environ.get("IGNORE_EXECUTION_RULES", "").lower() in ["1", "true", "yes"]
-            do_save(accounts[0], tasklist_from_env, ignore_execution_rules=ignore_execution_rules)
+            try:
+                do_save(accounts[0], tasklist_from_env, ignore_execution_rules=ignore_execution_rules)
+            except Exception as e:
+                # 任务循环里抛出的意外异常：把当前任务记成出错，避免页面毫无提示
+                _mark_task_failed(f"执行异常: {e}")
+                _finish_task_run()
+                raise
         else:
             # 定时任务或命令行全量运行，始终遵循执行周期/进度规则
-            do_save(accounts[0], CONFIG_DATA.get("tasklist", []), ignore_execution_rules=False)
+            try:
+                do_save(accounts[0], CONFIG_DATA.get("tasklist", []), ignore_execution_rules=False)
+            except Exception as e:
+                _mark_task_failed(f"执行异常: {e}")
+                _finish_task_run()
+                raise
         print()
     # 通知
     if NOTIFYS:

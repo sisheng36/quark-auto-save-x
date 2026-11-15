@@ -2561,6 +2561,27 @@ html.theme-light .tasklist-batch-bar {
   background: rgba(52, 211, 153, 0.1);
   border-color: rgba(52, 211, 153, 0.28);
 }
+/* 首屏统计还没回来：显示“正在统计”而不是先闪一下“暂无待处理任务” */
+.tasklist-dashboard-alert-loading {
+  color: var(--text-secondary);
+  background: rgba(148, 163, 184, 0.1);
+  border-color: rgba(148, 163, 184, 0.26);
+}
+.tasklist-dashboard-alert-spin {
+  animation: tasklist-alert-spin 1s linear infinite;
+}
+@keyframes tasklist-alert-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tasklist-dashboard-alert-spin { animation: none; }
+}
+html.theme-light .tasklist-dashboard-alert-loading {
+  color: #475569;
+  background: rgba(71, 85, 105, 0.08);
+  border-color: rgba(71, 85, 105, 0.22);
+}
 /* 待处理预警条可点击：文案后追加「去处理」，悬停加深 */
 .tasklist-dashboard-alert-action {
   cursor: pointer;

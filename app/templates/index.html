@@ -50,7 +50,7 @@
   <link rel="preload" as="font" type="font/woff2" href="./static/css/fonts/bootstrap-icons.woff2" crossorigin>
   <link rel="stylesheet" href="./static/css/bootstrap.min.css?v=1">
   <link rel="stylesheet" href="./static/css/bootstrap-icons.subset.css?v=3">
-  <link rel="stylesheet" href="./static/css/main.css?v=86">
+  <link rel="stylesheet" href="./static/css/main.css?v=87">
   <!-- 站点图标：浏览器标签页 favicon + iOS 添加到主屏幕图标 -->
   <link rel="icon" href="./static/images/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="./static/images/apple-touch-icon.png">
@@ -1067,7 +1067,7 @@
                     <div class="tasklist-dashboard-label">今日加入</div>
                   </div>
                 </div>
-                <div class="tasklist-dashboard-item" title="分享链接已失效且转存尚未完成的任务数；转存已完成或临时网络错误不计入">
+                <div class="tasklist-dashboard-item" title="分享链接失效或执行出错且转存尚未完成的任务数；同一任务多次失败只算一个，转存已完成或临时网络错误不计入">
                   <div class="tasklist-dashboard-icon tasklist-icon-failed"><i class="bi bi-exclamation-triangle"></i></div>
                   <div class="tasklist-dashboard-meta">
                     <div class="tasklist-dashboard-number">{{ overviewStats.failedCount }}</div>
@@ -1075,14 +1075,20 @@
                   </div>
                 </div>
               </div>
+              <div class="tasklist-dashboard-alert tasklist-dashboard-alert-loading"
+                   v-if="!overviewShareBanLoaded"
+                   title="正在读取待处理任务统计">
+                <i class="bi bi-arrow-repeat tasklist-dashboard-alert-spin"></i>
+                <span>正在统计待处理任务…</span>
+              </div>
               <div class="tasklist-dashboard-alert tasklist-dashboard-alert-action"
-                   v-if="overviewStats.failedCount > 0"
+                   v-else-if="overviewStats.failedCount > 0"
                    role="button"
                    tabindex="0"
                    @click="showFailedTasks"
                    @keydown.enter.prevent="showFailedTasks"
                    @keydown.space.prevent="showFailedTasks"
-                   title="分享链接已失效且转存尚未完成的任务数；转存已完成或临时网络错误不计入。点击进入任务列表并筛出这些任务">
+                   title="分享链接失效或执行出错且转存尚未完成的任务数；同一任务多次失败只算一个，转存已完成或临时网络错误不计入。点击进入任务列表并筛出这些任务">
                 <i class="bi bi-exclamation-triangle-fill"></i>
                 <span>有 <b>{{ overviewStats.failedCount }}</b> 个任务需要你处理</span>
                 <span class="tasklist-dashboard-alert-go">去处理<i class="bi bi-chevron-right"></i></span>
@@ -1576,9 +1582,9 @@
                 </div>
               <!-- 当前筛选把待处理失败任务全部挡住了：给出直达入口，避免误判“没有失败任务” -->
             <div class="tasklist-filter-empty-hint alert alert-warning" role="alert"
-                 v-if="shouldShowTasklist && overviewStats.failedCount > 0 && !isFailedFilterActive && tasklistVisibleCount === 0 && failedTaskCount > 0">
+                 v-if="shouldShowTasklist && overviewShareBanLoaded && !isFailedFilterActive && tasklistVisibleCount === 0 && failedTaskCount > 0">
               <i class="bi bi-exclamation-triangle-fill"></i>
-              <span>当前筛选条件下没有可显示的任务，但有 <b>{{ failedTaskCount }}</b> 个任务的分享链接已失效需要处理。</span>
+              <span>当前筛选条件下没有可显示的任务，但有 <b>{{ failedTaskCount }}</b> 个任务需要处理（分享失效或执行出错）。</span>
               <button type="button" class="btn btn-sm btn-warning ml-2" @click="showFailedTasks">查看失败任务</button>
             </div>
             </template>

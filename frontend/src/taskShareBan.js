@@ -124,10 +124,36 @@ export function isTaskShareBanPending(task, options) {
 }
 
 /**
+ * 运行期错误是否已经不该再占用「待处理」：
+ * 任务重新跑通（转存完成后服务端会清掉登记，这里只兜底前端已知的完成态）或
+ * 分享链接已被本地修好时，旧错误不再提示。
+ */
+export function isTaskErrorStillPending(task, options) {
+  try {
+    const opts = options || {};
+    if (!task) return false;
+    if (!taskDisplayName(task)) return false;
+    const calendarTask = opts.calendarTask || null;
+    const counts = opts.seasonCounts !== undefined
+      ? opts.seasonCounts
+      : normalizeSeasonCounts(task.season_counts);
+    // 转存已全部完成的任务不再需要处理
+    return !isTaskTransferComplete(task, calendarTask, counts);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * 按任务名归集「待处理」任务名，供筛选与角标使用。
+ *
+ * 待处理 = 分享失效且转存未完成（与总览「待处理」原口径一致）
+ *          ∪ 运行期登记过错误且仍未完成的任务。
+ * 两者都按任务名去重：同一任务失败多次只算一个任务。
  * @param {Array} tasklist 任务列表
  * @param {object} options
  * @param {object} options.banByTaskName 任务名 -> 失效文案（来自总览接口 failed_tasks）
+ * @param {object} options.errorByTaskName 任务名 -> 运行期错误文案（来自总览接口 error_tasks）
  * @param {object} options.seasonCountsByTaskName 任务名 -> 已归一化集数
  * @param {function} options.getCalendarTask 任务名 -> 日历任务
  * @returns {{names: Set<string>, count: number}}
@@ -135,6 +161,7 @@ export function isTaskShareBanPending(task, options) {
 export function collectFailedTaskNames(tasklist, options) {
   const opts = options || {};
   const banByTaskName = opts.banByTaskName || {};
+  const errorByTaskName = opts.errorByTaskName || {};
   const seasonCountsByTaskName = opts.seasonCountsByTaskName || {};
   const getCalendarTask = typeof opts.getCalendarTask === 'function' ? opts.getCalendarTask : () => null;
   const names = new Set();
@@ -149,6 +176,11 @@ export function collectFailedTaskNames(tasklist, options) {
       ? seasonCountsByTaskName[name]
       : normalizeSeasonCounts(task.season_counts);
     if (isTaskShareBanPending(task, { banMessage, calendarTask, seasonCounts: counts })) {
+      names.add(name);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(errorByTaskName, name)
+        && isTaskErrorStillPending(task, { calendarTask, seasonCounts: counts })) {
       names.add(name);
     }
   });

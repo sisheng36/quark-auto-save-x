@@ -1844,6 +1844,246 @@ except Exception as e:
     logging.warning(f"初始化运行日志文件处理器失败: {e}")
 
 
+# ---------------------------------------------------------------------------
+# 修复后自动重跑：用户换掉失效/出错的分享链接并保存时，后台立刻跑一次该任务
+# ---------------------------------------------------------------------------
+# 换链保存后任务本身已经从「待处理」里消失，若只等定时任务，用户会以为没生效。
+# 这里在保存落盘后异步跑一次单任务（复用 /run_script_now 的 TASKLIST 通道），
+# 结果通过 running log + SSE 回传，页面上「待处理」数字会随之收敛。
+_auto_rerun_lock = Lock()
+_auto_rerun_pending = {}   # 任务名 -> {task, reason, original_index}：同一任务只保留一次待跑
+_auto_rerun_thread = None
+
+
+def _task_needs_auto_rerun(task_name, save_path=None, now=None):
+    """该任务是否仍有未解决的运行期错误（换链后自动重跑只针对这些任务）。"""
+    try:
+        db = CalendarDB()
+        try:
+            rows = db.get_task_errors() or []
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        logging.debug(f"自动重跑：读取任务错误登记失败: {exc}")
+        return False
+    name = str(task_name or "").strip()
+    if not name:
+        return False
+    want_path = normalize_save_path(save_path or "")
+    for row in rows:
+        if str(row.get("taskname") or "").strip() != name:
+            continue
+        row_path = normalize_save_path(row.get("save_path") or "")
+        # 路径为空的历史行：任务名唯一时同样算未解决
+        if not want_path or not row_path or row_path == want_path:
+            return True
+    return False
+
+
+def _build_single_task_payload(task):
+    """构造 TASKLIST 环境变量用的单任务载荷（与 /run_script_now 同口径）。"""
+    if not isinstance(task, dict):
+        return None
+    payload = {k: v for k, v in task.items() if k not in ("runweek", "enddate")}
+    if not (payload.get("taskname") or payload.get("task_name")):
+        return None
+    return payload
+
+
+def _run_single_task_once(task, reason="", original_index=None):
+    """同步跑一次单任务（阻塞到子进程结束），日志走运行日志。
+
+    这是自动重跑的最小实现：不做重试，失败由下一轮登记继续提示。
+    """
+    payload = _build_single_task_payload(task)
+    if not payload:
+        logging.warning(f"自动重跑跳过：任务数据不完整（{reason}）")
+        return False
+    task_name = payload.get("taskname") or payload.get("task_name") or ""
+    process_env = os.environ.copy()
+    process_env["PYTHONIOENCODING"] = "utf-8"
+    process_env["TASKLIST"] = json.dumps([payload], ensure_ascii=False)
+    # 单任务重跑要忽略执行周期/进度限制，否则刚修好的任务可能又被周期挡回去
+    process_env["IGNORE_EXECUTION_RULES"] = "1"
+    if original_index is not None:
+        process_env["ORIGINAL_TASK_INDEX"] = str(original_index)
+    command = [PYTHON_PATH, "-u", SCRIPT_PATH, CONFIG_PATH]
+    logging.info(f"🔄 自动重跑任务 [{task_name}]（{reason or '换链修复'}）")
+    last_was_empty = False
+    process = None
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=process_env,
+        )
+        for line in iter(process.stdout.readline, ""):
+            stripped_line = line.rstrip()
+            is_empty = not stripped_line
+            if is_empty and last_was_empty:
+                continue
+            if is_empty:
+                logging.info("")
+                last_was_empty = True
+            else:
+                _log_subprocess_line(stripped_line)
+                last_was_empty = False
+        returncode = process.wait()
+        if returncode == 0:
+            logging.info(f">>> 自动重跑任务 [{task_name}] 执行成功")
+        else:
+            logging.warning(f">>> 自动重跑任务 [{task_name}] 执行完成但返回非零退出码: {returncode}")
+        return returncode == 0
+    except Exception as exc:
+        logging.warning(f">>> 自动重跑任务 [{task_name}] 执行异常: {exc}")
+        return False
+    finally:
+        try:
+            if process is not None and process.stdout is not None:
+                process.stdout.close()
+        except Exception:
+            pass
+        # 无论成功失败都通知前端刷新「待处理」数字
+        try:
+            notify_calendar_changed('manual_task_completed')
+        except Exception:
+            pass
+
+
+def _detect_shareurl_fixed_tasks(old_task_map_snapshot):
+    """找出「这次保存换了分享链接、且原本确实待处理」的任务。
+
+    判定条件（都要满足才算修好，避免用户顺手换个链接就平白跑一次转存）：
+      - 旧链接与新链接都存在且不同；
+      - 旧链接当时被判失效（shareurl_ban），或该任务仍挂着运行期错误登记。
+
+    返回任务 dict 列表，并顺手清掉这些任务的历史错误登记——
+    换链本身就是「用户已修复」，总览不必等任务跑完才收敛。
+    """
+    try:
+        old_map = old_task_map_snapshot or {}
+    except Exception:
+        return []
+    if not old_map:
+        return []
+    current_tasks = [t for t in (config_data.get("tasklist") or []) if isinstance(t, dict)]
+    current_by_name = {}
+    for task in current_tasks:
+        name = (task.get("taskname") or task.get("task_name") or "").strip()
+        if name:
+            current_by_name[name] = task
+    fixed = []
+    cleared = 0
+    for name, info in old_map.items():
+        task = current_by_name.get(name)
+        if not task:
+            continue  # 任务被删掉了，交给删除清理流程
+        new_url = (task.get("shareurl") or "").strip()
+        old_url = (info.get("shareurl") or "").strip()
+        if not old_url or not new_url or old_url == new_url:
+            continue
+        save_path = task.get("savepath") or task.get("save_path") or ""
+        was_banned = bool(str(info.get("shareurl_ban") or "").strip())
+        has_error = _task_needs_auto_rerun(name, save_path)
+        if not (was_banned or has_error):
+            continue
+        fixed.append(task)
+        try:
+            db = CalendarDB()
+            try:
+                cleared += int(db.clear_task_error(name, save_path=save_path or None) or 0)
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+        except Exception as exc:
+            logging.debug(f"换链后清除任务错误登记失败（{name}）: {exc}")
+    if cleared:
+        try:
+            notify_calendar_changed("task_error")
+        except Exception:
+            pass
+    return fixed
+
+
+def _auto_rerun_worker():
+    """后台线程：串行消费待重跑任务，避免同时起多个子进程打爆夸克接口。"""
+    global _auto_rerun_thread
+    while True:
+        with _auto_rerun_lock:
+            if not _auto_rerun_pending:
+                _auto_rerun_thread = None
+                return
+            name = next(iter(_auto_rerun_pending))
+            item = _auto_rerun_pending.pop(name)
+        try:
+            _run_single_task_once(
+                item.get("task"), reason=item.get("reason"), original_index=item.get("original_index")
+            )
+        except Exception as exc:
+            logging.warning(f"自动重跑任务 [{name}] 失败: {exc}")
+
+
+def _schedule_task_auto_rerun(tasks, reason="换链修复", delay_seconds=0.0, require_pending=True):
+    """把任务排进自动重跑队列（同一任务名去重，后到的覆盖先到的）。
+
+    tasks: 单个任务 dict 或任务列表。
+    require_pending=True 时只把「仍有未解决错误」的任务排进去，
+    避免用户改无关配置也被重跑；换链路径已在保存时判定过，传 False 跳过二次过滤
+    （那时错误登记刚被清掉，再查一定是空的）。
+    """
+    global _auto_rerun_thread
+    candidates = tasks if isinstance(tasks, (list, tuple)) else [tasks]
+    queued = 0
+    for task in candidates:
+        payload = _build_single_task_payload(task)
+        if not payload:
+            continue
+        name = payload.get("taskname") or payload.get("task_name")
+        save_path = payload.get("savepath") or payload.get("save_path") or ""
+        if require_pending and not _task_needs_auto_rerun(name, save_path):
+            continue
+        try:
+            original_index = None
+            for idx, item in enumerate(config_data.get("tasklist") or []):
+                if (item.get("taskname") or item.get("task_name")) == name:
+                    original_index = idx + 1
+                    break
+        except Exception:
+            original_index = None
+        with _auto_rerun_lock:
+            _auto_rerun_pending[name] = {
+                "task": payload,
+                "reason": reason,
+                "original_index": original_index,
+            }
+            queued += 1
+        if not _auto_rerun_thread:
+            def _start(delay=delay_seconds):
+                global _auto_rerun_thread
+                if delay and delay > 0:
+                    time.sleep(delay)
+                with _auto_rerun_lock:
+                    if _auto_rerun_thread:
+                        return
+                    _auto_rerun_thread = Thread(target=_auto_rerun_worker, daemon=True)
+                    thread = _auto_rerun_thread
+                thread.start()
+            Thread(target=_start, daemon=True).start()
+    if queued:
+        logging.info(f"已排队 {queued} 个任务等待自动重跑（{reason}）")
+    return queued
+
+
 def _log_subprocess_line(stripped_line: str) -> None:
     """将子进程 stdout 按 [LEVEL] 前缀分级写入日志（与 quark_auto_save 的 logging 格式对齐）。"""
     if stripped_line.startswith("[DEBUG]"):
@@ -3781,6 +4021,8 @@ def update():
             old_task_map[name] = {
                 "tmdb_id": match.get("tmdb_id") or cal.get("tmdb_id"),
                 "save_path": t.get("savepath") or t.get("save_path") or "",
+                # 记下旧链接：保存时换了链接说明用户自己修了失效/出错的分享
+                "shareurl": (t.get("shareurl") or "").strip(),
             }
     
     # 记录旧的海报语言设置
@@ -4048,6 +4290,9 @@ def update():
         except Exception as e:
             logging.warning(f"自动初始化 bootstrap 失败: {e}")
 
+    # 换链修复的自动重跑必须等配置落盘、reload_tasks 之后才启动，
+    # 否则子进程读到的是旧链接（下面 reload_tasks 成功分支里统一触发）。
+
     threading.Thread(target=_post_update_tasks, args=(old_task_map, prev_tmdb, new_tmdb, old_poster_language, old_aired_refresh_time, old_trakt_client_id, new_trakt_client_id), daemon=True).start()
     
     # 确保性能配置包含秒级字段
@@ -4085,9 +4330,31 @@ def update():
         
         # 立即启动新任务的异步处理，不等待
         threading.Thread(target=process_new_tasks_async, daemon=True).start()
-        
+
+        # 用户换掉失效/出错的分享链接：这里识别出来，在后台自动跑一次该任务。
+        # 换链后任务立刻从「待处理」消失，只等定时任务的话用户会以为修复没生效。
+        auto_rerun_tasks = []
+        try:
+            auto_rerun_tasks = _detect_shareurl_fixed_tasks(old_task_map)
+        except Exception as e:
+            logging.warning(f"识别换链修复任务失败: {e}")
+        if auto_rerun_tasks:
+            try:
+                _schedule_task_auto_rerun(
+                    auto_rerun_tasks,
+                    reason="换链修复后自动重跑",
+                    delay_seconds=2.0,
+                    require_pending=False,
+                )
+            except Exception as e:
+                logging.warning(f"安排换链任务自动重跑失败: {e}")
+
         logging.info(">>> 配置更新成功")
-        return jsonify({"success": True, "message": "配置更新成功"})
+        return jsonify({
+            "success": True,
+            "message": "配置更新成功",
+            "auto_rerun_tasks": [t.get("taskname") or t.get("task_name") for t in auto_rerun_tasks],
+        })
     else:
         logging.info(">>> 配置更新失败")
         return jsonify({"success": False, "message": "配置更新失败"})
@@ -6956,6 +7223,56 @@ def refresh_incomplete_share_bans(tasklist, complete_by_name):
         _overview_share_refresh_lock.release()
 
 
+def load_runtime_task_errors():
+    """读取运行期任务错误登记（每个出错任务一行，不含失败次数）。
+
+    只在任务仍存在于配置里时返回：删任务时错误行已随手清理，这里再兜底过滤一次，
+    避免历史脏数据让「待处理」永远大于 0。
+    """
+    tasklist = (config_data or {}).get("tasklist", []) if isinstance(config_data, dict) else []
+    # 任务名 -> 当前配置里的保存路径集合：任务改过保存路径后，旧路径上的错误行
+    # 不能继续算在这条任务头上，否则「待处理」会一直清不掉。
+    paths_by_name = {}
+    for task in (tasklist or []):
+        name = task_display_name(task)
+        if not name:
+            continue
+        path = normalize_save_path(task.get("savepath") or task.get("save_path") or "")
+        paths_by_name.setdefault(name, set()).add(path)
+    if not paths_by_name:
+        return {}
+    by_name = {}
+    db = None
+    try:
+        db = CalendarDB()
+        for row in db.get_task_errors() or []:
+            name = str(row.get("taskname") or "").strip()
+            if not name or name not in paths_by_name:
+                continue
+            row_path = normalize_save_path(row.get("save_path") or "")
+            known_paths = paths_by_name.get(name) or set()
+            # 旧版本没存路径的空值行：仅在该任务名唯一时沿用（与转存记录归属同口径）
+            if row_path:
+                if row_path not in known_paths:
+                    continue
+            elif len(known_paths) > 1:
+                continue
+            # 每任务一条：同名多季也合并到任务名维度，与「待处理」计数口径一致
+            by_name.setdefault(name, {
+                "message": row.get("message") or "",
+                "occurred_at": row.get("occurred_at"),
+            })
+    except Exception as exc:
+        logging.debug(f"读取任务错误登记失败: {exc}")
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+    return by_name
+
+
 # 总览页：任务看板统计（类型/追更中/今日加入/待处理/状态分布）
 @app.route("/overview_task_stats")
 def get_overview_task_stats():
@@ -6973,6 +7290,7 @@ def get_overview_task_stats():
             calendar_by_name=calendar_by_name,
             complete_by_name=complete_by_name,
             today=today,
+            error_tasks_by_name=load_runtime_task_errors(),
         )
         return jsonify({"success": True, "data": stats})
     except Exception as exc:

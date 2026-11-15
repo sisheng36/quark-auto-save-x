@@ -44,6 +44,7 @@
     return {
       tvCount: 0, animeCount: 0, documentaryCount: 0, varietyCount: 0,
       movieCount: 0, otherCount: 0, ongoingCount: 0, todayCount: 0, failedCount: 0,
+      errorCount: 0,
       statusCompleted: 0, statusAiring: 0, statusFinale: 0, statusEnded: 0,
       statusUnmatched: 0
     };
@@ -60,6 +61,7 @@
       ongoingCount: d.ongoing_count || 0,
       todayCount: d.today_count || 0,
       failedCount: d.failed_count || 0,
+      errorCount: d.error_count || 0,
       statusCompleted: d.status_completed || 0,
       statusAiring: d.status_airing || 0,
       statusFinale: d.status_finale || 0,
@@ -520,6 +522,9 @@ export default {
         // 总览页：任务看板统计（由 /overview_task_stats 填充，浏览器只展示）
         overviewTaskStats: emptyOverviewTaskStats(),
         overviewShareBanByTaskName: {},
+        // 运行期任务错误登记（任务名 -> {message, occurred_at}）：同一任务只有一条，
+        // 用来把「执行失败」也算进待处理；不记录失败次数
+        overviewErrorByTaskName: {},
         _overviewTaskStatsInflight: {},
         _overviewGreetingTimer: null,
         // 标志：当由后端推送或编辑元数据保存触发的程序性更新时，暂时抑制未保存提示
@@ -865,6 +870,12 @@ export default {
         appSSEInitialized: false,
         calendarSSEListenerAdded: false,
         tasklistSSEListenerAdded: false,
+        overviewStatsSSEListenerAdded: false,
+        // 待处理统计刷新去抖句柄 / 首次请求失败只自动重试一次
+        _overviewStatsRefreshTimer: null,
+        _overviewStatsRetried: false,
+        // 换链修复后自动重跑的兜底轮询句柄（后端跑完前持续刷新「待处理」）
+        _fixedTaskWatchTimer: null,
         // 存放已绑定的事件处理器，便于避免重复绑定
         onCalendarChangedHandler: null,
         onTasklistChangedHandler: null,
@@ -1110,8 +1121,9 @@ export default {
           return visible.every(task => this.tasklist.selectedTaskNames.includes(task.taskname || task.task_name));
         },
 
-        // 失败任务筛选：按任务名归集「分享失效且转存未完成」的任务
-        // 口径与总览页「待处理」一致（服务端 failed_tasks 已做过完成度/可恢复错误过滤）。
+        // 失败任务筛选：按任务名归集「待处理」任务
+        // 口径与总览页「待处理」一致 = 分享失效未完成 ∪ 运行期执行出错且未完成。
+        // 两者都按任务名去重，同一任务失败多次仍只算一个（服务端已过滤可恢复错误/已完态）。
         // 注意：必须定义在 computed 块内，且不要与 methods 同名（Vue 3 下 methods 会覆盖 computed）。
         failedTaskNameSet() {
           try {
@@ -1128,6 +1140,7 @@ export default {
             });
             return collectFailedTaskNames(this.formData.tasklist, {
               banByTaskName: this.overviewShareBanByTaskName || {},
+              errorByTaskName: this.overviewErrorByTaskName || {},
               seasonCountsByTaskName,
               getCalendarTask: name => (this.getCalendarTaskByName ? this.getCalendarTaskByName(name) : null)
             }).names;
@@ -2103,6 +2116,24 @@ export default {
               // 如果连接长时间无法恢复，EventSource 会继续尝试重连
               // 重连成功后，onopen 会被触发，轮询会被停止
             };
+            // 全局监听：任务失败登记变化 / 一轮任务跑完时刷新「待处理」统计。
+            // 总览页不一定在用任务列表或日历的监听，这里单独挂一个轻量刷新，
+            // 失败的瞬间页面上的数字就能更新，不用手动切标签页。
+            if (!this.overviewStatsSSEListenerAdded) {
+              this.overviewStatsSSEListenerAdded = true;
+              try {
+                this.appSSE.addEventListener('calendar_changed', (ev) => {
+                  let reason = '';
+                  try { reason = JSON.parse((ev && ev.data) || '{}').reason || ''; } catch (e) {}
+                  if (reason === 'task_error'
+                      || reason === 'crontab_task_completed'
+                      || reason === 'manual_task_completed'
+                      || reason === 'task_updated') {
+                    this.refreshOverviewTaskStatsDebounced();
+                  }
+                });
+              } catch (e) {}
+            }
             // ping 心跳占位
             try { this.appSSE.addEventListener('ping', () => {}); } catch (e) {}
           } catch (e) {
@@ -6427,6 +6458,15 @@ export default {
                   if (!item || !item.taskname) return;
                   byName[item.taskname] = item.shareurl_ban || '';
                 });
+                const errorByName = {};
+                (d.error_tasks || []).forEach(item => {
+                  if (!item || !item.taskname) return;
+                  errorByName[item.taskname] = {
+                    message: item.message || '',
+                    occurred_at: item.occurred_at || null
+                  };
+                });
+                this.overviewErrorByTaskName = errorByName;
                 // 本地已修好链接的任务先不受旧验链结论支配：这里一次性过滤，
                 // 运行按钮、待处理角标、展开面板的失效告警都从同一份数据取值
                 Object.keys(this.shareBanClearedNames || {}).forEach(key => {
@@ -6439,12 +6479,57 @@ export default {
             })
             .catch(error => {
               console.error('加载总览任务统计失败:', error);
+              // 请求失败不能把首屏永远卡在「正在统计」：标记为已尝试，页面回落到
+              // 现有的本地数据（首次失败就是默认 0），随后自动重试一次补齐。
+              if (!this.overviewShareBanLoaded) {
+                this.overviewShareBanLoaded = true;
+                if (!this._overviewStatsRetried) {
+                  this._overviewStatsRetried = true;
+                  setTimeout(() => {
+                    this.loadOverviewTaskStats(false);
+                  }, 3000);
+                }
+              }
             })
             .finally(() => {
               if (this._overviewTaskStatsInflight) this._overviewTaskStatsInflight[reqKey] = null;
             });
           this._overviewTaskStatsInflight[reqKey] = promise;
           return promise;
+        },
+        // 换链修复后的自动重跑：后端跑完会推 task_error / manual_task_completed，
+        // 但子进程耗时不定（转存几十集要好几分钟），这里再补一段有限次轮询兜底，
+        // 保证「待处理」角标最终一定收敛，不依赖 SSE 是否连上。
+        watchFixedTaskAutoRerun() {
+          try {
+            clearInterval(this._fixedTaskWatchTimer);
+            const startedAt = Date.now();
+            const maxWaitMs = 10 * 60 * 1000;
+            this._fixedTaskWatchTimer = setInterval(() => {
+              if (Date.now() - startedAt > maxWaitMs) {
+                clearInterval(this._fixedTaskWatchTimer);
+                this._fixedTaskWatchTimer = null;
+                return;
+              }
+              this.loadOverviewTaskStats(false);
+              if (this.activeTab === 'tasklist') {
+                this.loadTaskLatestInfo().catch(() => {});
+              }
+            }, 20000);
+          } catch (e) {}
+        },
+        // 总览统计刷新去抖：一轮任务会连续产生多条失败通知，合并成一次请求
+        refreshOverviewTaskStatsDebounced() {
+          try {
+            clearTimeout(this._overviewStatsRefreshTimer);
+            this._overviewStatsRefreshTimer = setTimeout(() => {
+              this._overviewStatsRefreshTimer = null;
+              this.loadOverviewTaskStats(false);
+              if (this.activeTab === 'overview') {
+                this.loadOverviewTransferStats();
+              }
+            }, 600);
+          } catch (e) {}
         },
         // 总览页「待处理」预警条点击：跳到任务列表，筛出需要处理的失败任务
         showFailedTasks() {
@@ -7027,6 +7112,18 @@ export default {
                 try {
                   this.shareBanClearedNames = {};
                   this.checkShareUrlStatus();
+                } catch (e) {}
+                // 换链修复的任务后端会自动重跑一次：这里持续盯着「待处理」统计，
+                // 让任务跑通后角标/预警条自己消失，不用手动切标签页刷新。
+                try {
+                  const rerunTasks = Array.isArray(response.data.auto_rerun_tasks)
+                    ? response.data.auto_rerun_tasks.filter(Boolean)
+                    : [];
+                  if (rerunTasks.length > 0) {
+                    const more = rerunTasks.length > 3 ? ` 等 ${rerunTasks.length} 个` : "";
+                    this.showToast("已修复分享链接，后台正在自动重跑：" + rerunTasks.slice(0, 3).join("、") + more);
+                    this.watchFixedTaskAutoRerun();
+                  }
                 } catch (e) {}
               } else {
                 // 错误信息仍然使用alert，确保用户看到
@@ -16138,6 +16235,11 @@ export default {
         this.updateOverviewGreeting();
         if (this.activeTab === 'overview') {
           this.loadOverviewTransferStats();
+        } else {
+          // 无论落在哪个标签页都先把「待处理」统计取回来（纯本地 DB，毫秒级）：
+          // 这样失败通知后打开网页，切到总览即可立刻看到数字，
+          // 不必再切一次任务列表触发验链后才加载出来。
+          this.loadOverviewTaskStats(false);
         }
         // 定时检测时段变化（早/午/晚），页面长时间停留时问候语自动刷新；
         // updateOverviewGreeting 在时段未变化时直接返回，开销可忽略
@@ -16310,6 +16412,11 @@ export default {
         if (this._overviewGreetingTimer) {
           clearInterval(this._overviewGreetingTimer);
           this._overviewGreetingTimer = null;
+        }
+        // 清理换链自动重跑的兜底轮询
+        if (this._fixedTaskWatchTimer) {
+          clearInterval(this._fixedTaskWatchTimer);
+          this._fixedTaskWatchTimer = null;
         }
         // 移除点击事件监听器
         document.removeEventListener('click', this.handleOutsideClick);

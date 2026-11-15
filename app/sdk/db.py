@@ -736,6 +736,19 @@ class CalendarDB:
         ON douban_imdb_cache (imdb_id)
         ''')
 
+        # 运行期任务错误登记：同一任务（同名 + 同保存路径）只保留最后一条，
+        # 不累计失败次数——总览「有 N 个任务需要你处理」统计的是出错任务数。
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS task_errors (
+            task_name TEXT NOT NULL,
+            save_path TEXT NOT NULL DEFAULT '',
+            message TEXT,
+            source TEXT,
+            occurred_at INTEGER,
+            PRIMARY KEY (task_name, save_path)
+        )
+        ''')
+
         # 日历任务级元数据（例如上次全量 TMDB 刷新时间）
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS calendar_meta (
@@ -1032,11 +1045,13 @@ class CalendarDB:
                     cursor.execute('DELETE FROM task_metrics')
                     cursor.execute('DELETE FROM task_display_cache')
                     cursor.execute('DELETE FROM task_status_override')
+                    cursor.execute('DELETE FROM task_errors')
                 else:
                     placeholders = ','.join(['?'] * len(valid_task_names))
                     cursor.execute(f"DELETE FROM task_metrics WHERE task_name NOT IN ({placeholders})", valid_task_names)
                     cursor.execute(f"DELETE FROM task_display_cache WHERE task_name NOT IN ({placeholders})", valid_task_names)
                     cursor.execute(f"DELETE FROM task_status_override WHERE task_name NOT IN ({placeholders})", valid_task_names)
+                    cursor.execute(f"DELETE FROM task_errors WHERE task_name NOT IN ({placeholders})", valid_task_names)
             except Exception:
                 pass
 
@@ -1183,7 +1198,81 @@ class CalendarDB:
             return False
 
     # 任务级状态清理（删除任务 / 重置文件夹时调用）
-    _TASK_STATE_TABLES = ('task_metrics', 'task_display_cache', 'task_status_override')
+    _TASK_STATE_TABLES = ('task_metrics', 'task_display_cache', 'task_status_override', 'task_errors')
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def upsert_task_error(self, task_name, message, save_path='', source='runner', occurred_at=None):
+        """登记任务最近一次错误（同名 + 同路径只保留一行，不累计次数）。
+
+        重复失败只刷新错误文案与时间，不会产生多行，因此总览统计的是
+        「多少个任务出错」而不是「出错多少次」。
+        """
+        name = str(task_name or '').strip()
+        if not name:
+            return False
+        path = normalize_save_path(save_path)
+        now_ts = int(time.time()) if occurred_at is None else int(occurred_at)
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                '''
+                INSERT INTO task_errors (task_name, save_path, message, source, occurred_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(task_name, save_path) DO UPDATE SET
+                    message=excluded.message,
+                    source=excluded.source,
+                    occurred_at=excluded.occurred_at
+                ''',
+                (name, path, str(message or '').strip(), str(source or '').strip(), now_ts),
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def clear_task_error(self, task_name, save_path=None):
+        """清除任务错误登记；save_path=None 清同名全部，传路径只清精确行。"""
+        name = str(task_name or '').strip()
+        if not name:
+            return 0
+        cursor = self.conn.cursor()
+        try:
+            if save_path is None:
+                cursor.execute('DELETE FROM task_errors WHERE task_name = ?', (name,))
+            else:
+                cursor.execute(
+                    'DELETE FROM task_errors WHERE task_name = ? AND save_path = ?',
+                    (name, normalize_save_path(save_path)),
+                )
+            self.conn.commit()
+            return int(cursor.rowcount or 0)
+        except Exception:
+            return 0
+
+    @retry_on_locked(max_retries=3, base_delay=0.1)
+    def get_task_errors(self):
+        """读取全部任务错误登记，每个出错任务最多一行。"""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                'SELECT task_name, save_path, message, source, occurred_at '
+                'FROM task_errors ORDER BY occurred_at DESC'
+            )
+            return [
+                {
+                    'taskname': row[0],
+                    'task_name': row[0],
+                    'save_path': row[1] or '',
+                    'message': row[2] or '',
+                    'source': row[3] or '',
+                    'occurred_at': row[4],
+                }
+                for row in (cursor.fetchall() or [])
+                if row and row[0]
+            ]
+        except Exception:
+            return []
 
     @retry_on_locked(max_retries=3, base_delay=0.1)
     def delete_task_state(self, task_name, save_path=None):
